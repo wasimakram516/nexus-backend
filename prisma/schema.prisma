@@ -162,12 +162,12 @@ model User {
   status            UserStatus         @default(ACTIVE)
   createdBy         String?            @map("created_by") @db.Uuid
   updatedBy         String?            @map("updated_by") @db.Uuid
-  deletedAt         DateTime?          @map("deleted_at")
+  deletedAt         DateTime? @db.Timestamptz(3)          @map("deleted_at")
   deletedBy         String?            @map("deleted_by") @db.Uuid
   deleteReason      String?            @map("delete_reason")
   activeScopeKey    String             @default("ACTIVE") @map("active_scope_key")
-  createdAt         DateTime           @default(now()) @map("created_at")
-  updatedAt         DateTime           @updatedAt @map("updated_at")
+  createdAt         DateTime @db.Timestamptz(3)           @default(now()) @map("created_at")
+  updatedAt         DateTime @db.Timestamptz(3)           @updatedAt @map("updated_at")
   institution       Institution?       @relation(fields: [institutionId], references: [id], onDelete: SetNull)
   refreshSessions   RefreshSession[]
   campuses          UserCampus[]
@@ -198,12 +198,12 @@ model Institution {
   notes                  String?
   createdBy              String?                   @map("created_by") @db.Uuid
   updatedBy              String?                   @map("updated_by") @db.Uuid
-  deletedAt              DateTime?                 @map("deleted_at")
+  deletedAt              DateTime? @db.Timestamptz(3)                 @map("deleted_at")
   deletedBy              String?                   @map("deleted_by") @db.Uuid
   deleteReason           String?                   @map("delete_reason")
   activeScopeKey         String                    @default("ACTIVE") @map("active_scope_key")
-  createdAt              DateTime                  @default(now()) @map("created_at")
-  updatedAt              DateTime                  @updatedAt @map("updated_at")
+  createdAt              DateTime @db.Timestamptz(3)                  @default(now()) @map("created_at")
+  updatedAt              DateTime @db.Timestamptz(3)                  @updatedAt @map("updated_at")
   users                  User[]
   campuses               Campus[]
   branding               InstitutionBranding?
@@ -238,12 +238,12 @@ model PlanDefinition {
   isActive        Boolean                   @default(true) @map("is_active")
   createdBy       String?                   @map("created_by") @db.Uuid
   updatedBy       String?                   @map("updated_by") @db.Uuid
-  deletedAt       DateTime?                 @map("deleted_at")
+  deletedAt       DateTime? @db.Timestamptz(3)                 @map("deleted_at")
   deletedBy       String?                   @map("deleted_by") @db.Uuid
   deleteReason    String?                   @map("delete_reason")
   activeScopeKey  String                    @default("ACTIVE") @map("active_scope_key")
-  createdAt       DateTime                  @default(now()) @map("created_at")
-  updatedAt       DateTime                  @updatedAt @map("updated_at")
+  createdAt       DateTime @db.Timestamptz(3)                  @default(now()) @map("created_at")
+  updatedAt       DateTime @db.Timestamptz(3)                  @updatedAt @map("updated_at")
   institution     Institution?              @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   subscriptions   InstitutionSubscription[]
 
@@ -258,15 +258,15 @@ model RefreshSession {
   tokenHash    String    @map("token_hash")
   userAgent    String?   @map("user_agent")
   ipAddress    String?   @map("ip_address")
-  revokedAt    DateTime? @map("revoked_at")
-  expiresAt    DateTime  @map("expires_at")
+  revokedAt    DateTime? @db.Timestamptz(3) @map("revoked_at")
+  expiresAt    DateTime @db.Timestamptz(3)  @map("expires_at")
   createdBy    String?   @map("created_by") @db.Uuid
   updatedBy    String?   @map("updated_by") @db.Uuid
-  deletedAt    DateTime? @map("deleted_at")
+  deletedAt    DateTime? @db.Timestamptz(3) @map("deleted_at")
   deletedBy    String?   @map("deleted_by") @db.Uuid
   deleteReason String?   @map("delete_reason")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  createdAt    DateTime @db.Timestamptz(3)  @default(now()) @map("created_at")
+  updatedAt    DateTime @db.Timestamptz(3)  @updatedAt @map("updated_at")
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
@@ -286,11 +286,11 @@ model Campus {
   earlyLeaveThreshold Int                      @map("early_leave_threshold")
   createdBy           String?                  @map("created_by") @db.Uuid
   updatedBy           String?                  @map("updated_by") @db.Uuid
-  deletedAt           DateTime?                @map("deleted_at")
+  deletedAt           DateTime? @db.Timestamptz(3)                @map("deleted_at")
   deletedBy           String?                  @map("deleted_by") @db.Uuid
   deleteReason        String?                  @map("delete_reason")
-  createdAt           DateTime                 @default(now()) @map("created_at")
-  updatedAt           DateTime                 @updatedAt @map("updated_at")
+  createdAt           DateTime @db.Timestamptz(3)                 @default(now()) @map("created_at")
+  updatedAt           DateTime @db.Timestamptz(3)                 @updatedAt @map("updated_at")
   institution         Institution?             @relation(fields: [institutionId], references: [id], onDelete: SetNull)
   userAssignments     UserCampus[]
   levels              Level[]
@@ -324,11 +324,11 @@ model InstitutionBranding {
   theme          String?
   createdBy      String?     @map("created_by") @db.Uuid
   updatedBy      String?     @map("updated_by") @db.Uuid
-  deletedAt      DateTime?   @map("deleted_at")
+  deletedAt      DateTime? @db.Timestamptz(3)   @map("deleted_at")
   deletedBy      String?     @map("deleted_by") @db.Uuid
   deleteReason   String?     @map("delete_reason")
-  createdAt      DateTime    @default(now()) @map("created_at")
-  updatedAt      DateTime    @updatedAt @map("updated_at")
+  createdAt      DateTime @db.Timestamptz(3)    @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3)    @updatedAt @map("updated_at")
   institution    Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
 
   @@map("institution_branding")
@@ -342,12 +342,12 @@ model InstitutionSetting {
   description   String?
   createdBy     String?     @map("created_by") @db.Uuid
   updatedBy     String?     @map("updated_by") @db.Uuid
-  deletedAt     DateTime?   @map("deleted_at")
+  deletedAt     DateTime? @db.Timestamptz(3)   @map("deleted_at")
   deletedBy     String?     @map("deleted_by") @db.Uuid
   deleteReason  String?     @map("delete_reason")
   activeScopeKey String     @default("ACTIVE") @map("active_scope_key")
-  createdAt     DateTime    @default(now()) @map("created_at")
-  updatedAt     DateTime    @updatedAt @map("updated_at")
+  createdAt     DateTime @db.Timestamptz(3)    @default(now()) @map("created_at")
+  updatedAt     DateTime @db.Timestamptz(3)    @updatedAt @map("updated_at")
   institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
 
   @@unique([institutionId, key, activeScopeKey], map: "institution_setting_unique")
@@ -362,12 +362,12 @@ model InstitutionEntitlement {
   configuration Json?       @map("configuration")
   createdBy     String?     @map("created_by") @db.Uuid
   updatedBy     String?     @map("updated_by") @db.Uuid
-  deletedAt     DateTime?   @map("deleted_at")
+  deletedAt     DateTime? @db.Timestamptz(3)   @map("deleted_at")
   deletedBy     String?     @map("deleted_by") @db.Uuid
   deleteReason  String?     @map("delete_reason")
   activeScopeKey String     @default("ACTIVE") @map("active_scope_key")
-  createdAt     DateTime    @default(now()) @map("created_at")
-  updatedAt     DateTime    @updatedAt @map("updated_at")
+  createdAt     DateTime @db.Timestamptz(3)    @default(now()) @map("created_at")
+  updatedAt     DateTime @db.Timestamptz(3)    @updatedAt @map("updated_at")
   institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
 
   @@unique([institutionId, moduleKey, activeScopeKey], map: "institution_entitlement_unique")
@@ -385,17 +385,17 @@ model InstitutionSubscription {
   discountAmount Decimal?           @map("discount_amount") @db.Decimal(10, 2)
   pricingNotes   String?            @map("pricing_notes")
   status         SubscriptionStatus @default(TRIAL)
-  startsAt       DateTime?          @map("starts_at")
-  endsAt         DateTime?          @map("ends_at")
+  startsAt       DateTime? @db.Timestamptz(3)          @map("starts_at")
+  endsAt         DateTime? @db.Timestamptz(3)          @map("ends_at")
   autoRenew      Boolean            @default(false) @map("auto_renew")
   metadata       Json?
   createdBy      String?            @map("created_by") @db.Uuid
   updatedBy      String?            @map("updated_by") @db.Uuid
-  deletedAt      DateTime?          @map("deleted_at")
+  deletedAt      DateTime? @db.Timestamptz(3)          @map("deleted_at")
   deletedBy      String?            @map("deleted_by") @db.Uuid
   deleteReason   String?            @map("delete_reason")
-  createdAt      DateTime           @default(now()) @map("created_at")
-  updatedAt      DateTime           @updatedAt @map("updated_at")
+  createdAt      DateTime @db.Timestamptz(3)           @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3)           @updatedAt @map("updated_at")
   institution    Institution        @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   plan           PlanDefinition?    @relation(fields: [planId], references: [id], onDelete: SetNull)
 
@@ -424,12 +424,12 @@ model CustomFieldDefinition {
   sortOrder       Int                  @default(0) @map("sort_order")
   createdBy       String?              @map("created_by") @db.Uuid
   updatedBy       String?              @map("updated_by") @db.Uuid
-  deletedAt       DateTime?            @map("deleted_at")
+  deletedAt       DateTime? @db.Timestamptz(3)            @map("deleted_at")
   deletedBy       String?              @map("deleted_by") @db.Uuid
   deleteReason    String?              @map("delete_reason")
   activeScopeKey  String               @default("ACTIVE") @map("active_scope_key")
-  createdAt       DateTime             @default(now()) @map("created_at")
-  updatedAt       DateTime             @updatedAt @map("updated_at")
+  createdAt       DateTime @db.Timestamptz(3)             @default(now()) @map("created_at")
+  updatedAt       DateTime @db.Timestamptz(3)             @updatedAt @map("updated_at")
   institution     Institution          @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   values          CustomFieldValue[]
 
@@ -447,12 +447,12 @@ model CustomFieldValue {
   definitionSnapshot Json?                 @map("definition_snapshot")
   createdBy          String?               @map("created_by") @db.Uuid
   updatedBy          String?               @map("updated_by") @db.Uuid
-  deletedAt          DateTime?             @map("deleted_at")
+  deletedAt          DateTime? @db.Timestamptz(3)             @map("deleted_at")
   deletedBy          String?               @map("deleted_by") @db.Uuid
   deleteReason       String?               @map("delete_reason")
   activeScopeKey     String                @default("ACTIVE") @map("active_scope_key")
-  createdAt          DateTime              @default(now()) @map("created_at")
-  updatedAt          DateTime              @updatedAt @map("updated_at")
+  createdAt          DateTime @db.Timestamptz(3)              @default(now()) @map("created_at")
+  updatedAt          DateTime @db.Timestamptz(3)              @updatedAt @map("updated_at")
   institution        Institution           @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   definition         CustomFieldDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
 
@@ -469,12 +469,12 @@ model PermissionTemplate {
   permissions   Json
   createdBy     String?     @map("created_by") @db.Uuid
   updatedBy     String?     @map("updated_by") @db.Uuid
-  deletedAt     DateTime?   @map("deleted_at")
+  deletedAt     DateTime? @db.Timestamptz(3)   @map("deleted_at")
   deletedBy     String?     @map("deleted_by") @db.Uuid
   deleteReason  String?     @map("delete_reason")
   activeScopeKey String     @default("ACTIVE") @map("active_scope_key")
-  createdAt     DateTime    @default(now()) @map("created_at")
-  updatedAt     DateTime    @updatedAt @map("updated_at")
+  createdAt     DateTime @db.Timestamptz(3)    @default(now()) @map("created_at")
+  updatedAt     DateTime @db.Timestamptz(3)    @updatedAt @map("updated_at")
   institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
 
   @@unique([institutionId, name, activeScopeKey], map: "permission_template_unique")
@@ -487,12 +487,12 @@ model UserCampus {
   campusId     String    @map("campus_id") @db.Uuid
   createdBy    String?   @map("created_by") @db.Uuid
   updatedBy    String?   @map("updated_by") @db.Uuid
-  deletedAt    DateTime? @map("deleted_at")
+  deletedAt    DateTime? @db.Timestamptz(3) @map("deleted_at")
   deletedBy    String?   @map("deleted_by") @db.Uuid
   deleteReason String?   @map("delete_reason")
   activeScopeKey String  @default("ACTIVE") @map("active_scope_key")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  createdAt    DateTime @db.Timestamptz(3)  @default(now()) @map("created_at")
+  updatedAt    DateTime @db.Timestamptz(3)  @updatedAt @map("updated_at")
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   campus       Campus    @relation(fields: [campusId], references: [id], onDelete: Cascade)
 
@@ -507,11 +507,11 @@ model Level {
   campusId     String          @map("campus_id") @db.Uuid
   createdBy    String?         @map("created_by") @db.Uuid
   updatedBy    String?         @map("updated_by") @db.Uuid
-  deletedAt    DateTime?       @map("deleted_at")
+  deletedAt    DateTime? @db.Timestamptz(3)       @map("deleted_at")
   deletedBy    String?         @map("deleted_by") @db.Uuid
   deleteReason String?         @map("delete_reason")
-  createdAt    DateTime        @default(now()) @map("created_at")
-  updatedAt    DateTime        @updatedAt @map("updated_at")
+  createdAt    DateTime @db.Timestamptz(3)        @default(now()) @map("created_at")
+  updatedAt    DateTime @db.Timestamptz(3)        @updatedAt @map("updated_at")
   campus       Campus          @relation(fields: [campusId], references: [id], onDelete: Cascade)
   classes      AcademicClass[]
 
@@ -525,11 +525,11 @@ model AcademicClass {
   levelId         String            @map("level_id") @db.Uuid
   createdBy       String?           @map("created_by") @db.Uuid
   updatedBy       String?           @map("updated_by") @db.Uuid
-  deletedAt       DateTime?         @map("deleted_at")
+  deletedAt       DateTime? @db.Timestamptz(3)         @map("deleted_at")
   deletedBy       String?           @map("deleted_by") @db.Uuid
   deleteReason    String?           @map("delete_reason")
-  createdAt       DateTime          @default(now()) @map("created_at")
-  updatedAt       DateTime          @updatedAt @map("updated_at")
+  createdAt       DateTime @db.Timestamptz(3)          @default(now()) @map("created_at")
+  updatedAt       DateTime @db.Timestamptz(3)          @updatedAt @map("updated_at")
   level           Level             @relation(fields: [levelId], references: [id], onDelete: Cascade)
   sections        Section[]
   subjects        Subject[]
@@ -551,11 +551,11 @@ model Section {
   classId         String           @map("class_id") @db.Uuid
   createdBy       String?          @map("created_by") @db.Uuid
   updatedBy       String?          @map("updated_by") @db.Uuid
-  deletedAt       DateTime?        @map("deleted_at")
+  deletedAt       DateTime? @db.Timestamptz(3)        @map("deleted_at")
   deletedBy       String?          @map("deleted_by") @db.Uuid
   deleteReason    String?          @map("delete_reason")
-  createdAt       DateTime         @default(now()) @map("created_at")
-  updatedAt       DateTime         @updatedAt @map("updated_at")
+  createdAt       DateTime @db.Timestamptz(3)         @default(now()) @map("created_at")
+  updatedAt       DateTime @db.Timestamptz(3)         @updatedAt @map("updated_at")
   class           AcademicClass    @relation(fields: [classId], references: [id], onDelete: Cascade)
   students        Student[]
   historyPrevious StudentHistory[] @relation("StudentHistoryPreviousSection")
@@ -572,11 +572,11 @@ model Subject {
   classId         String           @map("class_id") @db.Uuid
   createdBy       String?          @map("created_by") @db.Uuid
   updatedBy       String?          @map("updated_by") @db.Uuid
-  deletedAt       DateTime?        @map("deleted_at")
+  deletedAt       DateTime? @db.Timestamptz(3)        @map("deleted_at")
   deletedBy       String?          @map("deleted_by") @db.Uuid
   deleteReason    String?          @map("delete_reason")
-  createdAt       DateTime         @default(now()) @map("created_at")
-  updatedAt       DateTime         @updatedAt @map("updated_at")
+  createdAt       DateTime @db.Timestamptz(3)         @default(now()) @map("created_at")
+  updatedAt       DateTime @db.Timestamptz(3)         @updatedAt @map("updated_at")
   class           AcademicClass    @relation(fields: [classId], references: [id], onDelete: Cascade)
   teacherSubjects TeacherSubject[]
 
@@ -589,7 +589,7 @@ model Student {
   id            String            @id @default(uuid()) @db.Uuid
   userId        String            @unique @map("user_id") @db.Uuid
   regNo         String            @map("reg_no")
-  dob           DateTime
+  dob           DateTime @db.Timestamptz(3)
   gender        Gender
   cnic          String?
   classId       String?           @map("class_id") @db.Uuid
@@ -597,17 +597,17 @@ model Student {
   campusId      String            @map("campus_id") @db.Uuid
   picture       String?
   religion      Religion?
-  admissionDate DateTime          @map("admission_date")
+  admissionDate DateTime @db.Timestamptz(3)          @map("admission_date")
   prevSchool    String?           @map("prev_school")
   reference     String?
   createdBy     String?           @map("created_by") @db.Uuid
   updatedBy     String?           @map("updated_by") @db.Uuid
-  deletedAt     DateTime?         @map("deleted_at")
+  deletedAt     DateTime? @db.Timestamptz(3)         @map("deleted_at")
   deletedBy     String?           @map("deleted_by") @db.Uuid
   deleteReason  String?           @map("delete_reason")
   activeScopeKey String           @default("ACTIVE") @map("active_scope_key")
-  createdAt     DateTime          @default(now()) @map("created_at")
-  updatedAt     DateTime          @updatedAt @map("updated_at")
+  createdAt     DateTime @db.Timestamptz(3)          @default(now()) @map("created_at")
+  updatedAt     DateTime @db.Timestamptz(3)          @updatedAt @map("updated_at")
   user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   class         AcademicClass?    @relation(fields: [classId], references: [id], onDelete: SetNull)
   section       Section?          @relation(fields: [sectionId], references: [id], onDelete: SetNull)
@@ -634,12 +634,12 @@ model Guardian {
   campusId     String            @map("campus_id") @db.Uuid
   createdBy    String?           @map("created_by") @db.Uuid
   updatedBy    String?           @map("updated_by") @db.Uuid
-  deletedAt    DateTime?         @map("deleted_at")
+  deletedAt    DateTime? @db.Timestamptz(3)         @map("deleted_at")
   deletedBy    String?           @map("deleted_by") @db.Uuid
   deleteReason String?           @map("delete_reason")
   activeScopeKey String          @default("ACTIVE") @map("active_scope_key")
-  createdAt    DateTime          @default(now()) @map("created_at")
-  updatedAt    DateTime          @updatedAt @map("updated_at")
+  createdAt    DateTime @db.Timestamptz(3)          @default(now()) @map("created_at")
+  updatedAt    DateTime @db.Timestamptz(3)          @updatedAt @map("updated_at")
   user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   campus       Campus            @relation(fields: [campusId], references: [id], onDelete: Cascade)
   students     StudentGuardian[]
@@ -655,12 +655,12 @@ model StudentGuardian {
   guardianId   String    @map("guardian_id") @db.Uuid
   createdBy    String?   @map("created_by") @db.Uuid
   updatedBy    String?   @map("updated_by") @db.Uuid
-  deletedAt    DateTime? @map("deleted_at")
+  deletedAt    DateTime? @db.Timestamptz(3) @map("deleted_at")
   deletedBy    String?   @map("deleted_by") @db.Uuid
   deleteReason String?   @map("delete_reason")
   activeScopeKey String  @default("ACTIVE") @map("active_scope_key")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  createdAt    DateTime @db.Timestamptz(3)  @default(now()) @map("created_at")
+  updatedAt    DateTime @db.Timestamptz(3)  @updatedAt @map("updated_at")
   student      Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
   guardian     Guardian  @relation(fields: [guardianId], references: [id], onDelete: Cascade)
 
@@ -676,16 +676,16 @@ model StudentHistory {
   previousSectionId String?        @map("previous_section_id") @db.Uuid
   newClassId        String?        @map("new_class_id") @db.Uuid
   newSectionId      String?        @map("new_section_id") @db.Uuid
-  promotionDate     DateTime       @map("promotion_date")
+  promotionDate     DateTime @db.Timestamptz(3)       @map("promotion_date")
   promotionReason   String?        @map("promotion_reason")
   remarks           String?
   createdBy         String?        @map("created_by") @db.Uuid
   updatedBy         String?        @map("updated_by") @db.Uuid
-  deletedAt         DateTime?      @map("deleted_at")
+  deletedAt         DateTime? @db.Timestamptz(3)      @map("deleted_at")
   deletedBy         String?        @map("deleted_by") @db.Uuid
   deleteReason      String?        @map("delete_reason")
-  createdAt         DateTime       @default(now()) @map("created_at")
-  updatedAt         DateTime       @updatedAt @map("updated_at")
+  createdAt         DateTime @db.Timestamptz(3)       @default(now()) @map("created_at")
+  updatedAt         DateTime @db.Timestamptz(3)       @updatedAt @map("updated_at")
   student           Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
   previousClass     AcademicClass? @relation("StudentHistoryPreviousClass", fields: [previousClassId], references: [id], onDelete: SetNull)
   previousSection   Section?       @relation("StudentHistoryPreviousSection", fields: [previousSectionId], references: [id], onDelete: SetNull)
@@ -710,12 +710,12 @@ model Contact {
   address        String?
   createdBy      String?           @map("created_by") @db.Uuid
   updatedBy      String?           @map("updated_by") @db.Uuid
-  deletedAt      DateTime?         @map("deleted_at")
+  deletedAt      DateTime? @db.Timestamptz(3)         @map("deleted_at")
   deletedBy      String?           @map("deleted_by") @db.Uuid
   deleteReason   String?           @map("delete_reason")
   activeScopeKey String            @default("ACTIVE") @map("active_scope_key")
-  createdAt      DateTime          @default(now()) @map("created_at")
-  updatedAt      DateTime          @updatedAt @map("updated_at")
+  createdAt      DateTime @db.Timestamptz(3)          @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3)          @updatedAt @map("updated_at")
   student        Student?          @relation("StudentContacts", fields: [studentId], references: [id], onDelete: Cascade)
   guardian       Guardian?         @relation("GuardianContacts", fields: [guardianId], references: [id], onDelete: Cascade)
   teacher        Teacher?          @relation("TeacherContacts", fields: [teacherId], references: [id], onDelete: Cascade)
@@ -738,12 +738,12 @@ model Teacher {
   picture      String?
   createdBy    String?          @map("created_by") @db.Uuid
   updatedBy    String?          @map("updated_by") @db.Uuid
-  deletedAt    DateTime?        @map("deleted_at")
+  deletedAt    DateTime? @db.Timestamptz(3)        @map("deleted_at")
   deletedBy    String?          @map("deleted_by") @db.Uuid
   deleteReason String?          @map("delete_reason")
   activeScopeKey String         @default("ACTIVE") @map("active_scope_key")
-  createdAt    DateTime         @default(now()) @map("created_at")
-  updatedAt    DateTime         @updatedAt @map("updated_at")
+  createdAt    DateTime @db.Timestamptz(3)         @default(now()) @map("created_at")
+  updatedAt    DateTime @db.Timestamptz(3)         @updatedAt @map("updated_at")
   user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   campus       Campus           @relation(fields: [campusId], references: [id], onDelete: Cascade)
   subjects     TeacherSubject[]
@@ -761,12 +761,12 @@ model TeacherSubject {
   campusId     String        @map("campus_id") @db.Uuid
   createdBy    String?       @map("created_by") @db.Uuid
   updatedBy    String?       @map("updated_by") @db.Uuid
-  deletedAt    DateTime?     @map("deleted_at")
+  deletedAt    DateTime? @db.Timestamptz(3)     @map("deleted_at")
   deletedBy    String?       @map("deleted_by") @db.Uuid
   deleteReason String?       @map("delete_reason")
   activeScopeKey String      @default("ACTIVE") @map("active_scope_key")
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
+  createdAt    DateTime @db.Timestamptz(3)      @default(now()) @map("created_at")
+  updatedAt    DateTime @db.Timestamptz(3)      @updatedAt @map("updated_at")
   teacher      Teacher       @relation(fields: [teacherId], references: [id], onDelete: Cascade)
   class        AcademicClass @relation(fields: [classId], references: [id], onDelete: Cascade)
   subject      Subject       @relation(fields: [subjectId], references: [id], onDelete: Cascade)
@@ -786,17 +786,17 @@ model Attendance {
   date         DateTime         @db.Date
   status       AttendanceStatus @default(ABSENT)
   halfDay      Boolean          @default(false) @map("half_day")
-  checkIn      DateTime?        @map("check_in")
-  checkOut     DateTime?        @map("check_out")
+  checkIn      DateTime? @db.Timestamptz(3)        @map("check_in")
+  checkOut     DateTime? @db.Timestamptz(3)        @map("check_out")
   remarks      String?
   createdBy    String?          @map("created_by") @db.Uuid
   updatedBy    String?          @map("updated_by") @db.Uuid
-  deletedAt    DateTime?        @map("deleted_at")
+  deletedAt    DateTime? @db.Timestamptz(3)        @map("deleted_at")
   deletedBy    String?          @map("deleted_by") @db.Uuid
   deleteReason String?          @map("delete_reason")
   activeScopeKey String         @default("ACTIVE") @map("active_scope_key")
-  createdAt    DateTime         @default(now()) @map("created_at")
-  updatedAt    DateTime         @updatedAt @map("updated_at")
+  createdAt    DateTime @db.Timestamptz(3)         @default(now()) @map("created_at")
+  updatedAt    DateTime @db.Timestamptz(3)         @updatedAt @map("updated_at")
   campus       Campus           @relation(fields: [campusId], references: [id], onDelete: Cascade)
 
   @@unique([userId, campusId, date, activeScopeKey], map: "attendance_unique")
@@ -810,17 +810,17 @@ model StaffSalary {
   userId        String             @map("user_id") @db.Uuid
   campusId      String             @map("campus_id") @db.Uuid
   role          UserRole
-  joiningDate   DateTime           @map("joining_date")
+  joiningDate   DateTime @db.Timestamptz(3)           @map("joining_date")
   baseSalary    Decimal            @map("base_salary") @db.Decimal(10, 2)
-  effectiveDate DateTime           @map("effective_date")
+  effectiveDate DateTime @db.Timestamptz(3)           @map("effective_date")
   status        SalaryStatus       @default(ACTIVE)
   createdBy     String?            @map("created_by") @db.Uuid
   updatedBy     String?            @map("updated_by") @db.Uuid
-  deletedAt     DateTime?          @map("deleted_at")
+  deletedAt     DateTime? @db.Timestamptz(3)          @map("deleted_at")
   deletedBy     String?            @map("deleted_by") @db.Uuid
   deleteReason  String?            @map("delete_reason")
-  createdAt     DateTime           @default(now()) @map("created_at")
-  updatedAt     DateTime           @updatedAt @map("updated_at")
+  createdAt     DateTime @db.Timestamptz(3)           @default(now()) @map("created_at")
+  updatedAt     DateTime @db.Timestamptz(3)           @updatedAt @map("updated_at")
   campus        Campus             @relation(fields: [campusId], references: [id], onDelete: Cascade)
   deductions    SalaryDeduction[]
   payments      SalaryPayment[]
@@ -845,12 +845,12 @@ model SalaryDeductionRule {
   leaveDeductionPercent   Decimal   @default(0) @map("leave_deduction_percent") @db.Decimal(5, 2)
   createdBy               String?   @map("created_by") @db.Uuid
   updatedBy               String?   @map("updated_by") @db.Uuid
-  deletedAt               DateTime? @map("deleted_at")
+  deletedAt               DateTime? @db.Timestamptz(3) @map("deleted_at")
   deletedBy               String?   @map("deleted_by") @db.Uuid
   deleteReason            String?   @map("delete_reason")
   activeScopeKey          String    @default("ACTIVE") @map("active_scope_key")
-  createdAt               DateTime  @default(now()) @map("created_at")
-  updatedAt               DateTime  @updatedAt @map("updated_at")
+  createdAt               DateTime @db.Timestamptz(3)  @default(now()) @map("created_at")
+  updatedAt               DateTime @db.Timestamptz(3)  @updatedAt @map("updated_at")
   campus                  Campus    @relation(fields: [campusId], references: [id], onDelete: Cascade)
 
   @@unique([campusId, role, activeScopeKey], map: "salary_deduction_rule_unique")
@@ -868,11 +868,11 @@ model SalaryDeduction {
   date            DateTime      @db.Date
   createdBy       String?       @map("created_by") @db.Uuid
   updatedBy       String?       @map("updated_by") @db.Uuid
-  deletedAt       DateTime?     @map("deleted_at")
+  deletedAt       DateTime? @db.Timestamptz(3)     @map("deleted_at")
   deletedBy       String?       @map("deleted_by") @db.Uuid
   deleteReason    String?       @map("delete_reason")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
+  createdAt       DateTime @db.Timestamptz(3)      @default(now()) @map("created_at")
+  updatedAt       DateTime @db.Timestamptz(3)      @updatedAt @map("updated_at")
   salary          StaffSalary   @relation(fields: [salaryId], references: [id], onDelete: Cascade)
 
   @@index([salaryId])
@@ -891,17 +891,17 @@ model SalaryPayment {
   totalDeductions     Decimal                  @map("total_deductions") @db.Decimal(10, 2)
   totalBonuses        Decimal                  @map("total_bonuses") @db.Decimal(10, 2)
   finalSalaryPaid     Decimal                  @map("final_salary_paid") @db.Decimal(10, 2)
-  paymentDate         DateTime                 @map("payment_date")
+  paymentDate         DateTime @db.Timestamptz(3)                 @map("payment_date")
   paidBy              String                   @map("paid_by") @db.Uuid
   remarks             String?
   createdBy           String?                  @map("created_by") @db.Uuid
   updatedBy           String?                  @map("updated_by") @db.Uuid
-  deletedAt           DateTime?                @map("deleted_at")
+  deletedAt           DateTime? @db.Timestamptz(3)                @map("deleted_at")
   deletedBy           String?                  @map("deleted_by") @db.Uuid
   deleteReason        String?                  @map("delete_reason")
   activeScopeKey      String                   @default("ACTIVE") @map("active_scope_key")
-  createdAt           DateTime                 @default(now()) @map("created_at")
-  updatedAt           DateTime                 @updatedAt @map("updated_at")
+  createdAt           DateTime @db.Timestamptz(3)                 @default(now()) @map("created_at")
+  updatedAt           DateTime @db.Timestamptz(3)                 @updatedAt @map("updated_at")
   salary              StaffSalary              @relation(fields: [salaryId], references: [id], onDelete: Cascade)
   campus              Campus                   @relation(fields: [campusId], references: [id], onDelete: Cascade)
   paidByUser          User                     @relation("SalaryPaymentPaidBy", fields: [paidBy], references: [id], onDelete: Cascade)
@@ -922,14 +922,14 @@ model SalaryAdjustment {
   amount         Decimal        @db.Decimal(10, 2)
   remarks        String?
   adjustedBy     String         @map("adjusted_by") @db.Uuid
-  adjustmentDate DateTime       @default(now()) @map("adjustment_date")
+  adjustmentDate DateTime @db.Timestamptz(3)       @default(now()) @map("adjustment_date")
   createdBy      String?        @map("created_by") @db.Uuid
   updatedBy      String?        @map("updated_by") @db.Uuid
-  deletedAt      DateTime?      @map("deleted_at")
+  deletedAt      DateTime? @db.Timestamptz(3)      @map("deleted_at")
   deletedBy      String?        @map("deleted_by") @db.Uuid
   deleteReason   String?        @map("delete_reason")
-  createdAt      DateTime       @default(now()) @map("created_at")
-  updatedAt      DateTime       @updatedAt @map("updated_at")
+  createdAt      DateTime @db.Timestamptz(3)       @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3)       @updatedAt @map("updated_at")
   salary         StaffSalary    @relation(fields: [salaryId], references: [id], onDelete: Cascade)
   campus         Campus         @relation(fields: [campusId], references: [id], onDelete: Cascade)
   adjustedByUser User           @relation("SalaryAdjustmentAdjustedBy", fields: [adjustedBy], references: [id], onDelete: Cascade)
@@ -956,11 +956,11 @@ model SalaryDeductionSummary {
   finalSalaryPaid  Decimal       @map("final_salary_paid") @db.Decimal(10, 2)
   createdBy        String?       @map("created_by") @db.Uuid
   updatedBy        String?       @map("updated_by") @db.Uuid
-  deletedAt        DateTime?     @map("deleted_at")
+  deletedAt        DateTime? @db.Timestamptz(3)     @map("deleted_at")
   deletedBy        String?       @map("deleted_by") @db.Uuid
   deleteReason     String?       @map("delete_reason")
-  createdAt        DateTime      @default(now()) @map("created_at")
-  updatedAt        DateTime      @updatedAt @map("updated_at")
+  createdAt        DateTime @db.Timestamptz(3)      @default(now()) @map("created_at")
+  updatedAt        DateTime @db.Timestamptz(3)      @updatedAt @map("updated_at")
   salaryPayment    SalaryPayment @relation(fields: [salaryPaymentId], references: [id], onDelete: Cascade)
   campus           Campus        @relation(fields: [campusId], references: [id], onDelete: Cascade)
 
@@ -980,11 +980,11 @@ model BankAccount {
   isActive      Boolean      @default(true) @map("is_active")
   createdBy     String?      @map("created_by") @db.Uuid
   updatedBy     String?      @map("updated_by") @db.Uuid
-  deletedAt     DateTime?    @map("deleted_at")
+  deletedAt     DateTime? @db.Timestamptz(3)    @map("deleted_at")
   deletedBy     String?      @map("deleted_by") @db.Uuid
   deleteReason  String?      @map("delete_reason")
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
+  createdAt     DateTime @db.Timestamptz(3)     @default(now()) @map("created_at")
+  updatedAt     DateTime @db.Timestamptz(3)     @updatedAt @map("updated_at")
   campus        Campus       @relation(fields: [campusId], references: [id], onDelete: Cascade)
   vouchers      FeeVoucher[]
 
@@ -999,12 +999,12 @@ model FeeStructure {
   feeBreakdown Json          @map("fee_breakdown")
   createdBy    String?       @map("created_by") @db.Uuid
   updatedBy    String?       @map("updated_by") @db.Uuid
-  deletedAt    DateTime?     @map("deleted_at")
+  deletedAt    DateTime? @db.Timestamptz(3)     @map("deleted_at")
   deletedBy    String?       @map("deleted_by") @db.Uuid
   deleteReason String?       @map("delete_reason")
   activeScopeKey String      @default("ACTIVE") @map("active_scope_key")
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
+  createdAt    DateTime @db.Timestamptz(3)      @default(now()) @map("created_at")
+  updatedAt    DateTime @db.Timestamptz(3)      @updatedAt @map("updated_at")
   class        AcademicClass @relation(fields: [classId], references: [id], onDelete: Cascade)
   campus       Campus        @relation(fields: [campusId], references: [id], onDelete: Cascade)
   vouchers     FeeVoucher[]
@@ -1023,12 +1023,12 @@ model StudentDiscount {
   remarks        String?
   createdBy      String?      @map("created_by") @db.Uuid
   updatedBy      String?      @map("updated_by") @db.Uuid
-  deletedAt      DateTime?    @map("deleted_at")
+  deletedAt      DateTime? @db.Timestamptz(3)    @map("deleted_at")
   deletedBy      String?      @map("deleted_by") @db.Uuid
   deleteReason   String?      @map("delete_reason")
   activeScopeKey String       @default("ACTIVE") @map("active_scope_key")
-  createdAt      DateTime     @default(now()) @map("created_at")
-  updatedAt      DateTime     @updatedAt @map("updated_at")
+  createdAt      DateTime @db.Timestamptz(3)     @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3)     @updatedAt @map("updated_at")
   student        Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
   approvedByUser User?        @relation("StudentDiscountApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull)
 
@@ -1050,12 +1050,12 @@ model StudentFineRule {
   leaveFineAmount   Decimal        @default(0) @map("leave_fine_amount") @db.Decimal(10, 2)
   createdBy         String?        @map("created_by") @db.Uuid
   updatedBy         String?        @map("updated_by") @db.Uuid
-  deletedAt         DateTime?      @map("deleted_at")
+  deletedAt         DateTime? @db.Timestamptz(3)      @map("deleted_at")
   deletedBy         String?        @map("deleted_by") @db.Uuid
   deleteReason      String?        @map("delete_reason")
   activeScopeKey    String         @default("ACTIVE") @map("active_scope_key")
-  createdAt         DateTime       @default(now()) @map("created_at")
-  updatedAt         DateTime       @updatedAt @map("updated_at")
+  createdAt         DateTime @db.Timestamptz(3)       @default(now()) @map("created_at")
+  updatedAt         DateTime @db.Timestamptz(3)       @updatedAt @map("updated_at")
   campus            Campus         @relation(fields: [campusId], references: [id], onDelete: Cascade)
   class             AcademicClass? @relation(fields: [classId], references: [id], onDelete: Cascade)
 
@@ -1079,12 +1079,12 @@ model StudentFine {
   fineReason      String?    @map("fine_reason")
   createdBy       String?    @map("created_by") @db.Uuid
   updatedBy       String?    @map("updated_by") @db.Uuid
-  deletedAt       DateTime?  @map("deleted_at")
+  deletedAt       DateTime? @db.Timestamptz(3)  @map("deleted_at")
   deletedBy       String?    @map("deleted_by") @db.Uuid
   deleteReason    String?    @map("delete_reason")
   activeScopeKey  String     @default("ACTIVE") @map("active_scope_key")
-  createdAt       DateTime   @default(now()) @map("created_at")
-  updatedAt       DateTime   @updatedAt @map("updated_at")
+  createdAt       DateTime @db.Timestamptz(3)   @default(now()) @map("created_at")
+  updatedAt       DateTime @db.Timestamptz(3)   @updatedAt @map("updated_at")
   student         Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
   campus          Campus     @relation(fields: [campusId], references: [id], onDelete: Cascade)
 
@@ -1105,16 +1105,16 @@ model FeeVoucher {
   lateFeeFine    Decimal       @default(0) @map("late_fee_fine") @db.Decimal(10, 2)
   finalAmountDue Decimal       @map("final_amount_due") @db.Decimal(10, 2)
   bankId         String?       @map("bank_id") @db.Uuid
-  dueDate        DateTime      @map("due_date")
+  dueDate        DateTime @db.Timestamptz(3)      @map("due_date")
   status         VoucherStatus @default(PENDING)
   createdBy      String?       @map("created_by") @db.Uuid
   updatedBy      String?       @map("updated_by") @db.Uuid
-  deletedAt      DateTime?     @map("deleted_at")
+  deletedAt      DateTime? @db.Timestamptz(3)     @map("deleted_at")
   deletedBy      String?       @map("deleted_by") @db.Uuid
   deleteReason   String?       @map("delete_reason")
   activeScopeKey String        @default("ACTIVE") @map("active_scope_key")
-  createdAt      DateTime      @default(now()) @map("created_at")
-  updatedAt      DateTime      @updatedAt @map("updated_at")
+  createdAt      DateTime @db.Timestamptz(3)      @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3)      @updatedAt @map("updated_at")
   student        Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
   feeStructure   FeeStructure  @relation(fields: [feeStructureId], references: [id], onDelete: Cascade)
   bank           BankAccount?  @relation(fields: [bankId], references: [id], onDelete: SetNull)
@@ -1133,16 +1133,16 @@ model FeePayment {
   year           Int
   paidAmount     Decimal       @map("paid_amount") @db.Decimal(10, 2)
   paymentMethod  PaymentMethod @map("payment_method")
-  paymentDate    DateTime      @map("payment_date")
+  paymentDate    DateTime @db.Timestamptz(3)      @map("payment_date")
   receivedBy     String?       @map("received_by") @db.Uuid
   createdBy      String?       @map("created_by") @db.Uuid
   updatedBy      String?       @map("updated_by") @db.Uuid
-  deletedAt      DateTime?     @map("deleted_at")
+  deletedAt      DateTime? @db.Timestamptz(3)     @map("deleted_at")
   deletedBy      String?       @map("deleted_by") @db.Uuid
   deleteReason   String?       @map("delete_reason")
   activeScopeKey String        @default("ACTIVE") @map("active_scope_key")
-  createdAt      DateTime      @default(now()) @map("created_at")
-  updatedAt      DateTime      @updatedAt @map("updated_at")
+  createdAt      DateTime @db.Timestamptz(3)      @default(now()) @map("created_at")
+  updatedAt      DateTime @db.Timestamptz(3)      @updatedAt @map("updated_at")
   voucher        FeeVoucher    @relation(fields: [voucherId], references: [id], onDelete: Cascade)
   receivedByUser User?         @relation("FeePaymentReceivedBy", fields: [receivedBy], references: [id], onDelete: SetNull)
 
@@ -1160,11 +1160,11 @@ model AuditLog {
   metadata      Json?
   createdBy     String?      @map("created_by") @db.Uuid
   updatedBy     String?      @map("updated_by") @db.Uuid
-  deletedAt     DateTime?    @map("deleted_at")
+  deletedAt     DateTime? @db.Timestamptz(3)    @map("deleted_at")
   deletedBy     String?      @map("deleted_by") @db.Uuid
   deleteReason  String?      @map("delete_reason")
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
+  createdAt     DateTime @db.Timestamptz(3)     @default(now()) @map("created_at")
+  updatedAt     DateTime @db.Timestamptz(3)     @updatedAt @map("updated_at")
   user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
 
