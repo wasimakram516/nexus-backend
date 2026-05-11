@@ -206,9 +206,10 @@ export class FinanceService {
       currentUser,
       existing.campusId,
     );
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.staffSalary.delete({ where: { id: salaryId } }),
-    );
+    await this.prisma.staffSalary.update({
+      where: { id: salaryId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
 
     return {
       message: 'Salary moved to recycle bin successfully',
@@ -343,9 +344,10 @@ export class FinanceService {
       currentUser,
       existing.campusId,
     );
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.salaryDeductionRule.delete({ where: { id: ruleId } }),
-    );
+    await this.prisma.salaryDeductionRule.update({
+      where: { id: ruleId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
 
     return {
       message: 'Salary deduction rule moved to recycle bin successfully',
@@ -468,9 +470,10 @@ export class FinanceService {
       currentUser,
       existing.campusId,
     );
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.salaryAdjustment.delete({ where: { id: adjustmentId } }),
-    );
+    await this.prisma.salaryAdjustment.update({
+      where: { id: adjustmentId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
 
     return {
       message: 'Salary adjustment moved to recycle bin successfully',
@@ -672,15 +675,15 @@ export class FinanceService {
       currentUser,
       existing.campusId,
     );
-    await this.requestContext.runWith(
-      { deleteReason: reason ?? null },
-      async () => {
-        await this.prisma.salaryDeductionSummary.deleteMany({
-          where: { salaryPaymentId: paymentId },
-        });
-        await this.prisma.salaryPayment.delete({ where: { id: paymentId } });
-      },
-    );
+    const softDeleteData = { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub };
+    await this.prisma.salaryDeductionSummary.updateMany({
+      where: { salaryPaymentId: paymentId },
+      data: softDeleteData,
+    });
+    await this.prisma.salaryPayment.update({
+      where: { id: paymentId },
+      data: softDeleteData,
+    });
 
     return {
       message: 'Salary payment moved to recycle bin successfully',
@@ -845,9 +848,10 @@ export class FinanceService {
       currentUser,
       existing.campusId,
     );
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.bankAccount.delete({ where: { id: bankAccountId } }),
-    );
+    await this.prisma.bankAccount.update({
+      where: { id: bankAccountId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
 
     return {
       message: 'Bank account moved to recycle bin successfully',
@@ -1051,9 +1055,10 @@ export class FinanceService {
       currentUser,
       existing.campusId,
     );
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.feeStructure.delete({ where: { id: feeStructureId } }),
-    );
+    await this.prisma.feeStructure.update({
+      where: { id: feeStructureId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
 
     return {
       message: 'Fee structure moved to recycle bin successfully',
@@ -1182,9 +1187,10 @@ export class FinanceService {
       currentUser,
       existing.studentId,
     );
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.studentDiscount.delete({ where: { id: discountId } }),
-    );
+    await this.prisma.studentDiscount.update({
+      where: { id: discountId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
 
     return {
       message: 'Student discount moved to recycle bin successfully',
@@ -1315,9 +1321,10 @@ export class FinanceService {
       currentUser,
       existing.campusId,
     );
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.studentFineRule.delete({ where: { id: fineRuleId } }),
-    );
+    await this.prisma.studentFineRule.update({
+      where: { id: fineRuleId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
 
     return {
       message: 'Student fine rule moved to recycle bin successfully',
@@ -1473,9 +1480,10 @@ export class FinanceService {
       currentUser,
       existing.studentId,
     );
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.studentFine.delete({ where: { id: fineId } }),
-    );
+    await this.prisma.studentFine.update({
+      where: { id: fineId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
 
     return {
       message: 'Student fine moved to recycle bin successfully',
@@ -1800,9 +1808,10 @@ export class FinanceService {
       currentUser,
       existing.studentId,
     );
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.feeVoucher.delete({ where: { id: voucherId } }),
-    );
+    await this.prisma.feeVoucher.update({
+      where: { id: voucherId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
 
     return {
       message: 'Fee voucher moved to recycle bin successfully',
@@ -2007,21 +2016,19 @@ export class FinanceService {
       currentUser,
       existing.voucher.student.campusId,
     );
-    await this.requestContext.runWith(
-      { deleteReason: reason ?? null },
-      async () => {
-        await this.prisma.feePayment.delete({ where: { id: paymentId } });
-        const remainingPayment = await this.prisma.feePayment.findFirst({
-          where: { voucherId: existing.voucherId },
-        });
-        if (!remainingPayment) {
-          await this.prisma.feeVoucher.update({
-            where: { id: existing.voucherId },
-            data: { status: 'PENDING' },
-          });
-        }
-      },
-    );
+    await this.prisma.feePayment.update({
+      where: { id: paymentId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
+    const remainingPayment = await this.prisma.feePayment.findFirst({
+      where: { voucherId: existing.voucherId },
+    });
+    if (!remainingPayment) {
+      await this.prisma.feeVoucher.update({
+        where: { id: existing.voucherId },
+        data: { status: 'PENDING' },
+      });
+    }
 
     return {
       message: 'Fee payment moved to recycle bin successfully',

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { IsString, IsUUID } from 'class-validator';
+import { IsNumber, IsString, IsUUID } from 'class-validator';
 import { CustomFieldPayloadDto } from '../../../common/dto/custom-field-payload.dto';
 
 export class CreateCampusDto extends CustomFieldPayloadDto {
@@ -32,9 +32,11 @@ export class CreateCampusDto extends CustomFieldPayloadDto {
   staffEndTime!: string;
 
   @ApiProperty()
+  @IsNumber()
   lateThreshold!: number;
 
   @ApiProperty()
+  @IsNumber()
   earlyLeaveThreshold!: number;
 }
 

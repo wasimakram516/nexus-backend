@@ -21,6 +21,7 @@ import { FinanceModule } from './modules/finance/finance.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { RecycleBinModule } from './modules/recycle-bin/recycle-bin.module';
+import { UploadModule } from './modules/upload/upload.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { RecycleBinModule } from './modules/recycle-bin/recycle-bin.module';
     FinanceModule,
     CustomFieldsModule,
     RealtimeModule,
+    UploadModule,
     AuditLogsModule,
     RecycleBinModule,
   ],

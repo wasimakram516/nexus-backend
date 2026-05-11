@@ -318,9 +318,10 @@ export class PlatformService {
     };
   }
 
-  async getInstitution(institutionId: string) {
-    const institution = await this.prisma.institution.findUnique({
-      where: { id: institutionId },
+  async getInstitution(identifier: string) {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identifier);
+    const institution = await this.prisma.institution.findFirst({
+      where: isUuid ? { id: identifier } : { slug: identifier },
       include: this.institutionInclude,
     });
 
@@ -334,9 +335,18 @@ export class PlatformService {
     };
   }
 
-  async getInstitutionRuntimeConfig(institutionId: string) {
-    const data =
-      await this.moduleAccessService.getInstitutionRuntimeConfig(institutionId);
+  async getInstitutionRuntimeConfig(identifier: string) {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identifier);
+    const institutionId = isUuid
+      ? identifier
+      : await this.prisma.institution
+          .findFirst({ where: { slug: identifier }, select: { id: true } })
+          .then((r) => {
+            if (!r) throw new NotFoundException('Institution not found.');
+            return r.id;
+          });
+
+    const data = await this.moduleAccessService.getInstitutionRuntimeConfig(institutionId);
 
     return {
       message: 'Institution runtime configuration retrieved successfully',
@@ -355,7 +365,10 @@ export class PlatformService {
       async (tx: Prisma.TransactionClient) => {
         const updated = await tx.institution.update({
           where: { id: institutionId },
-          data: dto,
+          data: {
+            ...dto,
+            ...(dto.slug ? { slug: this.toSlug(dto.slug) } : {}),
+          },
           include: this.institutionInclude,
         });
 
@@ -451,12 +464,13 @@ export class PlatformService {
     const settings = await this.prisma.$transaction(
       async (tx: Prisma.TransactionClient) => {
         const upserts = await Promise.all(
-          dto.settings.map((setting) =>
-            tx.institutionSetting.upsert({
+          dto.settings.map((setting) => {
+            const normalizedKey = this.toSnakeCase(setting.key);
+            return tx.institutionSetting.upsert({
               where: {
                 institutionId_key_activeScopeKey: {
                   institutionId,
-                  key: setting.key,
+                  key: normalizedKey,
                   activeScopeKey: 'ACTIVE',
                 },
               },
@@ -466,12 +480,12 @@ export class PlatformService {
               },
               create: {
                 institutionId,
-                key: setting.key,
+                key: normalizedKey,
                 value: this.toJson(setting.value),
                 description: setting.description,
               },
-            }),
-          ),
+            });
+          }),
         );
 
         await tx.auditLog.create({
@@ -805,11 +819,10 @@ export class PlatformService {
     await this.getPermissionTemplateOrThrow(institutionId, templateId);
 
     await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-        tx.permissionTemplate.delete({
-          where: { id: templateId },
-        }),
-      );
+      await tx.permissionTemplate.update({
+        where: { id: templateId },
+        data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      });
 
       await tx.auditLog.create({
         data: {
@@ -970,6 +983,24 @@ export class PlatformService {
 
   private toJson(value: unknown): Prisma.InputJsonValue {
     return value as Prisma.InputJsonValue;
+  }
+
+  private toSnakeCase(value: string): string {
+    return value
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9\s_]/g, '')
+      .replace(/\s+/g, '_')
+      .replace(/_+/g, '_');
+  }
+
+  private toSlug(value: string): string {
+    return value
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-');
   }
 
   private readonly institutionInclude = {

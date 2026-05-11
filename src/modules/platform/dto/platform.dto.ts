@@ -16,6 +16,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -74,6 +75,12 @@ export class UpdateInstitutionDto {
   @IsString()
   @IsNotEmpty()
   name?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9-]+$/, { message: 'slug must be lowercase, alphanumeric and hyphens only' })
+  slug?: string;
 
   @ApiPropertyOptional({
     enum: InstitutionStatus,
@@ -148,9 +155,8 @@ export class UpsertInstitutionSettingDto {
   @IsNotEmpty()
   key!: string;
 
-  @ApiProperty({ type: 'object', additionalProperties: true })
-  @IsObject()
-  value!: Record<string, unknown>;
+  @ApiProperty()
+  value!: unknown;
 
   @ApiPropertyOptional()
   @IsOptional()

@@ -251,11 +251,10 @@ export class PeopleService {
       throw new NotFoundException('Student not found.');
     }
 
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.student.delete({
-        where: { id: studentId },
-      }),
-    );
+    await this.prisma.student.update({
+      where: { id: studentId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
 
     return {
       message: 'Student moved to recycle bin successfully',
@@ -447,11 +446,10 @@ export class PeopleService {
       throw new NotFoundException('Guardian not found.');
     }
 
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.guardian.delete({
-        where: { id: guardianId },
-      }),
-    );
+    await this.prisma.guardian.update({
+      where: { id: guardianId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
 
     return {
       message: 'Guardian moved to recycle bin successfully',
@@ -634,11 +632,10 @@ export class PeopleService {
       throw new NotFoundException('Teacher not found.');
     }
 
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.teacher.delete({
-        where: { id: teacherId },
-      }),
-    );
+    await this.prisma.teacher.update({
+      where: { id: teacherId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
 
     return {
       message: 'Teacher moved to recycle bin successfully',

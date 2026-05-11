@@ -209,11 +209,10 @@ export class UsersService {
       },
     });
 
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.user.delete({
-        where: { id: userId },
-      }),
-    );
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+    });
 
     await this.auditLogService.log(currentUser, {
       action: 'USER_DELETED',

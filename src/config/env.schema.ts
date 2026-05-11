@@ -17,6 +17,11 @@ export const envSchema = z
     SUPERADMIN_SEED_PASSWORD: z.string().min(8).optional(),
     CORS_ORIGINS: z.string().optional(),
     COOKIE_DOMAIN: z.string().optional(),
+    // Cloudinary
+    CLOUDINARY_CLOUD_NAME: z.string().min(1).optional(),
+    CLOUDINARY_API_KEY: z.string().min(1).optional(),
+    CLOUDINARY_API_SECRET: z.string().min(1).optional(),
+    CLOUDINARY_FOLDER: z.string().default('Nexus'),
   })
   .superRefine((config, context) => {
     const hasSuperadminEmail = Boolean(config.SUPERADMIN_SEED_EMAIL);

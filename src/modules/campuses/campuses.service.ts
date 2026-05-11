@@ -187,11 +187,15 @@ export class CampusesService {
       throw new NotFoundException('Campus not found.');
     }
 
-    await this.requestContext.runWith({ deleteReason: reason ?? null }, () =>
-      this.prisma.campus.delete({
-        where: { id: campusId },
-      }),
-    );
+    await this.prisma.campus.update({
+      where: { id: campusId },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
+    });
 
     await this.auditLogService.log(currentUser, {
       action: 'CAMPUS_DELETED',
