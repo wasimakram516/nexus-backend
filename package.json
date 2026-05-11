@@ -18,7 +18,7 @@
     "start:prod": "node dist/main.js",
     "lint": "eslint \"{src,test}/**/*.ts\" --max-warnings 0",
     "type-check": "tsc --noEmit -p tsconfig.build.json",
-    "prepare": "husky",
+    "prepare": "husky || true",
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
