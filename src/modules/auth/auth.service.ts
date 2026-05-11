@@ -366,10 +366,12 @@ export class AuthService {
   }
 
   private setRefreshCookie(response: Response, refreshToken: string) {
+    const isProduction =
+      this.configService.get<string>('NODE_ENV') === 'production';
     response.cookie(REFRESH_TOKEN_COOKIE, refreshToken, {
       httpOnly: true,
-      sameSite: 'strict',
-      secure: this.configService.get<string>('NODE_ENV') === 'production',
+      sameSite: isProduction ? 'none' : 'strict',
+      secure: isProduction,
       domain: this.configService.get<string>('COOKIE_DOMAIN') || undefined,
       maxAge:
         this.configService.getOrThrow<number>('JWT_REFRESH_TTL_DAYS') *
