@@ -13,12 +13,15 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { DeleteRecordDto } from '../../common/dto/delete-record.dto';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { UserRole } from '../../common/enums/domain.enums';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
-import { UpdateProfileDto, UpdateUserAccessDto } from './dto/users.dto';
+import {
+  ListUsersQueryDto,
+  UpdateProfileDto,
+  UpdateUserAccessDto,
+} from './dto/users.dto';
 import { UsersService } from './users.service';
 
 @ApiTags('Users')
@@ -63,7 +66,7 @@ export class UsersController {
   })
   listUsers(
     @CurrentUserDecorator() currentUser: CurrentUser,
-    @Query() query: PaginationQueryDto,
+    @Query() query: ListUsersQueryDto,
   ) {
     return this.usersService.listUsers(currentUser, query);
   }
