@@ -76,6 +76,12 @@ export class AssignTeacherSubjectDto extends CustomFieldPayloadDto {
   @ApiProperty() @IsUUID() teacherId!: string;
   @ApiProperty() @IsUUID() classId!: string;
   @ApiProperty() @IsUUID() subjectId!: string;
+  @ApiProperty({
+    description:
+      'Teaching allocation is section-level: the section of the class this teacher takes for the subject.',
+  })
+  @IsUUID()
+  sectionId!: string;
   @ApiProperty() @IsUUID() campusId!: string;
 }
 
