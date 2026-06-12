@@ -4,6 +4,7 @@ import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
+import { RequestContextService } from '../../common/services/request-context.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AcademicsService } from './academics.service';
 
@@ -78,6 +79,19 @@ describe('AcademicsService', () => {
           provide: ModuleAccessService,
           useValue: {
             assertModuleEnabledForUser: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: RequestContextService,
+          useValue: {
+            runWith: jest
+              .fn()
+              .mockImplementation(
+                (
+                  _state: Record<string, unknown>,
+                  callback: () => Promise<unknown>,
+                ) => callback(),
+              ),
           },
         },
       ],

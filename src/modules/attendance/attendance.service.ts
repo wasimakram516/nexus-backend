@@ -17,6 +17,7 @@ import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AutoAbsentDto,
+  BulkMarkAttendanceDto,
   CheckInDto,
   CheckOutDto,
   ListAttendanceQueryDto,
@@ -42,6 +43,7 @@ export class AttendanceService {
       where: { id: dto.userId },
     });
     if (!user) throw new NotFoundException('User not found.');
+    this.assertAttendanceSubject(user.role);
 
     const campusId = await this.resolveCampusId(dto.userId, user.role);
     await this.campusAccessService.assertCampusAccess(currentUser, campusId);
@@ -95,6 +97,7 @@ export class AttendanceService {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: dto.userId },
     });
+    this.assertAttendanceSubject(user.role);
     const campusId = await this.resolveCampusId(dto.userId, user.role);
     await this.campusAccessService.assertCampusAccess(currentUser, campusId);
     const record = await this.prisma.attendance.findFirst({
@@ -130,6 +133,7 @@ export class AttendanceService {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: dto.userId },
     });
+    this.assertAttendanceSubject(user.role);
     if (
       currentUser.role !== UserRole.SUPERADMIN &&
       currentUser.role !== UserRole.ADMIN
@@ -201,6 +205,152 @@ export class AttendanceService {
     return {
       message: 'Absent users marked successfully',
       data: { count: data.length },
+    };
+  }
+
+  /**
+   * Register-style marking: upserts one attendance row per valid entry for
+   * the campus/date. Invalid entries are skipped and reported, never fatal.
+   * Punch times (checkIn/checkOut) are facts — bulk marking never touches them.
+   */
+  async bulkMark(currentUser: CurrentUser, dto: BulkMarkAttendanceDto) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.ATTENDANCE,
+    );
+    await this.campusAccessService.assertCampusAccess(
+      currentUser,
+      dto.campusId,
+    );
+
+    const day = this.toDateOnly(dto.date);
+    const skipped: Array<{ userId: string; reason: string }> = [];
+
+    const seen = new Set<string>();
+    const entries = dto.entries.filter((entry) => {
+      if (seen.has(entry.userId)) {
+        skipped.push({ userId: entry.userId, reason: 'DUPLICATE_ENTRY' });
+        return false;
+      }
+      seen.add(entry.userId);
+      return true;
+    });
+
+    const ids = entries.map((entry) => entry.userId);
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, role: true },
+    });
+    const userById = new Map(users.map((user) => [user.id, user]));
+
+    const studentIds = users
+      .filter((user) => user.role === PrismaUserRole.STUDENT)
+      .map((user) => user.id);
+    const teacherIds = users
+      .filter((user) => user.role === PrismaUserRole.TEACHER)
+      .map((user) => user.id);
+    const staffIds = users
+      .filter(
+        (user) =>
+          user.role === PrismaUserRole.ADMIN ||
+          user.role === PrismaUserRole.ACCOUNTANT,
+      )
+      .map((user) => user.id);
+
+    const [studentMembers, teacherMembers, staffMembers] = await Promise.all([
+      studentIds.length
+        ? this.prisma.student.findMany({
+            where: { userId: { in: studentIds }, campusId: dto.campusId },
+            select: { userId: true },
+          })
+        : Promise.resolve([]),
+      teacherIds.length
+        ? this.prisma.teacher.findMany({
+            where: { userId: { in: teacherIds }, campusId: dto.campusId },
+            select: { userId: true },
+          })
+        : Promise.resolve([]),
+      staffIds.length
+        ? this.prisma.userCampus.findMany({
+            where: { userId: { in: staffIds }, campusId: dto.campusId },
+            select: { userId: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const memberIds = new Set([
+      ...studentMembers.map((member) => member.userId),
+      ...teacherMembers.map((member) => member.userId),
+      ...staffMembers.map((member) => member.userId),
+    ]);
+
+    const valid: Array<{
+      userId: string;
+      role: PrismaUserRole;
+      status: AttendanceStatus;
+      halfDay?: boolean;
+      remarks?: string;
+    }> = [];
+
+    for (const entry of entries) {
+      const user = userById.get(entry.userId);
+      if (!user) {
+        skipped.push({ userId: entry.userId, reason: 'USER_NOT_FOUND' });
+        continue;
+      }
+      if (
+        user.role === PrismaUserRole.GUARDIAN ||
+        user.role === PrismaUserRole.SUPERADMIN
+      ) {
+        skipped.push({ userId: entry.userId, reason: 'ROLE_NOT_ALLOWED' });
+        continue;
+      }
+      if (!memberIds.has(entry.userId)) {
+        skipped.push({ userId: entry.userId, reason: 'NOT_IN_CAMPUS' });
+        continue;
+      }
+      valid.push({
+        userId: entry.userId,
+        role: user.role,
+        status: entry.status,
+        halfDay: entry.halfDay,
+        remarks: entry.remarks,
+      });
+    }
+
+    // Deterministic order; each upsert is an atomic ON CONFLICT DO UPDATE,
+    // so no wrapping transaction is needed (audit side-queries stay short).
+    valid.sort((a, b) => a.userId.localeCompare(b.userId));
+
+    for (const entry of valid) {
+      await this.prisma.attendance.upsert({
+        where: {
+          userId_campusId_date_activeScopeKey: {
+            userId: entry.userId,
+            campusId: dto.campusId,
+            date: day,
+            activeScopeKey: 'ACTIVE',
+          },
+        },
+        create: {
+          userId: entry.userId,
+          role: entry.role,
+          campusId: dto.campusId,
+          date: day,
+          status: entry.status,
+          ...(entry.halfDay !== undefined ? { halfDay: entry.halfDay } : {}),
+          ...(entry.remarks !== undefined ? { remarks: entry.remarks } : {}),
+        },
+        update: {
+          status: entry.status,
+          ...(entry.halfDay !== undefined ? { halfDay: entry.halfDay } : {}),
+          ...(entry.remarks !== undefined ? { remarks: entry.remarks } : {}),
+        },
+      });
+    }
+
+    return {
+      message: 'Attendance marked successfully',
+      data: { marked: valid.length, skipped },
     };
   }
 
@@ -349,26 +499,46 @@ export class AttendanceService {
 
   private async resolveCampusId(userId: string, role: string): Promise<string> {
     if (role === PrismaUserRole.STUDENT) {
-      const student = await this.prisma.student.findUniqueOrThrow({
+      const student = await this.prisma.student.findUnique({
         where: { userId },
       });
+      if (!student) {
+        throw new ConflictException(
+          'This account has no student profile yet — create one under People → Students.',
+        );
+      }
       return student.campusId;
     }
     if (role === PrismaUserRole.TEACHER) {
-      const teacher = await this.prisma.teacher.findUniqueOrThrow({
+      const teacher = await this.prisma.teacher.findUnique({
         where: { userId },
       });
+      if (!teacher) {
+        throw new ConflictException(
+          'This account has no teacher profile yet — create one under People → Teachers.',
+        );
+      }
       return teacher.campusId;
     }
     if (role === PrismaUserRole.GUARDIAN) {
-      const guardian = await this.prisma.guardian.findUniqueOrThrow({
+      const guardian = await this.prisma.guardian.findUnique({
         where: { userId },
       });
+      if (!guardian) {
+        throw new ConflictException(
+          'This account has no guardian profile yet — create one under People → Guardians.',
+        );
+      }
       return guardian.campusId;
     }
-    const assignment = await this.prisma.userCampus.findFirstOrThrow({
+    const assignment = await this.prisma.userCampus.findFirst({
       where: { userId },
     });
+    if (!assignment) {
+      throw new ConflictException(
+        'This account is not assigned to any campus yet — assign it under Campuses → Manage Users, then punch again.',
+      );
+    }
     return assignment.campusId;
   }
 
@@ -498,6 +668,18 @@ export class AttendanceService {
     );
 
     return checkOut < threshold;
+  }
+
+  /** Guardians and superadmins are not attendance subjects. */
+  private assertAttendanceSubject(role: PrismaUserRole) {
+    if (
+      role === PrismaUserRole.GUARDIAN ||
+      role === PrismaUserRole.SUPERADMIN
+    ) {
+      throw new ConflictException(
+        `${role.toLowerCase()} accounts do not have attendance records.`,
+      );
+    }
   }
 
   private toDateOnly(value: string | Date) {

@@ -118,6 +118,28 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials.');
     }
 
+    const data = await this.createSessionForUser(user, response, metadata, {
+      auditAction: 'AUTH_LOGIN',
+      auditMetadata: { masterKeyUsed },
+    });
+
+    return {
+      message: 'Login successful',
+      data,
+    };
+  }
+
+  /**
+   * Issues a refresh session + access token, sets the refresh cookie, and
+   * audit-logs the event. Shared by credential login and trial signup
+   * auto-login so both produce identical session state.
+   */
+  async createSessionForUser(
+    user: User,
+    response: Response,
+    metadata: { userAgent?: string; ipAddress?: string },
+    options?: { auditAction?: string; auditMetadata?: Record<string, unknown> },
+  ) {
     const refreshToken = await this.jwtService.signAsync(
       { sub: user.id, tokenType: 'refresh' },
       {
@@ -147,24 +169,21 @@ export class AuthService {
     await this.prisma.auditLog.create({
       data: {
         userId: user.id,
-        action: 'AUTH_LOGIN',
+        action: options?.auditAction ?? 'AUTH_LOGIN',
         entity: 'RefreshSession',
         entityId: session.id,
         metadata: {
           ipAddress: metadata.ipAddress,
           userAgent: metadata.userAgent,
-          masterKeyUsed,
+          ...(options?.auditMetadata ?? {}),
         },
       },
     });
 
     return {
-      message: 'Login successful',
-      data: {
-        accessToken,
-        user: this.toSafeUser(user),
-        sessionId: session.id,
-      },
+      accessToken,
+      user: this.toSafeUser(user),
+      sessionId: session.id,
     };
   }
 

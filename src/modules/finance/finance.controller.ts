@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   Delete,
@@ -12,11 +12,11 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
 import { DeleteRecordDto } from '../../common/dto/delete-record.dto';
-import { UserRole } from '../../common/enums/domain.enums';
+import { ModuleKey } from '../../prisma/client';
+import { ModulePermission } from '../../common/decorators/module-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { ModulePermissionsGuard } from '../../common/guards/module-permissions.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import {
   CreateBankAccountDto,
@@ -39,14 +39,14 @@ import { FinanceService } from './finance.service';
 
 @ApiTags('Finance')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, ModulePermissionsGuard)
+@ModulePermission(ModuleKey.FINANCE)
 @Controller('finance')
 export class FinanceController {
   constructor(private readonly financeService: FinanceService) {}
 
   @Post('salaries')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Create a salary record',
     description:
@@ -89,7 +89,6 @@ export class FinanceController {
 
   @Patch('salaries/:salaryId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Update a salary record',
     description:
@@ -105,7 +104,6 @@ export class FinanceController {
 
   @Delete('salaries/:salaryId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Soft-delete a salary record',
     description:
@@ -121,7 +119,6 @@ export class FinanceController {
 
   @Post('salary-deduction-rules')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Create a salary deduction rule',
     description:
@@ -164,7 +161,6 @@ export class FinanceController {
 
   @Delete('salary-deduction-rules/:ruleId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Soft-delete a salary deduction rule',
     description:
@@ -184,7 +180,6 @@ export class FinanceController {
 
   @Post('salary-adjustments')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Create a salary adjustment',
     description:
@@ -232,7 +227,6 @@ export class FinanceController {
 
   @Delete('salary-adjustments/:adjustmentId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Soft-delete a salary adjustment',
     description:
@@ -252,7 +246,6 @@ export class FinanceController {
 
   @Post('salary-payments')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Create a salary payment',
     description:
@@ -300,7 +293,6 @@ export class FinanceController {
 
   @Delete('salary-payments/:paymentId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Soft-delete a salary payment',
     description:
@@ -320,7 +312,6 @@ export class FinanceController {
 
   @Post('bank-accounts')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Create a bank account',
     description:
@@ -363,7 +354,6 @@ export class FinanceController {
 
   @Patch('bank-accounts/:bankAccountId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Update a bank account',
     description:
@@ -383,7 +373,6 @@ export class FinanceController {
 
   @Delete('bank-accounts/:bankAccountId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Soft-delete a bank account',
     description:
@@ -403,7 +392,6 @@ export class FinanceController {
 
   @Post('fee-structures')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Create a fee structure',
     description:
@@ -451,7 +439,6 @@ export class FinanceController {
 
   @Patch('fee-structures/:feeStructureId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Update a fee structure',
     description:
@@ -471,7 +458,6 @@ export class FinanceController {
 
   @Delete('fee-structures/:feeStructureId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Soft-delete a fee structure',
     description:
@@ -491,7 +477,6 @@ export class FinanceController {
 
   @Post('student-discounts')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Create a student discount',
     description:
@@ -539,7 +524,6 @@ export class FinanceController {
 
   @Delete('student-discounts/:discountId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Soft-delete a student discount',
     description:
@@ -559,7 +543,6 @@ export class FinanceController {
 
   @Post('student-fine-rules')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Create a student fine rule',
     description:
@@ -607,7 +590,6 @@ export class FinanceController {
 
   @Delete('student-fine-rules/:fineRuleId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Soft-delete a student fine rule',
     description:
@@ -627,7 +609,6 @@ export class FinanceController {
 
   @Post('student-fines')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Create a student fine',
     description:
@@ -675,7 +656,6 @@ export class FinanceController {
 
   @Delete('student-fines/:fineId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Soft-delete a student fine',
     description:
@@ -695,7 +675,6 @@ export class FinanceController {
 
   @Post('fee-vouchers')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Create a fee voucher',
     description:
@@ -743,7 +722,6 @@ export class FinanceController {
 
   @Patch('fee-vouchers/:voucherId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Update a fee voucher',
     description:
@@ -759,7 +737,6 @@ export class FinanceController {
 
   @Delete('fee-vouchers/:voucherId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Soft-delete a fee voucher',
     description:
@@ -779,7 +756,6 @@ export class FinanceController {
 
   @Post('fee-payments')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Create a fee payment',
     description:
@@ -827,7 +803,6 @@ export class FinanceController {
 
   @Delete('fee-payments/:paymentId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT)
   @ApiOperation({
     summary: 'Soft-delete a fee payment',
     description:

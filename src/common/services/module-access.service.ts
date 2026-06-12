@@ -23,7 +23,11 @@ type RuntimeConfigRecord = {
     planKey: string | null;
     planName: string | null;
     autoRenew: boolean;
+    startsAt: Date | null;
+    endsAt: Date | null;
   } | null;
+  /** Active trials get every module unlocked so prospects see the full product. */
+  trialFullAccess: boolean;
 };
 
 @Injectable()
@@ -55,6 +59,18 @@ export class ModuleAccessService {
     ) {
       throw new ForbiddenException(
         'This institution subscription is not active for module access.',
+      );
+    }
+
+    // Legacy TRIAL rows without endsAt never expire.
+    if (
+      runtimeConfig.subscription &&
+      runtimeConfig.subscription.status === SubscriptionStatus.TRIAL &&
+      runtimeConfig.subscription.endsAt &&
+      runtimeConfig.subscription.endsAt.getTime() < Date.now()
+    ) {
+      throw new ForbiddenException(
+        'This institution trial has expired. Contact Nexus support to activate your subscription.',
       );
     }
 
@@ -109,6 +125,22 @@ export class ModuleAccessService {
       };
     }
 
+    // Active (non-expired) trials unlock every module so prospects experience
+    // the full product. Converting to a paid status automatically reverts
+    // access to the stored entitlements — no cleanup needed.
+    const trialFullAccess =
+      subscription?.status === SubscriptionStatus.TRIAL &&
+      (!subscription.endsAt || subscription.endsAt.getTime() > Date.now());
+
+    if (trialFullAccess) {
+      for (const moduleKey of Object.values(ModuleKey)) {
+        modules[moduleKey] = {
+          enabled: true,
+          configuration: modules[moduleKey]?.configuration ?? {},
+        };
+      }
+    }
+
     const settings = institution.settings.reduce<Record<string, unknown>>(
       (acc, setting) => {
         acc[setting.key] = setting.value;
@@ -139,8 +171,11 @@ export class ModuleAccessService {
             planKey: subscription.plan?.key ?? null,
             planName: subscription.plan?.name ?? null,
             autoRenew: subscription.autoRenew,
+            startsAt: subscription.startsAt ?? null,
+            endsAt: subscription.endsAt ?? null,
           }
         : null,
+      trialFullAccess,
     };
   }
 

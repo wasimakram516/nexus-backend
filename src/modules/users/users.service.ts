@@ -1,15 +1,20 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { UserRole } from '../../prisma/client';
+import { Prisma, UserRole } from '../../prisma/client';
 import { AuditLogService } from '../../common/services/audit-log.service';
 import { RequestContextService } from '../../common/services/request-context.service';
+import { UserPermissionsService } from '../../common/services/user-permissions.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
-import { UpdateProfileDto, UpdateUserRoleDto } from './dto/users.dto';
+import {
+  ListUsersQueryDto,
+  UpdateProfileDto,
+  UpdateUserAccessDto,
+} from './dto/users.dto';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -18,6 +23,7 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly auditLogService: AuditLogService,
     private readonly requestContext: RequestContextService,
+    private readonly userPermissionsService: UserPermissionsService,
   ) {}
 
   async getProfile(currentUser: CurrentUser) {
@@ -77,7 +83,7 @@ export class UsersService {
     return { message: 'Profile updated successfully', data: user };
   }
 
-  async listUsers(currentUser: CurrentUser, query: PaginationQueryDto) {
+  async listUsers(currentUser: CurrentUser, query: ListUsersQueryDto) {
     const skip = (query.page! - 1) * query.limit!;
     const where = {
       deletedAt: null,
@@ -96,9 +102,12 @@ export class UsersService {
             ],
           }
         : {}),
+      ...(query.role ? { role: query.role } : {}),
       ...(currentUser.role === UserRole.ADMIN && currentUser.institutionId
         ? { institutionId: currentUser.institutionId }
-        : {}),
+        : currentUser.role === UserRole.SUPERADMIN && query.institutionId
+          ? { institutionId: query.institutionId }
+          : {}),
     };
 
     const [items, total] = await this.prisma.$transaction([
@@ -114,6 +123,9 @@ export class UsersService {
           role: true,
           status: true,
           institutionId: true,
+          permissionTemplateId: true,
+          permissionOverrides: true,
+          permissionTemplate: { select: { name: true } },
           createdAt: true,
         },
       }),
@@ -129,7 +141,7 @@ export class UsersService {
   async updateUserRole(
     currentUser: CurrentUser,
     userId: string,
-    dto: UpdateUserRoleDto,
+    dto: UpdateUserAccessDto,
   ) {
     if (currentUser.sub === userId) {
       throw new ForbiddenException('You cannot update your own role.');
@@ -155,9 +167,60 @@ export class UsersService {
       );
     }
 
+    const data: Prisma.UserUncheckedUpdateInput = {};
+    if (dto.role !== undefined) data.role = dto.role;
+    if (dto.status !== undefined) data.status = dto.status;
+
+    const touchesPermissions =
+      dto.permissionTemplateId !== undefined ||
+      dto.permissionOverrides !== undefined;
+    if (touchesPermissions) {
+      const resultingRole = dto.role ?? target.role;
+      if (
+        resultingRole === UserRole.ADMIN ||
+        resultingRole === UserRole.SUPERADMIN
+      ) {
+        throw new BadRequestException(
+          'Permission templates and overrides cannot be applied to admin-level users — they already have full institution access.',
+        );
+      }
+    }
+
+    if (dto.permissionTemplateId !== undefined) {
+      if (dto.permissionTemplateId === null) {
+        data.permissionTemplateId = null;
+      } else {
+        const template = await this.prisma.permissionTemplate.findFirst({
+          where: {
+            id: dto.permissionTemplateId,
+            deletedAt: null,
+            ...(target.institutionId
+              ? { institutionId: target.institutionId }
+              : {}),
+          },
+          select: { id: true },
+        });
+        if (!template) {
+          throw new BadRequestException(
+            'Permission template not found for this institution.',
+          );
+        }
+        data.permissionTemplateId = template.id;
+      }
+    }
+
+    if (dto.permissionOverrides !== undefined) {
+      data.permissionOverrides =
+        dto.permissionOverrides === null
+          ? Prisma.DbNull
+          : (this.userPermissionsService.sanitizeOverrides(
+              dto.permissionOverrides,
+            ) as Prisma.InputJsonValue);
+    }
+
     const user = await this.prisma.user.update({
       where: { id: userId },
-      data: dto,
+      data,
       select: {
         id: true,
         name: true,
@@ -166,6 +229,9 @@ export class UsersService {
         status: true,
         deletedAt: true,
         institutionId: true,
+        permissionTemplateId: true,
+        permissionOverrides: true,
+        permissionTemplate: { select: { name: true } },
       },
     });
 
@@ -177,6 +243,8 @@ export class UsersService {
       metadata: {
         role: dto.role,
         status: dto.status,
+        permissionTemplateId: dto.permissionTemplateId,
+        permissionOverridesUpdated: dto.permissionOverrides !== undefined,
       },
     });
 

@@ -72,7 +72,13 @@ export class PeopleService {
       this.assertSameCampus(dto.campusId, sectionCampusId, 'section');
     }
 
-    const { customFields, ...studentData } = dto;
+    const { customFields, ...studentFields } = dto;
+    // Prisma DateTime columns reject date-only strings like "2016-06-12".
+    const studentData = {
+      ...studentFields,
+      dob: new Date(dto.dob),
+      admissionDate: new Date(dto.admissionDate),
+    };
     const deletedStudent = await this.prisma.student.findFirst({
       where: {
         userId: dto.userId,
@@ -130,6 +136,12 @@ export class PeopleService {
           ? undefined
           : { campusId: { in: campusIds } },
       orderBy: { createdAt: 'desc' },
+      include: {
+        guardians: {
+          where: { deletedAt: null },
+          select: { id: true, guardianId: true },
+        },
+      },
     });
     const data = await this.entityCustomFieldsService.attachToItems(
       items,
@@ -208,10 +220,14 @@ export class PeopleService {
       this.assertSameCampus(targetCampusId, sectionCampusId, 'section');
     }
 
-    const { customFields, ...studentData } = dto;
+    const { customFields, ...studentFields } = dto;
     const item = await this.prisma.student.update({
       where: { id: studentId },
-      data: studentData,
+      data: {
+        ...studentFields,
+        ...(dto.dob && { dob: new Date(dto.dob) }),
+        ...(dto.admissionDate && { admissionDate: new Date(dto.admissionDate) }),
+      },
     });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
@@ -333,6 +349,12 @@ export class PeopleService {
           ? undefined
           : { campusId: { in: campusIds } },
       orderBy: { createdAt: 'desc' },
+      include: {
+        students: {
+          where: { deletedAt: null },
+          select: { id: true, studentId: true },
+        },
+      },
     });
     const data = await this.entityCustomFieldsService.attachToItems(
       items,
@@ -749,9 +771,12 @@ export class PeopleService {
       this.assertSameCampus(studentCampusId, sectionCampusId, 'new section');
     }
 
-    const { customFields, ...promotionData } = dto;
+    const { customFields, ...promotionFields } = dto;
     const item = await this.prisma.studentHistory.create({
-      data: promotionData,
+      data: {
+        ...promotionFields,
+        promotionDate: new Date(dto.promotionDate),
+      },
     });
     if (dto.newClassId || dto.newSectionId) {
       await this.prisma.student.update({
@@ -804,23 +829,39 @@ export class PeopleService {
       currentUser,
       dto.subjectId,
     );
+    const sectionCampusId = await this.campusAccessService.assertSectionAccess(
+      currentUser,
+      dto.sectionId,
+    );
 
     this.assertSameCampus(dto.campusId, teacherCampusId, 'teacher');
     this.assertSameCampus(dto.campusId, classCampusId, 'class');
     this.assertSameCampus(dto.campusId, subjectCampusId, 'subject');
+    this.assertSameCampus(dto.campusId, sectionCampusId, 'section');
+
+    const section = await this.prisma.section.findUnique({
+      where: { id: dto.sectionId },
+      select: { classId: true },
+    });
+    if (!section || section.classId !== dto.classId) {
+      throw new ConflictException(
+        'The selected section does not belong to the selected class.',
+      );
+    }
 
     const existingAssignment = await this.prisma.teacherSubject.findFirst({
       where: {
         teacherId: dto.teacherId,
         classId: dto.classId,
         subjectId: dto.subjectId,
+        sectionId: dto.sectionId,
         campusId: dto.campusId,
       },
     });
 
     if (existingAssignment) {
       throw new ConflictException(
-        'This teacher is already assigned to the selected subject and class for the campus.',
+        'This teacher is already assigned to this subject for the selected section.',
       );
     }
 
@@ -844,6 +885,70 @@ export class PeopleService {
       CustomFieldEntity.TEACHER_SUBJECT,
     );
     return { message: 'Teacher subject assigned successfully', data };
+  }
+
+  async listTeacherSubjects(currentUser: CurrentUser, campusId?: string) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.PEOPLE,
+    );
+    const campusIds = await this.campusAccessService.getScopedCampusIds(
+      currentUser,
+      campusId,
+    );
+    const data = await this.prisma.teacherSubject.findMany({
+      where:
+        currentUser.role === UserRole.SUPERADMIN && !campusId
+          ? undefined
+          : { campusId: { in: campusIds } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return {
+      message: 'Teacher subject assignments retrieved successfully',
+      data,
+    };
+  }
+
+  async removeTeacherSubject(currentUser: CurrentUser, assignmentId: string) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.PEOPLE,
+    );
+    const existing = await this.prisma.teacherSubject.findUnique({
+      where: { id: assignmentId },
+    });
+    if (!existing) {
+      throw new NotFoundException('Teacher subject assignment not found.');
+    }
+    await this.campusAccessService.assertCampusAccess(
+      currentUser,
+      existing.campusId,
+    );
+    await this.prisma.teacherSubject.delete({ where: { id: assignmentId } });
+    return { message: 'Teacher unassigned successfully', data: existing };
+  }
+
+  async unlinkGuardian(currentUser: CurrentUser, linkId: string) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.PEOPLE,
+    );
+    const link = await this.prisma.studentGuardian.findUnique({
+      where: { id: linkId },
+      include: { student: { select: { campusId: true } } },
+    });
+    if (!link) {
+      throw new NotFoundException('Guardian link not found.');
+    }
+    await this.campusAccessService.assertCampusAccess(
+      currentUser,
+      link.student.campusId,
+    );
+    await this.prisma.studentGuardian.delete({ where: { id: linkId } });
+    return {
+      message: 'Guardian unlinked successfully',
+      data: { id: link.id, studentId: link.studentId, guardianId: link.guardianId },
+    };
   }
 
   async createContact(currentUser: CurrentUser, dto: CreateContactDto) {

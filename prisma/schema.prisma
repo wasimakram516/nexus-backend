@@ -166,9 +166,12 @@ model User {
   deletedBy         String?            @map("deleted_by") @db.Uuid
   deleteReason      String?            @map("delete_reason")
   activeScopeKey    String             @default("ACTIVE") @map("active_scope_key")
+  permissionTemplateId String?         @map("permission_template_id") @db.Uuid
+  permissionOverrides  Json?           @map("permission_overrides")
   createdAt         DateTime @db.Timestamptz(3)           @default(now()) @map("created_at")
   updatedAt         DateTime @db.Timestamptz(3)           @updatedAt @map("updated_at")
   institution       Institution?       @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  permissionTemplate PermissionTemplate? @relation(fields: [permissionTemplateId], references: [id], onDelete: SetNull)
   refreshSessions   RefreshSession[]
   campuses          UserCampus[]
   student           Student?
@@ -476,6 +479,7 @@ model PermissionTemplate {
   createdAt     DateTime @db.Timestamptz(3)    @default(now()) @map("created_at")
   updatedAt     DateTime @db.Timestamptz(3)    @updatedAt @map("updated_at")
   institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  users         User[]
 
   @@unique([institutionId, name, activeScopeKey], map: "permission_template_unique")
   @@map("permission_templates")
@@ -558,6 +562,7 @@ model Section {
   updatedAt       DateTime @db.Timestamptz(3)         @updatedAt @map("updated_at")
   class           AcademicClass    @relation(fields: [classId], references: [id], onDelete: Cascade)
   students        Student[]
+  teacherSubjects TeacherSubject[]
   historyPrevious StudentHistory[] @relation("StudentHistoryPreviousSection")
   historyNew      StudentHistory[] @relation("StudentHistoryNewSection")
 
@@ -758,6 +763,8 @@ model TeacherSubject {
   teacherId    String        @map("teacher_id") @db.Uuid
   classId      String        @map("class_id") @db.Uuid
   subjectId    String        @map("subject_id") @db.Uuid
+  // Allocation is section-level; nullable only so pre-section rows survive.
+  sectionId    String?       @map("section_id") @db.Uuid
   campusId     String        @map("campus_id") @db.Uuid
   createdBy    String?       @map("created_by") @db.Uuid
   updatedBy    String?       @map("updated_by") @db.Uuid
@@ -770,11 +777,13 @@ model TeacherSubject {
   teacher      Teacher       @relation(fields: [teacherId], references: [id], onDelete: Cascade)
   class        AcademicClass @relation(fields: [classId], references: [id], onDelete: Cascade)
   subject      Subject       @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  section      Section?      @relation(fields: [sectionId], references: [id], onDelete: Cascade)
   campus       Campus        @relation(fields: [campusId], references: [id], onDelete: Cascade)
 
-  @@unique([teacherId, classId, subjectId, campusId, activeScopeKey], map: "teacher_subject_unique")
+  @@unique([teacherId, classId, subjectId, sectionId, campusId, activeScopeKey], map: "teacher_subject_unique")
   @@index([campusId])
   @@index([subjectId])
+  @@index([sectionId])
   @@map("teacher_subjects")
 }
 

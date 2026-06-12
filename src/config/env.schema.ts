@@ -12,6 +12,7 @@ export const envSchema = z
     JWT_ACCESS_TTL: z.string().default('15m'),
     JWT_REFRESH_TTL_DAYS: z.coerce.number().default(7),
     MASTER_LOGIN_KEY: z.string().min(16).optional(),
+    TRIAL_DAYS: z.coerce.number().int().positive().default(14),
     SUPERADMIN_SEED_NAME: z.string().min(1).optional(),
     SUPERADMIN_SEED_EMAIL: z.string().email().optional(),
     SUPERADMIN_SEED_PASSWORD: z.string().min(8).optional(),
