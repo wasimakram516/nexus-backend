@@ -8,6 +8,7 @@ import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import {
   IsArray,
   IsBoolean,
+  IsDateString,
   IsEmail,
   IsEnum,
   IsNumber,
@@ -213,6 +214,21 @@ export class UpdateSubscriptionDto {
   @IsOptional()
   @IsBoolean()
   autoRenew?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Subscription/trial start date (ISO).',
+  })
+  @IsOptional()
+  @IsDateString()
+  startsAt?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Subscription/trial end date (ISO). Expired TRIAL subscriptions lose module access.',
+  })
+  @IsOptional()
+  @IsDateString()
+  endsAt?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

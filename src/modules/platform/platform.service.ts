@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   DeploymentMode,
   ModuleKey,
@@ -58,7 +59,29 @@ export class PlatformService {
     private readonly prisma: PrismaService,
     private readonly moduleAccessService: ModuleAccessService,
     private readonly requestContext: RequestContextService,
+    private readonly configService: ConfigService,
   ) {}
+
+  /** Trial window applied to newly created TRIAL subscriptions. */
+  getTrialDates(reference = new Date()) {
+    const trialDays = this.configService.get<number>('TRIAL_DAYS') ?? 14;
+    const endsAt = new Date(reference);
+    endsAt.setDate(endsAt.getDate() + trialDays);
+    return { startsAt: reference, endsAt };
+  }
+
+  /** Default-plan context the public self-signup flow provisions trials with. */
+  async getSignupPlanContext() {
+    const plans = await this.syncBootstrapPlans();
+    const plan = await this.resolvePlan(undefined, plans);
+    return {
+      plan,
+      deploymentModes: this.readDeploymentModes(plan.deploymentModes),
+      defaultModules: this.readModuleKeys(plan.defaultModules),
+      agreedPrice: this.readPrice(plan.basePrice),
+      setupFee: this.readPrice(plan.setupFee),
+    };
+  }
 
   async listPlans() {
     const plans = await this.syncBootstrapPlans();
@@ -214,6 +237,7 @@ export class PlatformService {
       );
     }
 
+    const trialDates = this.getTrialDates();
     const subscriptionCreate: Prisma.InstitutionSubscriptionUncheckedCreateWithoutInstitutionInput =
       {
         planId: plan.id,
@@ -222,6 +246,8 @@ export class PlatformService {
         billingCycle: plan.billingCycle,
         setupFee: this.readPrice(plan.setupFee),
         status: SubscriptionStatus.TRIAL,
+        startsAt: trialDates.startsAt,
+        endsAt: trialDates.endsAt,
         autoRenew: false,
         metadata: this.toJson({
           source: 'platform-bootstrap',
@@ -599,6 +625,8 @@ export class PlatformService {
                 discountAmount: dto.discountAmount,
                 pricingNotes: dto.pricingNotes,
                 status: dto.status,
+                startsAt: dto.startsAt ? new Date(dto.startsAt) : undefined,
+                endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
                 autoRenew: dto.autoRenew,
                 metadata: dto.metadata
                   ? this.toJson({
@@ -619,6 +647,8 @@ export class PlatformService {
                 discountAmount: dto.discountAmount,
                 pricingNotes: dto.pricingNotes,
                 status: dto.status ?? SubscriptionStatus.TRIAL,
+                startsAt: dto.startsAt ? new Date(dto.startsAt) : undefined,
+                endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
                 autoRenew: dto.autoRenew ?? false,
                 metadata: this.toJson({
                   ...(dto.metadata ?? {}),
