@@ -310,7 +310,7 @@ describe('FinanceService', () => {
       campusId: 'campus-1',
       userId: 'teacher-1',
     });
-    prismaMock.staffSalary.delete.mockResolvedValue({
+    prismaMock.staffSalary.update.mockResolvedValue({
       id: 'salary-1',
     });
     campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
@@ -321,8 +321,13 @@ describe('FinanceService', () => {
       'archived duplicate',
     );
 
-    expect(prismaMock.staffSalary.delete).toHaveBeenCalledWith({
+    expect(prismaMock.staffSalary.update).toHaveBeenCalledWith({
       where: { id: 'salary-1' },
+      data: expect.objectContaining({
+        deletedAt: expect.any(Date),
+        deletedBy: accountantUser.sub,
+        deleteReason: 'archived duplicate',
+      }),
     });
     expect(result).toMatchObject({
       message: 'Salary moved to recycle bin successfully',

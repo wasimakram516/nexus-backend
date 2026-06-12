@@ -21,9 +21,18 @@ describe('AttendanceService', () => {
     user: {
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
+      findMany: jest.fn(),
     },
     teacher: {
+      findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
+      findMany: jest.fn(),
+    },
+    student: {
+      findMany: jest.fn(),
+    },
+    userCampus: {
+      findMany: jest.fn(),
     },
     campus: {
       findUniqueOrThrow: jest.fn(),
@@ -34,6 +43,7 @@ describe('AttendanceService', () => {
       findMany: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      upsert: jest.fn(),
     },
   };
 
@@ -228,12 +238,80 @@ describe('AttendanceService', () => {
     });
   });
 
+  it('bulk-marks valid entries and skips guardians and non-members with reasons', async () => {
+    const adminUser: CurrentUser = {
+      sub: 'admin-1',
+      email: 'admin@nexus.test',
+      role: UserRole.ADMIN,
+      institutionId: 'institution-1',
+    };
+
+    campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+    prismaMock.user.findMany.mockResolvedValue([
+      { id: 'student-user-1', role: UserRole.STUDENT },
+      { id: 'guardian-user-1', role: UserRole.GUARDIAN },
+      { id: 'teacher-user-9', role: UserRole.TEACHER },
+    ]);
+    prismaMock.student.findMany.mockResolvedValue([
+      { userId: 'student-user-1' },
+    ]);
+    prismaMock.teacher.findMany.mockResolvedValue([]);
+    prismaMock.userCampus.findMany.mockResolvedValue([]);
+    prismaMock.attendance.upsert.mockResolvedValue({ id: 'attendance-1' });
+
+    const result = await service.bulkMark(adminUser, {
+      campusId: 'campus-1',
+      date: '2026-06-12',
+      entries: [
+        { userId: 'student-user-1', status: 'PRESENT' as never },
+        { userId: 'student-user-1', status: 'ABSENT' as never },
+        { userId: 'guardian-user-1', status: 'PRESENT' as never },
+        { userId: 'teacher-user-9', status: 'LATE' as never },
+        { userId: 'missing-user-1', status: 'PRESENT' as never },
+      ],
+    });
+
+    expect(prismaMock.attendance.upsert).toHaveBeenCalledTimes(1);
+    expect(prismaMock.attendance.upsert).toHaveBeenCalledWith({
+      where: {
+        userId_campusId_date_activeScopeKey: {
+          userId: 'student-user-1',
+          campusId: 'campus-1',
+          date: new Date('2026-06-12'),
+          activeScopeKey: 'ACTIVE',
+        },
+      },
+      create: {
+        userId: 'student-user-1',
+        role: UserRole.STUDENT,
+        campusId: 'campus-1',
+        date: new Date('2026-06-12'),
+        status: 'PRESENT',
+      },
+      update: {
+        status: 'PRESENT',
+      },
+    });
+    expect(result).toMatchObject({
+      message: 'Attendance marked successfully',
+      data: {
+        marked: 1,
+        skipped: expect.arrayContaining([
+          { userId: 'student-user-1', reason: 'DUPLICATE_ENTRY' },
+          { userId: 'guardian-user-1', reason: 'ROLE_NOT_ALLOWED' },
+          { userId: 'teacher-user-9', reason: 'NOT_IN_CAMPUS' },
+          { userId: 'missing-user-1', reason: 'USER_NOT_FOUND' },
+        ]),
+      },
+    });
+  });
+
   it('blocks duplicate check-in records for the same user and date', async () => {
     prismaMock.user.findUnique.mockResolvedValue({
       id: 'teacher-user-1',
       role: UserRole.TEACHER,
     });
-    prismaMock.teacher.findUniqueOrThrow.mockResolvedValue({
+    prismaMock.teacher.findUnique.mockResolvedValue({
       userId: 'teacher-user-1',
       campusId: 'campus-1',
     });

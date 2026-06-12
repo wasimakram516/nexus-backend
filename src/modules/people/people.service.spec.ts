@@ -42,6 +42,9 @@ describe('PeopleService', () => {
       findFirst: jest.fn(),
       create: jest.fn(),
     },
+    section: {
+      findUnique: jest.fn(),
+    },
     contact: {
       create: jest.fn(),
     },
@@ -156,6 +159,12 @@ describe('PeopleService', () => {
     expect(prismaMock.student.findMany).toHaveBeenCalledWith({
       where: { campusId: { in: ['campus-1'] } },
       orderBy: { createdAt: 'desc' },
+      include: {
+        guardians: {
+          where: { deletedAt: null },
+          select: { id: true, guardianId: true },
+        },
+      },
     });
     expect(result).toMatchObject({
       message: 'Students retrieved successfully',
@@ -294,11 +303,13 @@ describe('PeopleService', () => {
     });
   });
 
-  it('blocks duplicate teacher subject assignments for the same campus mapping', async () => {
+  it('blocks duplicate teacher subject assignments for the same section mapping', async () => {
     campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
     campusAccessServiceMock.assertTeacherAccess.mockResolvedValue('campus-1');
     campusAccessServiceMock.assertClassAccess.mockResolvedValue('campus-1');
     campusAccessServiceMock.assertSubjectAccess.mockResolvedValue('campus-1');
+    campusAccessServiceMock.assertSectionAccess.mockResolvedValue('campus-1');
+    prismaMock.section.findUnique.mockResolvedValue({ classId: 'class-1' });
     prismaMock.teacherSubject.findFirst.mockResolvedValue({
       id: 'assignment-1',
     });
@@ -308,6 +319,26 @@ describe('PeopleService', () => {
         teacherId: 'teacher-1',
         classId: 'class-1',
         subjectId: 'subject-1',
+        sectionId: 'section-1',
+        campusId: 'campus-1',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('rejects assignment when the section belongs to a different class', async () => {
+    campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+    campusAccessServiceMock.assertTeacherAccess.mockResolvedValue('campus-1');
+    campusAccessServiceMock.assertClassAccess.mockResolvedValue('campus-1');
+    campusAccessServiceMock.assertSubjectAccess.mockResolvedValue('campus-1');
+    campusAccessServiceMock.assertSectionAccess.mockResolvedValue('campus-1');
+    prismaMock.section.findUnique.mockResolvedValue({ classId: 'class-2' });
+
+    await expect(
+      service.assignTeacherSubject(currentUser, {
+        teacherId: 'teacher-1',
+        classId: 'class-1',
+        subjectId: 'subject-1',
+        sectionId: 'section-9',
         campusId: 'campus-1',
       }),
     ).rejects.toBeInstanceOf(ConflictException);

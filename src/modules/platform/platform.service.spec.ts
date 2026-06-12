@@ -1,4 +1,5 @@
 import { DeploymentMode, ModuleKey, UserRole } from '../../prisma/client';
+import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { BillingCycle } from '../../common/enums/domain.enums';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
@@ -141,6 +142,13 @@ describe('PlatformService', () => {
                   callback: () => Promise<unknown>,
                 ) => callback(),
               ),
+          },
+        },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn().mockReturnValue(14),
+            getOrThrow: jest.fn().mockReturnValue(14),
           },
         },
       ],
