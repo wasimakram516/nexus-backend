@@ -11,14 +11,21 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
+import {
+  ModulePermission,
+  SkipModulePermission,
+} from '../../common/decorators/module-permission.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../../common/enums/domain.enums';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { ModulePermissionsGuard } from '../../common/guards/module-permissions.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
+import { ModuleKey } from '../../prisma/client';
 import { AttendanceService } from './attendance.service';
 import {
   AutoAbsentDto,
+  BulkMarkAttendanceDto,
   CheckInDto,
   CheckOutDto,
   ListAttendanceQueryDto,
@@ -28,13 +35,15 @@ import {
 
 @ApiTags('Attendance')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ModulePermissionsGuard)
+@ModulePermission(ModuleKey.ATTENDANCE)
 @Controller('attendance')
 export class AttendanceController {
   constructor(private readonly attendanceService: AttendanceService) {}
 
   @Post('check-in')
   @Version('1')
+  @SkipModulePermission()
   @Roles(
     UserRole.SUPERADMIN,
     UserRole.ADMIN,
@@ -56,6 +65,7 @@ export class AttendanceController {
 
   @Post('check-out')
   @Version('1')
+  @SkipModulePermission()
   @Roles(
     UserRole.SUPERADMIN,
     UserRole.ADMIN,
@@ -77,7 +87,6 @@ export class AttendanceController {
 
   @Post('leave')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Mark leave for a user',
     description:
@@ -90,9 +99,22 @@ export class AttendanceController {
     return this.attendanceService.markLeave(currentUser, dto);
   }
 
+  @Post('bulk-mark')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Bulk-mark attendance statuses',
+    description:
+      'Register-style marking: upserts one attendance row per entry for the campus and date. Invalid entries (unknown user, guardian/superadmin, not in campus, duplicates) are skipped and reported. Punch times are never modified.',
+  })
+  bulkMark(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: BulkMarkAttendanceDto,
+  ) {
+    return this.attendanceService.bulkMark(currentUser, dto);
+  }
+
   @Post('auto-absent')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Auto-mark absent users',
     description:
@@ -107,6 +129,7 @@ export class AttendanceController {
 
   @Get()
   @Version('1')
+  @SkipModulePermission()
   @ApiOperation({
     summary: 'List attendance records',
     description:
@@ -121,6 +144,7 @@ export class AttendanceController {
 
   @Get('summary')
   @Version('1')
+  @SkipModulePermission()
   @ApiOperation({
     summary: 'Get attendance summary totals',
     description:
@@ -135,6 +159,7 @@ export class AttendanceController {
 
   @Get(':attendanceId')
   @Version('1')
+  @SkipModulePermission()
   @ApiOperation({
     summary: 'Get an attendance record',
     description:
@@ -152,7 +177,6 @@ export class AttendanceController {
 
   @Patch(':attendanceId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Update an attendance record',
     description:

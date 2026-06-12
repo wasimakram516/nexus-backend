@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   Delete,
@@ -12,11 +12,11 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
 import { DeleteRecordDto } from '../../common/dto/delete-record.dto';
-import { UserRole } from '../../common/enums/domain.enums';
+import { ModuleKey } from '../../prisma/client';
+import { ModulePermission } from '../../common/decorators/module-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { ModulePermissionsGuard } from '../../common/guards/module-permissions.guard';
 import { CurrentUser as CurrentUserPayload } from '../../common/interfaces/current-user.interface';
 import {
   CreateClassDto,
@@ -32,14 +32,14 @@ import { AcademicsService } from './academics.service';
 
 @ApiTags('Academics')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, ModulePermissionsGuard)
+@ModulePermission(ModuleKey.ACADEMICS)
 @Controller('academics')
 export class AcademicsController {
   constructor(private readonly academicsService: AcademicsService) {}
 
   @Post('levels')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Create a level',
     description:
@@ -82,7 +82,6 @@ export class AcademicsController {
 
   @Patch('levels/:levelId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Update a level',
     description:
@@ -98,7 +97,6 @@ export class AcademicsController {
 
   @Delete('levels/:levelId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Soft-delete a level',
     description:
@@ -114,7 +112,6 @@ export class AcademicsController {
 
   @Post('classes')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Create a class',
     description:
@@ -157,7 +154,6 @@ export class AcademicsController {
 
   @Patch('classes/:classId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Update a class',
     description:
@@ -173,7 +169,6 @@ export class AcademicsController {
 
   @Delete('classes/:classId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Soft-delete a class',
     description:
@@ -189,7 +184,6 @@ export class AcademicsController {
 
   @Post('sections')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Create a section',
     description:
@@ -232,7 +226,6 @@ export class AcademicsController {
 
   @Patch('sections/:sectionId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Update a section',
     description:
@@ -248,7 +241,6 @@ export class AcademicsController {
 
   @Delete('sections/:sectionId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Soft-delete a section',
     description:
@@ -268,7 +260,6 @@ export class AcademicsController {
 
   @Post('subjects')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Create a subject',
     description:
@@ -311,7 +302,6 @@ export class AcademicsController {
 
   @Patch('subjects/:subjectId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Update a subject',
     description:
@@ -327,7 +317,6 @@ export class AcademicsController {
 
   @Delete('subjects/:subjectId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Soft-delete a subject',
     description:

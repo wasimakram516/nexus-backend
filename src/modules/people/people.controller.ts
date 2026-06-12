@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   Delete,
@@ -12,11 +12,11 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
 import { DeleteRecordDto } from '../../common/dto/delete-record.dto';
-import { UserRole } from '../../common/enums/domain.enums';
+import { ModuleKey } from '../../prisma/client';
+import { ModulePermission } from '../../common/decorators/module-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { ModulePermissionsGuard } from '../../common/guards/module-permissions.guard';
 import { CurrentUser as CurrentUserPayload } from '../../common/interfaces/current-user.interface';
 import {
   AssignTeacherSubjectDto,
@@ -34,14 +34,14 @@ import { PeopleService } from './people.service';
 
 @ApiTags('People')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, ModulePermissionsGuard)
+@ModulePermission(ModuleKey.PEOPLE)
 @Controller('people')
 export class PeopleController {
   constructor(private readonly peopleService: PeopleService) {}
 
   @Post('students')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Create a student',
     description:
@@ -84,7 +84,6 @@ export class PeopleController {
 
   @Patch('students/:studentId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Update a student',
     description:
@@ -100,7 +99,6 @@ export class PeopleController {
 
   @Delete('students/:studentId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Soft-delete a student',
     description:
@@ -116,7 +114,6 @@ export class PeopleController {
 
   @Post('guardians')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Create a guardian',
     description:
@@ -159,7 +156,6 @@ export class PeopleController {
 
   @Patch('guardians/:guardianId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Update a guardian',
     description:
@@ -175,7 +171,6 @@ export class PeopleController {
 
   @Delete('guardians/:guardianId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Soft-delete a guardian',
     description:
@@ -195,7 +190,6 @@ export class PeopleController {
 
   @Post('teachers')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Create a teacher',
     description:
@@ -238,7 +232,6 @@ export class PeopleController {
 
   @Patch('teachers/:teacherId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Update a teacher',
     description:
@@ -254,7 +247,6 @@ export class PeopleController {
 
   @Delete('teachers/:teacherId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Soft-delete a teacher',
     description:
@@ -270,7 +262,6 @@ export class PeopleController {
 
   @Post('student-guardians')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Link a guardian to a student',
     description:
@@ -285,7 +276,6 @@ export class PeopleController {
 
   @Post('student-history')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Record student promotion history',
     description:
@@ -300,11 +290,10 @@ export class PeopleController {
 
   @Post('teacher-subjects')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Assign a teacher to a subject',
     description:
-      'Creates a teacher-subject assignment used by class planning and timetable-related screens.',
+      'Creates a section-level teacher-subject assignment used by class planning and timetable-related screens.',
   })
   assignTeacherSubject(
     @CurrentUserDecorator() currentUser: CurrentUserPayload,
@@ -313,9 +302,50 @@ export class PeopleController {
     return this.peopleService.assignTeacherSubject(currentUser, dto);
   }
 
+  @Get('teacher-subjects')
+  @Version('1')
+  @ApiOperation({
+    summary: 'List teacher subject assignments',
+    description:
+      'Returns campus-scoped teaching allocations for the academics assignment screen.',
+  })
+  listTeacherSubjects(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Query('campusId') campusId?: string,
+  ) {
+    return this.peopleService.listTeacherSubjects(currentUser, campusId);
+  }
+
+  @Delete('teacher-subjects/:assignmentId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Remove a teacher subject assignment',
+    description:
+      'Unassigns a teacher from a subject section. The allocation row is removed permanently and audit-logged.',
+  })
+  removeTeacherSubject(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('assignmentId') assignmentId: string,
+  ) {
+    return this.peopleService.removeTeacherSubject(currentUser, assignmentId);
+  }
+
+  @Delete('student-guardians/:linkId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Unlink a guardian from a student',
+    description:
+      'Removes a student-guardian relationship. The link is removed permanently and audit-logged.',
+  })
+  unlinkGuardian(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('linkId') linkId: string,
+  ) {
+    return this.peopleService.unlinkGuardian(currentUser, linkId);
+  }
+
   @Post('contacts')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Create a contact record',
     description:

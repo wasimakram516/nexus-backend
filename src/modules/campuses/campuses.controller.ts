@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   Get,
@@ -11,12 +11,12 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
 import { DeleteRecordDto } from '../../common/dto/delete-record.dto';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
-import { UserRole } from '../../common/enums/domain.enums';
+import { ModuleKey } from '../../prisma/client';
+import { ModulePermission } from '../../common/decorators/module-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { ModulePermissionsGuard } from '../../common/guards/module-permissions.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import {
   AssignUserCampusDto,
@@ -28,14 +28,14 @@ import { CampusesService } from './campuses.service';
 
 @ApiTags('Campuses')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, ModulePermissionsGuard)
+@ModulePermission(ModuleKey.ACADEMICS)
 @Controller('campuses')
 export class CampusesController {
   constructor(private readonly campusesService: CampusesService) {}
 
   @Post()
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Create a campus',
     description:
@@ -64,7 +64,6 @@ export class CampusesController {
 
   @Put(':campusId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Update a campus',
     description:
@@ -80,7 +79,6 @@ export class CampusesController {
 
   @Post(':campusId/delete')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Soft-delete a campus',
     description:
@@ -96,7 +94,6 @@ export class CampusesController {
 
   @Post('assign-user')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Assign a user to a campus',
     description:
@@ -125,7 +122,6 @@ export class CampusesController {
 
   @Post('remove-user')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
   @ApiOperation({
     summary: 'Remove a user from a campus',
     description:
