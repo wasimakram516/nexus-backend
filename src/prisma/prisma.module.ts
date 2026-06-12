@@ -4,6 +4,7 @@ import { Global, Module } from '@nestjs/common';
 import { CampusAccessService } from '../common/services/campus-access.service';
 import { EntityCustomFieldsService } from '../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../common/services/module-access.service';
+import { UserPermissionsService } from '../common/services/user-permissions.service';
 import { PrismaService } from './prisma.service';
 
 @Global()
@@ -15,6 +16,7 @@ import { PrismaService } from './prisma.service';
     CampusAccessService,
     EntityCustomFieldsService,
     ModuleAccessService,
+    UserPermissionsService,
   ],
   exports: [
     PrismaService,
@@ -23,6 +25,7 @@ import { PrismaService } from './prisma.service';
     CampusAccessService,
     EntityCustomFieldsService,
     ModuleAccessService,
+    UserPermissionsService,
   ],
 })
 export class PrismaModule {}
