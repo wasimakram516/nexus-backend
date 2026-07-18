@@ -1,7 +1,8 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEmail,
   IsEnum,
+  IsNotEmpty,
   IsObject,
   IsOptional,
   IsString,
@@ -11,7 +12,7 @@ import {
 } from 'class-validator';
 import { UserRole, UserStatus } from '../../../common/enums/domain.enums';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
-import { PermissionOverrides } from '../../../common/interfaces/module-permissions.interface';
+import { PermissionOverrides } from '../../../common/interfaces/permission.interface';
 
 export class UpdateProfileDto {
   @ApiPropertyOptional()
@@ -54,19 +55,19 @@ export class UpdateUserAccessDto extends UpdateUserRoleDto {
   @ApiPropertyOptional({
     nullable: true,
     description:
-      'Permission template assigned as the user base permissions. Pass null to clear and fall back to role defaults. Not assignable to admin-level users.',
+      'Role assigned as the user base permissions. Pass null to clear (STAFF users then have zero access until reassigned; STUDENT/GUARDIAN fall back to self-service defaults). Not assignable to admin-level users.',
   })
   @IsOptional()
   @ValidateIf((_, value) => value !== null)
   @IsUUID()
-  permissionTemplateId?: string | null;
+  roleId?: string | null;
 
   @ApiPropertyOptional({
     type: 'object',
     additionalProperties: true,
     nullable: true,
     description:
-      'Per-user permission overrides keyed by module: { FINANCE: { view: "allow", manage: "deny" } }. Overrides replace the base value per module/action. Pass null to clear.',
+      'Per-user permission overrides keyed by feature: { fee_vouchers: { create: "allow", delete: "deny" } }. Overrides replace the base value per feature/action. Pass null to clear.',
   })
   @IsOptional()
   @ValidateIf((_, value) => value !== null)
@@ -90,4 +91,14 @@ export class ListUsersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(UserRole)
   role?: UserRole;
+}
+
+export class ResolveUsersQueryDto {
+  @ApiProperty({
+    description:
+      'Comma-separated user IDs to resolve to display names, e.g. for a record-metadata popover showing createdBy/updatedBy.',
+  })
+  @IsString()
+  @IsNotEmpty()
+  ids!: string;
 }
