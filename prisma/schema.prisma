@@ -9,10 +9,9 @@ datasource db {
 enum UserRole {
   SUPERADMIN
   ADMIN
-  TEACHER
+  STAFF
   STUDENT
   GUARDIAN
-  ACCOUNTANT
 }
 
 enum UserStatus {
@@ -166,12 +165,14 @@ model User {
   deletedBy         String?            @map("deleted_by") @db.Uuid
   deleteReason      String?            @map("delete_reason")
   activeScopeKey    String             @default("ACTIVE") @map("active_scope_key")
-  permissionTemplateId String?         @map("permission_template_id") @db.Uuid
+  /// Login identifier for non-staff archetypes: registration number for STUDENT, phone for GUARDIAN. Null for STAFF/ADMIN/SUPERADMIN, who authenticate with email.
+  identifier        String?
+  roleId            String?            @map("role_id") @db.Uuid
   permissionOverrides  Json?           @map("permission_overrides")
   createdAt         DateTime @db.Timestamptz(3)           @default(now()) @map("created_at")
   updatedAt         DateTime @db.Timestamptz(3)           @updatedAt @map("updated_at")
   institution       Institution?       @relation(fields: [institutionId], references: [id], onDelete: SetNull)
-  permissionTemplate PermissionTemplate? @relation(fields: [permissionTemplateId], references: [id], onDelete: SetNull)
+  assignedRole      Role?              @relation(fields: [roleId], references: [id], onDelete: SetNull)
   refreshSessions   RefreshSession[]
   campuses          UserCampus[]
   student           Student?
@@ -184,6 +185,7 @@ model User {
   auditLogs         AuditLog[]
 
   @@unique([email, activeScopeKey], map: "user_email_active_scope_unique")
+  @@unique([identifier, activeScopeKey], map: "user_identifier_active_scope_unique")
   @@index([institutionId])
   @@index([role, status])
   @@map("users")
@@ -214,7 +216,7 @@ model Institution {
   entitlements           InstitutionEntitlement[]
   plans                  PlanDefinition[]
   subscriptions          InstitutionSubscription[]
-  permissionTemplates    PermissionTemplate[]
+  roles                  Role[]
   customFieldDefinitions CustomFieldDefinition[]
   customFieldValues      CustomFieldValue[]
   auditLogs              AuditLog[]
@@ -317,14 +319,19 @@ model Campus {
 }
 
 model InstitutionBranding {
-  id             String      @id @default(uuid()) @db.Uuid
-  institutionId  String      @unique @map("institution_id") @db.Uuid
-  displayName    String?     @map("display_name")
-  logoUrl        String?     @map("logo_url")
-  primaryColor   String?     @map("primary_color")
-  secondaryColor String?     @map("secondary_color")
-  accentColor    String?     @map("accent_color")
-  theme          String?
+  id                  String      @id @default(uuid()) @db.Uuid
+  institutionId       String      @unique @map("institution_id") @db.Uuid
+  displayName         String?     @map("display_name")
+  logoUrl             String?     @map("logo_url")
+  primaryColorLight    String?     @map("primary_color_light")
+  secondaryColorLight  String?     @map("secondary_color_light")
+  accentColorLight     String?     @map("accent_color_light")
+  backgroundColorLight String?     @map("background_color_light")
+  primaryColorDark     String?     @map("primary_color_dark")
+  secondaryColorDark   String?     @map("secondary_color_dark")
+  accentColorDark      String?     @map("accent_color_dark")
+  backgroundColorDark  String?     @map("background_color_dark")
+  theme                String?
   createdBy      String?     @map("created_by") @db.Uuid
   updatedBy      String?     @map("updated_by") @db.Uuid
   deletedAt      DateTime? @db.Timestamptz(3)   @map("deleted_at")
@@ -464,11 +471,17 @@ model CustomFieldValue {
   @@map("custom_field_values")
 }
 
-model PermissionTemplate {
+/// Institution-defined role: a named bundle of feature×action permissions (see
+/// PERMISSION_CATALOG) assignable to STAFF/STUDENT/GUARDIAN users. ADMIN/SUPERADMIN
+/// bypass this entirely. Role management stays with the institution ADMIN — a
+/// "Campus Admin" role is just a full-permission Role scoped via UserCampus, not a
+/// distinct mechanism.
+model Role {
   id            String      @id @default(uuid()) @db.Uuid
   institutionId String      @map("institution_id") @db.Uuid
   name          String
   description   String?
+  /// Feature x action matrix: { "students": { "create": true, "read": true, ... }, ... }
   permissions   Json
   createdBy     String?     @map("created_by") @db.Uuid
   updatedBy     String?     @map("updated_by") @db.Uuid
@@ -481,8 +494,8 @@ model PermissionTemplate {
   institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   users         User[]
 
-  @@unique([institutionId, name, activeScopeKey], map: "permission_template_unique")
-  @@map("permission_templates")
+  @@unique([institutionId, name, activeScopeKey], map: "role_unique")
+  @@map("roles")
 }
 
 model UserCampus {
@@ -929,6 +942,8 @@ model SalaryAdjustment {
   campusId       String         @map("campus_id") @db.Uuid
   adjustmentType AdjustmentType @map("adjustment_type")
   amount         Decimal        @db.Decimal(10, 2)
+  month          Int
+  year           Int
   remarks        String?
   adjustedBy     String         @map("adjusted_by") @db.Uuid
   adjustmentDate DateTime @db.Timestamptz(3)       @default(now()) @map("adjustment_date")
@@ -945,6 +960,7 @@ model SalaryAdjustment {
 
   @@index([campusId])
   @@index([salaryId])
+  @@index([userId, campusId, month, year])
   @@map("salary_adjustments")
 }
 
@@ -1167,6 +1183,8 @@ model AuditLog {
   entity        String
   entityId      String?      @map("entity_id")
   metadata      Json?
+  before        Json?
+  after         Json?
   createdBy     String?      @map("created_by") @db.Uuid
   updatedBy     String?      @map("updated_by") @db.Uuid
   deletedAt     DateTime? @db.Timestamptz(3)    @map("deleted_at")

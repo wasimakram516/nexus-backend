@@ -135,17 +135,42 @@ export class UpdateBrandingDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  primaryColor?: string;
+  primaryColorLight?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  secondaryColor?: string;
+  secondaryColorLight?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  accentColor?: string;
+  accentColorLight?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  backgroundColorLight?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  primaryColorDark?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  secondaryColorDark?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  accentColorDark?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  backgroundColorDark?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
