@@ -1,15 +1,14 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
+import { PERMISSION_CATALOG } from '../../common/constants/permission-catalog.constant';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
-import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class InstitutionConfigService {
   constructor(
     private readonly moduleAccessService: ModuleAccessService,
     private readonly userPermissionsService: UserPermissionsService,
-    private readonly prisma: PrismaService,
   ) {}
 
   async getMyRuntimeConfig(currentUser: CurrentUser) {
@@ -32,32 +31,10 @@ export class InstitutionConfigService {
 
     return {
       message: 'Runtime configuration retrieved successfully',
-      data: { ...data, permissions },
-    };
-  }
-
-  async getMyPermissionTemplates(currentUser: CurrentUser) {
-    if (!currentUser.institutionId) {
-      throw new ForbiddenException(
-        'Your account is not linked to an institution.',
-      );
-    }
-
-    const data = await this.prisma.permissionTemplate.findMany({
-      where: { institutionId: currentUser.institutionId, deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        permissions: true,
-        createdAt: true,
-      },
-    });
-
-    return {
-      message: 'Permission templates retrieved successfully',
-      data,
+      // permissionCatalog is static reference data (not institution-scoped)
+      // so the Roles checkbox grid and permission override UI never need to
+      // hardcode a copy that can drift from the backend's enforcement list.
+      data: { ...data, permissions, permissionCatalog: PERMISSION_CATALOG },
     };
   }
 }

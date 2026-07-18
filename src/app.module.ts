@@ -15,6 +15,7 @@ import { CampusesModule } from './modules/campuses/campuses.module';
 import { AcademicsModule } from './modules/academics/academics.module';
 import { PeopleModule } from './modules/people/people.module';
 import { PlatformModule } from './modules/platform/platform.module';
+import { RolesModule } from './modules/roles/roles.module';
 import { CustomFieldsModule } from './modules/custom-fields/custom-fields.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { FinanceModule } from './modules/finance/finance.module';
@@ -38,6 +39,7 @@ import { UploadModule } from './modules/upload/upload.module';
     PrismaModule,
     HealthModule,
     PlatformModule,
+    RolesModule,
     AuthModule,
     UsersModule,
     CampusesModule,

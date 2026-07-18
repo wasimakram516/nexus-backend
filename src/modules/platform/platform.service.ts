@@ -22,10 +22,8 @@ import { generateUniqueSlug } from '../../common/utils/slug.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateInstitutionDto,
-  CreatePermissionTemplateDto,
   CreatePlanDto,
   ListInstitutionsQueryDto,
-  UpdatePermissionTemplateDto,
   UpdateBrandingDto,
   UpdateInstitutionDto,
   UpdatePlanDto,
@@ -345,7 +343,10 @@ export class PlatformService {
   }
 
   async getInstitution(identifier: string) {
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identifier);
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        identifier,
+      );
     const institution = await this.prisma.institution.findFirst({
       where: isUuid ? { id: identifier } : { slug: identifier },
       include: this.institutionInclude,
@@ -362,7 +363,10 @@ export class PlatformService {
   }
 
   async getInstitutionRuntimeConfig(identifier: string) {
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identifier);
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        identifier,
+      );
     const institutionId = isUuid
       ? identifier
       : await this.prisma.institution
@@ -372,7 +376,8 @@ export class PlatformService {
             return r.id;
           });
 
-    const data = await this.moduleAccessService.getInstitutionRuntimeConfig(institutionId);
+    const data =
+      await this.moduleAccessService.getInstitutionRuntimeConfig(institutionId);
 
     return {
       message: 'Institution runtime configuration retrieved successfully',
@@ -704,174 +709,6 @@ export class PlatformService {
     };
   }
 
-  async createPermissionTemplate(
-    institutionId: string,
-    dto: CreatePermissionTemplateDto,
-    currentUser: CurrentUser,
-  ) {
-    await this.ensureInstitutionExists(institutionId);
-
-    try {
-      const template = await this.prisma.$transaction(
-        async (tx: Prisma.TransactionClient) => {
-          const created = await tx.permissionTemplate.create({
-            data: {
-              institutionId,
-              name: dto.name,
-              description: dto.description,
-              permissions: this.toJson(dto.permissions),
-            },
-          });
-
-          await tx.auditLog.create({
-            data: {
-              userId: currentUser.sub,
-              institutionId,
-              action: 'PERMISSION_TEMPLATE_CREATED',
-              entity: 'PermissionTemplate',
-              entityId: created.id,
-              metadata: this.toJson({
-                name: dto.name,
-              }),
-            },
-          });
-
-          return created;
-        },
-      );
-
-      return {
-        message: 'Permission template created successfully',
-        data: template,
-      };
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError) {
-        if (error.code === 'P2002') {
-          throw new ConflictException(
-            'A permission template with this name already exists.',
-          );
-        }
-      }
-      throw error;
-    }
-  }
-
-  async listPermissionTemplates(institutionId: string) {
-    await this.ensureInstitutionExists(institutionId);
-
-    const items = await this.prisma.permissionTemplate.findMany({
-      where: { institutionId },
-      orderBy: [{ name: 'asc' }, { createdAt: 'asc' }],
-    });
-
-    return {
-      message: 'Permission templates retrieved successfully',
-      data: items,
-    };
-  }
-
-  async getPermissionTemplate(institutionId: string, templateId: string) {
-    await this.ensureInstitutionExists(institutionId);
-    const template = await this.getPermissionTemplateOrThrow(
-      institutionId,
-      templateId,
-    );
-
-    return {
-      message: 'Permission template retrieved successfully',
-      data: template,
-    };
-  }
-
-  async updatePermissionTemplate(
-    institutionId: string,
-    templateId: string,
-    dto: UpdatePermissionTemplateDto,
-    currentUser: CurrentUser,
-  ) {
-    await this.ensureInstitutionExists(institutionId);
-    await this.getPermissionTemplateOrThrow(institutionId, templateId);
-
-    try {
-      const template = await this.prisma.$transaction(
-        async (tx: Prisma.TransactionClient) => {
-          const updated = await tx.permissionTemplate.update({
-            where: { id: templateId },
-            data: {
-              name: dto.name,
-              description: dto.description,
-              permissions: dto.permissions
-                ? this.toJson(dto.permissions)
-                : undefined,
-            },
-          });
-
-          await tx.auditLog.create({
-            data: {
-              userId: currentUser.sub,
-              institutionId,
-              action: 'PERMISSION_TEMPLATE_UPDATED',
-              entity: 'PermissionTemplate',
-              entityId: updated.id,
-              metadata: this.toJson({
-                updatedFields: Object.keys(dto),
-              }),
-            },
-          });
-
-          return updated;
-        },
-      );
-
-      return {
-        message: 'Permission template updated successfully',
-        data: template,
-      };
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError) {
-        if (error.code === 'P2002') {
-          throw new ConflictException(
-            'A permission template with this name already exists.',
-          );
-        }
-      }
-      throw error;
-    }
-  }
-
-  async deletePermissionTemplate(
-    institutionId: string,
-    templateId: string,
-    currentUser: CurrentUser,
-    reason?: string,
-  ) {
-    await this.ensureInstitutionExists(institutionId);
-    await this.getPermissionTemplateOrThrow(institutionId, templateId);
-
-    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.permissionTemplate.update({
-        where: { id: templateId },
-        data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          userId: currentUser.sub,
-          institutionId,
-          action: 'PERMISSION_TEMPLATE_DELETED',
-          entity: 'PermissionTemplate',
-          entityId: templateId,
-          metadata: this.toJson({ templateId, reason: reason ?? null }),
-        },
-      });
-    });
-
-    return {
-      message: 'Permission template moved to recycle bin successfully',
-      data: { id: templateId },
-    };
-  }
-
   private async syncBootstrapPlans() {
     const plans = await Promise.all(
       PLAN_BLUEPRINTS.map((plan) =>
@@ -928,23 +765,6 @@ export class PlatformService {
     }
   }
 
-  private async getPermissionTemplateOrThrow(
-    institutionId: string,
-    templateId: string,
-  ) {
-    const template = await this.prisma.permissionTemplate.findFirst({
-      where: {
-        id: templateId,
-        institutionId,
-      },
-    });
-
-    if (!template) {
-      throw new NotFoundException('Permission template not found.');
-    }
-
-    return template;
-  }
   private async resolvePlan(planId?: string, plans?: PlanRecord[]) {
     if (planId) {
       const plan = (await this.prisma.planDefinition.findUnique({
@@ -1043,6 +863,6 @@ export class PlatformService {
         plan: true,
       },
     },
-    permissionTemplates: true,
+    roles: true,
   } satisfies Prisma.InstitutionInclude;
 }

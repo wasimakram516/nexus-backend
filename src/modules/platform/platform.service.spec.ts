@@ -18,10 +18,6 @@ type CreateInstitutionTransaction = {
   institution: {
     create: () => Promise<CreatedInstitution>;
   };
-  permissionTemplate: {
-    update: jest.Mock;
-    delete: jest.Mock;
-  };
   auditLog: {
     create: () => Promise<Record<string, never>>;
   };
@@ -52,14 +48,6 @@ describe('PlatformService', () => {
     isActive: true,
   };
 
-  const permissionTemplate = {
-    id: 'template-1',
-    institutionId: 'institution-1',
-    name: 'Default Admin',
-    description: 'Admin permissions',
-    permissions: { users: ['read', 'write'] },
-  };
-
   const prismaMock = {
     planDefinition: {
       upsert: jest.fn().mockImplementation(
@@ -86,10 +74,6 @@ describe('PlatformService', () => {
       findFirst: jest.fn().mockResolvedValue(null),
       findUnique: jest.fn().mockResolvedValue({ id: 'institution-1' }),
     },
-    permissionTemplate: {
-      findMany: jest.fn().mockResolvedValue([permissionTemplate]),
-      findFirst: jest.fn().mockResolvedValue(permissionTemplate),
-    },
     $transaction: async <T>(
       callback: (tx: CreateInstitutionTransaction) => Promise<T>,
     ): Promise<T> =>
@@ -101,13 +85,6 @@ describe('PlatformService', () => {
               name: 'Nexus Academy',
               slug: 'nexus-academy',
             }),
-        },
-        permissionTemplate: {
-          update: jest.fn().mockResolvedValue({
-            ...permissionTemplate,
-            name: 'Updated Template',
-          }),
-          delete: jest.fn().mockResolvedValue(permissionTemplate),
         },
         auditLog: {
           create: () => Promise.resolve({}),
@@ -208,47 +185,6 @@ describe('PlatformService', () => {
     expect(prismaMock.institution.findFirst).toHaveBeenNthCalledWith(2, {
       where: { slug: 'nexus-academy-1' },
       select: { id: true },
-    });
-  });
-
-  it('lists permission templates for an institution', async () => {
-    await expect(
-      service.listPermissionTemplates('institution-1'),
-    ).resolves.toMatchObject({
-      message: 'Permission templates retrieved successfully',
-      data: [permissionTemplate],
-    });
-  });
-
-  it('updates a permission template within the institution scope', async () => {
-    await expect(
-      service.updatePermissionTemplate(
-        'institution-1',
-        'template-1',
-        {
-          name: 'Updated Template',
-        },
-        currentUser,
-      ),
-    ).resolves.toMatchObject({
-      message: 'Permission template updated successfully',
-      data: {
-        id: 'template-1',
-        name: 'Updated Template',
-      },
-    });
-  });
-
-  it('deletes a permission template within the institution scope', async () => {
-    await expect(
-      service.deletePermissionTemplate(
-        'institution-1',
-        'template-1',
-        currentUser,
-      ),
-    ).resolves.toEqual({
-      message: 'Permission template moved to recycle bin successfully',
-      data: { id: 'template-1' },
     });
   });
 });

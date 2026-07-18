@@ -1,4 +1,4 @@
-﻿import {
+import {
   Body,
   Controller,
   Delete,
@@ -13,10 +13,9 @@
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
 import { DeleteRecordDto } from '../../common/dto/delete-record.dto';
-import { ModuleKey } from '../../prisma/client';
-import { ModulePermission } from '../../common/decorators/module-permission.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { ModulePermissionsGuard } from '../../common/guards/module-permissions.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser as CurrentUserPayload } from '../../common/interfaces/current-user.interface';
 import {
   CreateClassDto,
@@ -32,14 +31,14 @@ import { AcademicsService } from './academics.service';
 
 @ApiTags('Academics')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, ModulePermissionsGuard)
-@ModulePermission(ModuleKey.ACADEMICS)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('academics')
 export class AcademicsController {
   constructor(private readonly academicsService: AcademicsService) {}
 
   @Post('levels')
   @Version('1')
+  @RequirePermission('levels', 'create')
   @ApiOperation({
     summary: 'Create a level',
     description:
@@ -54,6 +53,7 @@ export class AcademicsController {
 
   @Get('levels')
   @Version('1')
+  @RequirePermission('levels', 'read')
   @ApiOperation({
     summary: 'List levels',
     description:
@@ -68,6 +68,7 @@ export class AcademicsController {
 
   @Get('levels/:levelId')
   @Version('1')
+  @RequirePermission('levels', 'read')
   @ApiOperation({
     summary: 'Get a level',
     description:
@@ -82,6 +83,7 @@ export class AcademicsController {
 
   @Patch('levels/:levelId')
   @Version('1')
+  @RequirePermission('levels', 'update')
   @ApiOperation({
     summary: 'Update a level',
     description:
@@ -97,6 +99,7 @@ export class AcademicsController {
 
   @Delete('levels/:levelId')
   @Version('1')
+  @RequirePermission('levels', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a level',
     description:
@@ -112,6 +115,7 @@ export class AcademicsController {
 
   @Post('classes')
   @Version('1')
+  @RequirePermission('classes', 'create')
   @ApiOperation({
     summary: 'Create a class',
     description:
@@ -126,6 +130,7 @@ export class AcademicsController {
 
   @Get('classes')
   @Version('1')
+  @RequirePermission('classes', 'read')
   @ApiOperation({
     summary: 'List classes',
     description:
@@ -140,6 +145,7 @@ export class AcademicsController {
 
   @Get('classes/:classId')
   @Version('1')
+  @RequirePermission('classes', 'read')
   @ApiOperation({
     summary: 'Get a class',
     description:
@@ -154,6 +160,7 @@ export class AcademicsController {
 
   @Patch('classes/:classId')
   @Version('1')
+  @RequirePermission('classes', 'update')
   @ApiOperation({
     summary: 'Update a class',
     description:
@@ -169,6 +176,7 @@ export class AcademicsController {
 
   @Delete('classes/:classId')
   @Version('1')
+  @RequirePermission('classes', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a class',
     description:
@@ -184,6 +192,7 @@ export class AcademicsController {
 
   @Post('sections')
   @Version('1')
+  @RequirePermission('sections', 'create')
   @ApiOperation({
     summary: 'Create a section',
     description:
@@ -198,6 +207,7 @@ export class AcademicsController {
 
   @Get('sections')
   @Version('1')
+  @RequirePermission('sections', 'read')
   @ApiOperation({
     summary: 'List sections',
     description:
@@ -212,6 +222,7 @@ export class AcademicsController {
 
   @Get('sections/:sectionId')
   @Version('1')
+  @RequirePermission('sections', 'read')
   @ApiOperation({
     summary: 'Get a section',
     description:
@@ -226,6 +237,7 @@ export class AcademicsController {
 
   @Patch('sections/:sectionId')
   @Version('1')
+  @RequirePermission('sections', 'update')
   @ApiOperation({
     summary: 'Update a section',
     description:
@@ -241,6 +253,7 @@ export class AcademicsController {
 
   @Delete('sections/:sectionId')
   @Version('1')
+  @RequirePermission('sections', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a section',
     description:
@@ -260,6 +273,7 @@ export class AcademicsController {
 
   @Post('subjects')
   @Version('1')
+  @RequirePermission('subjects', 'create')
   @ApiOperation({
     summary: 'Create a subject',
     description:
@@ -274,6 +288,7 @@ export class AcademicsController {
 
   @Get('subjects')
   @Version('1')
+  @RequirePermission('subjects', 'read')
   @ApiOperation({
     summary: 'List subjects',
     description:
@@ -288,6 +303,7 @@ export class AcademicsController {
 
   @Get('subjects/:subjectId')
   @Version('1')
+  @RequirePermission('subjects', 'read')
   @ApiOperation({
     summary: 'Get a subject',
     description:
@@ -302,6 +318,7 @@ export class AcademicsController {
 
   @Patch('subjects/:subjectId')
   @Version('1')
+  @RequirePermission('subjects', 'update')
   @ApiOperation({
     summary: 'Update a subject',
     description:
@@ -317,6 +334,7 @@ export class AcademicsController {
 
   @Delete('subjects/:subjectId')
   @Version('1')
+  @RequirePermission('subjects', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a subject',
     description:

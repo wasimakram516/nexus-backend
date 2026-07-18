@@ -13,6 +13,7 @@ import {
 import { AttendanceStatus } from '../../common/enums/domain.enums';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
+import { UserPermissionsService } from '../../common/services/user-permissions.service';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -31,14 +32,30 @@ export class AttendanceService {
     private readonly prisma: PrismaService,
     private readonly campusAccessService: CampusAccessService,
     private readonly moduleAccessService: ModuleAccessService,
+    private readonly userPermissionsService: UserPermissionsService,
   ) {}
+
+  /** SUPERADMIN/ADMIN always qualify; other archetypes (STAFF) qualify only
+   *  when granted attendance.update via their assigned Role — this is what
+   *  replaces the old hardcoded ACCOUNTANT-archetype privilege check. */
+  private async isAttendancePrivileged(
+    currentUser: CurrentUser,
+  ): Promise<boolean> {
+    if (
+      currentUser.role === UserRole.SUPERADMIN ||
+      currentUser.role === UserRole.ADMIN
+    ) {
+      return true;
+    }
+    return this.userPermissionsService.can(currentUser, 'attendance', 'update');
+  }
 
   async checkIn(currentUser: CurrentUser, dto: CheckInDto) {
     await this.moduleAccessService.assertModuleEnabledForUser(
       currentUser,
       ModuleKey.ATTENDANCE,
     );
-    this.assertAttendanceActor(currentUser, dto.userId);
+    await this.assertAttendanceActor(currentUser, dto.userId);
     const user = await this.prisma.user.findUnique({
       where: { id: dto.userId },
     });
@@ -93,7 +110,7 @@ export class AttendanceService {
       currentUser,
       ModuleKey.ATTENDANCE,
     );
-    this.assertAttendanceActor(currentUser, dto.userId);
+    await this.assertAttendanceActor(currentUser, dto.userId);
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: dto.userId },
     });
@@ -176,12 +193,23 @@ export class AttendanceService {
       currentUser,
       dto.campusId,
     );
+    return this.markCampusAbsentees(dto.campusId, dto.date);
+  }
+
+  /**
+   * Shared by the manual autoMarkAbsent() endpoint and the scheduled
+   * end-of-day job — kept guard-free so the scheduler (which has already
+   * done its own per-institution module/subscription eligibility check) can
+   * call it directly without a synthetic actor. Idempotent: only creates
+   * rows for users who don't already have an attendance record that day.
+   */
+  async markCampusAbsentees(campusId: string, date: string) {
     const users = await this.prisma.userCampus.findMany({
-      where: { campusId: dto.campusId },
+      where: { campusId },
       include: { user: true },
     });
     const existing = await this.prisma.attendance.findMany({
-      where: { campusId: dto.campusId, date: new Date(dto.date) },
+      where: { campusId, date: new Date(date) },
       select: { userId: true },
     });
     const existingIds = new Set(
@@ -195,8 +223,8 @@ export class AttendanceService {
       .map((item: { userId: string; user: { role: PrismaUserRole } }) => ({
         userId: item.userId,
         role: item.user.role,
-        campusId: dto.campusId,
-        date: new Date(dto.date),
+        campusId,
+        date: new Date(date),
         status: AttendanceStatus.ABSENT,
       }));
     if (data.length) {
@@ -246,14 +274,14 @@ export class AttendanceService {
     const studentIds = users
       .filter((user) => user.role === PrismaUserRole.STUDENT)
       .map((user) => user.id);
-    const teacherIds = users
-      .filter((user) => user.role === PrismaUserRole.TEACHER)
-      .map((user) => user.id);
+    // STAFF covers both teaching and non-teaching employees; membership is
+    // proven by EITHER a Teacher profile at this campus (teaching staff) OR
+    // an explicit UserCampus assignment (non-teaching staff, campus admins).
     const staffIds = users
       .filter(
         (user) =>
-          user.role === PrismaUserRole.ADMIN ||
-          user.role === PrismaUserRole.ACCOUNTANT,
+          user.role === PrismaUserRole.STAFF ||
+          user.role === PrismaUserRole.ADMIN,
       )
       .map((user) => user.id);
 
@@ -264,9 +292,9 @@ export class AttendanceService {
             select: { userId: true },
           })
         : Promise.resolve([]),
-      teacherIds.length
+      staffIds.length
         ? this.prisma.teacher.findMany({
-            where: { userId: { in: teacherIds }, campusId: dto.campusId },
+            where: { userId: { in: staffIds }, campusId: dto.campusId },
             select: { userId: true },
           })
         : Promise.resolve([]),
@@ -509,16 +537,16 @@ export class AttendanceService {
       }
       return student.campusId;
     }
-    if (role === PrismaUserRole.TEACHER) {
+    if (role === PrismaUserRole.STAFF) {
+      // Teaching staff resolve to their profile's campus; non-teaching
+      // staff (accountants, front-desk, campus admins) fall through to the
+      // generic UserCampus assignment lookup below.
       const teacher = await this.prisma.teacher.findUnique({
         where: { userId },
       });
-      if (!teacher) {
-        throw new ConflictException(
-          'This account has no teacher profile yet — create one under People → Teachers.',
-        );
+      if (teacher) {
+        return teacher.campusId;
       }
-      return teacher.campusId;
     }
     if (role === PrismaUserRole.GUARDIAN) {
       const guardian = await this.prisma.guardian.findUnique({
@@ -542,14 +570,11 @@ export class AttendanceService {
     return assignment.campusId;
   }
 
-  private assertAttendanceActor(
+  private async assertAttendanceActor(
     currentUser: CurrentUser,
     targetUserId: string,
   ) {
-    const isPrivileged =
-      currentUser.role === UserRole.SUPERADMIN ||
-      currentUser.role === UserRole.ADMIN ||
-      currentUser.role === UserRole.ACCOUNTANT;
+    const isPrivileged = await this.isAttendancePrivileged(currentUser);
 
     if (!isPrivileged && currentUser.sub !== targetUserId) {
       throw new ForbiddenException('You can only manage your own attendance.');
@@ -568,12 +593,8 @@ export class AttendanceService {
       record.campusId,
     );
 
-    if (
-      currentUser.role !== UserRole.SUPERADMIN &&
-      currentUser.role !== UserRole.ADMIN &&
-      currentUser.role !== UserRole.ACCOUNTANT &&
-      currentUser.sub !== record.userId
-    ) {
+    const isPrivileged = await this.isAttendancePrivileged(currentUser);
+    if (!isPrivileged && currentUser.sub !== record.userId) {
       throw new ForbiddenException(
         'You can only view your own attendance records.',
       );
@@ -584,7 +605,7 @@ export class AttendanceService {
     currentUser: CurrentUser,
     query: ListAttendanceQueryDto,
   ) {
-    const effectiveUserId = this.resolveScopedAttendanceUserId(
+    const effectiveUserId = await this.resolveScopedAttendanceUserId(
       currentUser,
       query.userId,
     );
@@ -622,14 +643,11 @@ export class AttendanceService {
     };
   }
 
-  private resolveScopedAttendanceUserId(
+  private async resolveScopedAttendanceUserId(
     currentUser: CurrentUser,
     requestedUserId?: string,
   ) {
-    const isPrivileged =
-      currentUser.role === UserRole.SUPERADMIN ||
-      currentUser.role === UserRole.ADMIN ||
-      currentUser.role === UserRole.ACCOUNTANT;
+    const isPrivileged = await this.isAttendancePrivileged(currentUser);
 
     if (isPrivileged) {
       return requestedUserId;

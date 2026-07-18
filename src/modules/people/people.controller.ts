@@ -1,4 +1,4 @@
-﻿import {
+import {
   Body,
   Controller,
   Delete,
@@ -13,10 +13,9 @@
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
 import { DeleteRecordDto } from '../../common/dto/delete-record.dto';
-import { ModuleKey } from '../../prisma/client';
-import { ModulePermission } from '../../common/decorators/module-permission.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { ModulePermissionsGuard } from '../../common/guards/module-permissions.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser as CurrentUserPayload } from '../../common/interfaces/current-user.interface';
 import {
   AssignTeacherSubjectDto,
@@ -34,14 +33,14 @@ import { PeopleService } from './people.service';
 
 @ApiTags('People')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, ModulePermissionsGuard)
-@ModulePermission(ModuleKey.PEOPLE)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('people')
 export class PeopleController {
   constructor(private readonly peopleService: PeopleService) {}
 
   @Post('students')
   @Version('1')
+  @RequirePermission('students', 'create')
   @ApiOperation({
     summary: 'Create a student',
     description:
@@ -56,6 +55,7 @@ export class PeopleController {
 
   @Get('students')
   @Version('1')
+  @RequirePermission('students', 'read')
   @ApiOperation({
     summary: 'List students',
     description:
@@ -70,6 +70,7 @@ export class PeopleController {
 
   @Get('students/:studentId')
   @Version('1')
+  @RequirePermission('students', 'read')
   @ApiOperation({
     summary: 'Get a student',
     description:
@@ -84,6 +85,7 @@ export class PeopleController {
 
   @Patch('students/:studentId')
   @Version('1')
+  @RequirePermission('students', 'update')
   @ApiOperation({
     summary: 'Update a student',
     description:
@@ -99,6 +101,7 @@ export class PeopleController {
 
   @Delete('students/:studentId')
   @Version('1')
+  @RequirePermission('students', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a student',
     description:
@@ -114,6 +117,7 @@ export class PeopleController {
 
   @Post('guardians')
   @Version('1')
+  @RequirePermission('guardians', 'create')
   @ApiOperation({
     summary: 'Create a guardian',
     description:
@@ -128,6 +132,7 @@ export class PeopleController {
 
   @Get('guardians')
   @Version('1')
+  @RequirePermission('guardians', 'read')
   @ApiOperation({
     summary: 'List guardians',
     description:
@@ -142,6 +147,7 @@ export class PeopleController {
 
   @Get('guardians/:guardianId')
   @Version('1')
+  @RequirePermission('guardians', 'read')
   @ApiOperation({
     summary: 'Get a guardian',
     description:
@@ -156,6 +162,7 @@ export class PeopleController {
 
   @Patch('guardians/:guardianId')
   @Version('1')
+  @RequirePermission('guardians', 'update')
   @ApiOperation({
     summary: 'Update a guardian',
     description:
@@ -171,6 +178,7 @@ export class PeopleController {
 
   @Delete('guardians/:guardianId')
   @Version('1')
+  @RequirePermission('guardians', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a guardian',
     description:
@@ -190,6 +198,7 @@ export class PeopleController {
 
   @Post('teachers')
   @Version('1')
+  @RequirePermission('teachers', 'create')
   @ApiOperation({
     summary: 'Create a teacher',
     description:
@@ -204,6 +213,7 @@ export class PeopleController {
 
   @Get('teachers')
   @Version('1')
+  @RequirePermission('teachers', 'read')
   @ApiOperation({
     summary: 'List teachers',
     description:
@@ -218,6 +228,7 @@ export class PeopleController {
 
   @Get('teachers/:teacherId')
   @Version('1')
+  @RequirePermission('teachers', 'read')
   @ApiOperation({
     summary: 'Get a teacher',
     description:
@@ -232,6 +243,7 @@ export class PeopleController {
 
   @Patch('teachers/:teacherId')
   @Version('1')
+  @RequirePermission('teachers', 'update')
   @ApiOperation({
     summary: 'Update a teacher',
     description:
@@ -247,6 +259,7 @@ export class PeopleController {
 
   @Delete('teachers/:teacherId')
   @Version('1')
+  @RequirePermission('teachers', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a teacher',
     description:
@@ -262,6 +275,7 @@ export class PeopleController {
 
   @Post('student-guardians')
   @Version('1')
+  @RequirePermission('student_guardians', 'create')
   @ApiOperation({
     summary: 'Link a guardian to a student',
     description:
@@ -276,6 +290,7 @@ export class PeopleController {
 
   @Post('student-history')
   @Version('1')
+  @RequirePermission('student_history', 'create')
   @ApiOperation({
     summary: 'Record student promotion history',
     description:
@@ -290,6 +305,7 @@ export class PeopleController {
 
   @Post('teacher-subjects')
   @Version('1')
+  @RequirePermission('teacher_subjects', 'create')
   @ApiOperation({
     summary: 'Assign a teacher to a subject',
     description:
@@ -304,6 +320,7 @@ export class PeopleController {
 
   @Get('teacher-subjects')
   @Version('1')
+  @RequirePermission('teacher_subjects', 'read')
   @ApiOperation({
     summary: 'List teacher subject assignments',
     description:
@@ -318,6 +335,7 @@ export class PeopleController {
 
   @Delete('teacher-subjects/:assignmentId')
   @Version('1')
+  @RequirePermission('teacher_subjects', 'delete')
   @ApiOperation({
     summary: 'Remove a teacher subject assignment',
     description:
@@ -332,6 +350,7 @@ export class PeopleController {
 
   @Delete('student-guardians/:linkId')
   @Version('1')
+  @RequirePermission('student_guardians', 'delete')
   @ApiOperation({
     summary: 'Unlink a guardian from a student',
     description:
@@ -346,6 +365,7 @@ export class PeopleController {
 
   @Post('contacts')
   @Version('1')
+  @RequirePermission('contacts', 'create')
   @ApiOperation({
     summary: 'Create a contact record',
     description:

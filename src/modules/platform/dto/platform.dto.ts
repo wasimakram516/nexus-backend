@@ -80,7 +80,9 @@ export class UpdateInstitutionDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  @Matches(/^[a-z0-9-]+$/, { message: 'slug must be lowercase, alphanumeric and hyphens only' })
+  @Matches(/^[a-z0-9-]+$/, {
+    message: 'slug must be lowercase, alphanumeric and hyphens only',
+  })
   slug?: string;
 
   @ApiPropertyOptional({
@@ -269,26 +271,6 @@ export class UpdateSubscriptionDto {
 export class UpdateInstitutionAccessDto extends UpdateInstitutionDto {}
 
 export class UpdateSubscriptionAccessDto extends UpdateSubscriptionDto {}
-
-export class CreatePermissionTemplateDto {
-  @ApiProperty()
-  @IsString()
-  @IsNotEmpty()
-  name!: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  description?: string;
-
-  @ApiProperty({ type: 'object', additionalProperties: true })
-  @IsObject()
-  permissions!: Record<string, unknown>;
-}
-
-export class UpdatePermissionTemplateDto extends PartialType(
-  CreatePermissionTemplateDto,
-) {}
 
 export class ListInstitutionsQueryDto {
   @ApiPropertyOptional({ enum: InstitutionStatus })

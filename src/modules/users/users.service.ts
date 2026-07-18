@@ -5,6 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, UserRole } from '../../prisma/client';
+// UpdateUserAccessDto.role is typed against this hand-maintained mirror;
+// everything else here (CurrentUser, DB rows) is Prisma-typed — same values,
+// nominally distinct TS enums, so comparisons against dto.role need this alias.
+import { UserRole as DtoUserRole } from '../../common/enums/domain.enums';
 import { AuditLogService } from '../../common/services/audit-log.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
@@ -103,7 +107,10 @@ export class UsersService {
           }
         : {}),
       ...(query.role ? { role: query.role } : {}),
-      ...(currentUser.role === UserRole.ADMIN && currentUser.institutionId
+      // Every non-SUPERADMIN caller — institution ADMIN or a STAFF user
+      // holding a `users.read` grant — is locked to their own institution.
+      // Only SUPERADMIN can cross institutions (and only via an explicit filter).
+      ...(currentUser.role !== UserRole.SUPERADMIN && currentUser.institutionId
         ? { institutionId: currentUser.institutionId }
         : currentUser.role === UserRole.SUPERADMIN && query.institutionId
           ? { institutionId: query.institutionId }
@@ -123,9 +130,9 @@ export class UsersService {
           role: true,
           status: true,
           institutionId: true,
-          permissionTemplateId: true,
+          roleId: true,
           permissionOverrides: true,
-          permissionTemplate: { select: { name: true } },
+          assignedRole: { select: { name: true } },
           createdAt: true,
         },
       }),
@@ -136,6 +143,38 @@ export class UsersService {
       message: 'Users retrieved successfully',
       data: { items, total, page: query.page, limit: query.limit },
     };
+  }
+
+  /**
+   * Resolves user IDs to display names for the record-metadata popover
+   * (createdBy/updatedBy on any entity). No `users.read` grant required —
+   * unlike listUsers, this only ever returns a name/email for IDs the
+   * caller already legitimately encountered on a record they can see, not
+   * a browsable directory. Still institution-scoped so it can't be used to
+   * probe for user existence in other institutions.
+   */
+  async resolveUsers(currentUser: CurrentUser, ids: string[]) {
+    const uniqueIds = Array.from(new Set(ids)).slice(0, 100);
+    if (uniqueIds.length === 0) {
+      return { message: 'Users resolved successfully', data: {} };
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        id: { in: uniqueIds },
+        ...(currentUser.role !== UserRole.SUPERADMIN &&
+        currentUser.institutionId
+          ? { institutionId: currentUser.institutionId }
+          : {}),
+      },
+      select: { id: true, name: true, email: true },
+    });
+
+    const data = Object.fromEntries(
+      users.map((user) => [user.id, { name: user.name, email: user.email }]),
+    );
+
+    return { message: 'Users resolved successfully', data };
   }
 
   async updateUserRole(
@@ -167,13 +206,39 @@ export class UsersService {
       );
     }
 
+    // A caller reaching this point without being ADMIN/SUPERADMIN got here
+    // via an explicit `users.update` grant on a delegated Role (see
+    // UsersController). That grant is never trusted with admin-adjacent
+    // accounts or cross-institution reach the way institution ADMIN is.
+    if (
+      currentUser.role !== UserRole.ADMIN &&
+      currentUser.role !== UserRole.SUPERADMIN
+    ) {
+      if (target.institutionId !== currentUser.institutionId) {
+        throw new ForbiddenException(
+          'You can only manage users within your institution.',
+        );
+      }
+      if (
+        target.role === UserRole.ADMIN ||
+        target.role === UserRole.SUPERADMIN
+      ) {
+        throw new ForbiddenException('You cannot modify admin-level users.');
+      }
+      if (
+        dto.role === DtoUserRole.ADMIN ||
+        dto.role === DtoUserRole.SUPERADMIN
+      ) {
+        throw new ForbiddenException('You cannot assign admin-level roles.');
+      }
+    }
+
     const data: Prisma.UserUncheckedUpdateInput = {};
     if (dto.role !== undefined) data.role = dto.role;
     if (dto.status !== undefined) data.status = dto.status;
 
     const touchesPermissions =
-      dto.permissionTemplateId !== undefined ||
-      dto.permissionOverrides !== undefined;
+      dto.roleId !== undefined || dto.permissionOverrides !== undefined;
     if (touchesPermissions) {
       const resultingRole = dto.role ?? target.role;
       if (
@@ -181,18 +246,18 @@ export class UsersService {
         resultingRole === UserRole.SUPERADMIN
       ) {
         throw new BadRequestException(
-          'Permission templates and overrides cannot be applied to admin-level users — they already have full institution access.',
+          'Roles and overrides cannot be applied to admin-level users — they already have full institution access.',
         );
       }
     }
 
-    if (dto.permissionTemplateId !== undefined) {
-      if (dto.permissionTemplateId === null) {
-        data.permissionTemplateId = null;
+    if (dto.roleId !== undefined) {
+      if (dto.roleId === null) {
+        data.roleId = null;
       } else {
-        const template = await this.prisma.permissionTemplate.findFirst({
+        const role = await this.prisma.role.findFirst({
           where: {
-            id: dto.permissionTemplateId,
+            id: dto.roleId,
             deletedAt: null,
             ...(target.institutionId
               ? { institutionId: target.institutionId }
@@ -200,12 +265,10 @@ export class UsersService {
           },
           select: { id: true },
         });
-        if (!template) {
-          throw new BadRequestException(
-            'Permission template not found for this institution.',
-          );
+        if (!role) {
+          throw new BadRequestException('Role not found for this institution.');
         }
-        data.permissionTemplateId = template.id;
+        data.roleId = role.id;
       }
     }
 
@@ -213,9 +276,9 @@ export class UsersService {
       data.permissionOverrides =
         dto.permissionOverrides === null
           ? Prisma.DbNull
-          : (this.userPermissionsService.sanitizeOverrides(
+          : this.userPermissionsService.sanitizeOverrides(
               dto.permissionOverrides,
-            ) as Prisma.InputJsonValue);
+            );
     }
 
     const user = await this.prisma.user.update({
@@ -229,9 +292,9 @@ export class UsersService {
         status: true,
         deletedAt: true,
         institutionId: true,
-        permissionTemplateId: true,
+        roleId: true,
         permissionOverrides: true,
-        permissionTemplate: { select: { name: true } },
+        assignedRole: { select: { name: true } },
       },
     });
 
@@ -243,7 +306,7 @@ export class UsersService {
       metadata: {
         role: dto.role,
         status: dto.status,
-        permissionTemplateId: dto.permissionTemplateId,
+        roleId: dto.roleId,
         permissionOverridesUpdated: dto.permissionOverrides !== undefined,
       },
     });
@@ -270,6 +333,21 @@ export class UsersService {
       );
     }
 
+    // Same delegated-role rail as updateUserRole: a `users.delete` grant on
+    // a custom Role can only reach STAFF/STUDENT/GUARDIAN accounts in the
+    // caller's own institution — never admin-level accounts.
+    if (
+      currentUser.role !== UserRole.ADMIN &&
+      currentUser.role !== UserRole.SUPERADMIN &&
+      (target.role === UserRole.ADMIN ||
+        target.role === UserRole.SUPERADMIN ||
+        target.institutionId !== currentUser.institutionId)
+    ) {
+      throw new ForbiddenException(
+        'You can only delete users within your institution, excluding admin-level accounts.',
+      );
+    }
+
     await this.prisma.user.update({
       where: { id: userId },
       data: {
@@ -279,7 +357,12 @@ export class UsersService {
 
     await this.prisma.user.update({
       where: { id: userId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
 
     await this.auditLogService.log(currentUser, {

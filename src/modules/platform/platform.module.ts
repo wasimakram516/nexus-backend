@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { RolesModule } from '../roles/roles.module';
 import { InstitutionConfigController } from './institution-config.controller';
 import { InstitutionConfigService } from './institution-config.service';
 import { PlatformController } from './platform.controller';
@@ -8,7 +9,7 @@ import { PlatformService } from './platform.service';
 import { SignupService } from './signup.service';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, RolesModule],
   controllers: [
     PlatformPublicController,
     PlatformController,

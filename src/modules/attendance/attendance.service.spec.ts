@@ -4,6 +4,7 @@ import { UserRole } from '../../prisma/client';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
+import { UserPermissionsService } from '../../common/services/user-permissions.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AttendanceService } from './attendance.service';
 
@@ -13,7 +14,7 @@ describe('AttendanceService', () => {
   const teacherUser: CurrentUser = {
     sub: 'teacher-user-1',
     email: 'teacher@nexus.test',
-    role: UserRole.TEACHER,
+    role: UserRole.STAFF,
     institutionId: 'institution-1',
   };
 
@@ -71,6 +72,12 @@ describe('AttendanceService', () => {
           provide: ModuleAccessService,
           useValue: {
             assertModuleEnabledForUser: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: UserPermissionsService,
+          useValue: {
+            can: jest.fn().mockResolvedValue(false),
           },
         },
       ],
@@ -193,7 +200,7 @@ describe('AttendanceService', () => {
       id: 'attendance-1',
       campusId: 'campus-1',
       userId: 'teacher-user-1',
-      role: UserRole.TEACHER,
+      role: UserRole.STAFF,
       date: new Date('2026-05-07T00:00:00.000Z'),
       checkOut: null,
     });
@@ -250,7 +257,7 @@ describe('AttendanceService', () => {
     prismaMock.user.findMany.mockResolvedValue([
       { id: 'student-user-1', role: UserRole.STUDENT },
       { id: 'guardian-user-1', role: UserRole.GUARDIAN },
-      { id: 'teacher-user-9', role: UserRole.TEACHER },
+      { id: 'teacher-user-9', role: UserRole.STAFF },
     ]);
     prismaMock.student.findMany.mockResolvedValue([
       { userId: 'student-user-1' },
@@ -309,7 +316,7 @@ describe('AttendanceService', () => {
   it('blocks duplicate check-in records for the same user and date', async () => {
     prismaMock.user.findUnique.mockResolvedValue({
       id: 'teacher-user-1',
-      role: UserRole.TEACHER,
+      role: UserRole.STAFF,
     });
     prismaMock.teacher.findUnique.mockResolvedValue({
       userId: 'teacher-user-1',
