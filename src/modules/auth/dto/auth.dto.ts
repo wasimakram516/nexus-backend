@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEmail,
   IsEnum,
+  IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
@@ -34,9 +35,13 @@ export class RegisterDto {
 }
 
 export class LoginDto {
-  @ApiProperty()
-  @IsEmail()
-  email!: string;
+  @ApiProperty({
+    description:
+      'Email (staff/admin), registration number (student), or phone number (guardian).',
+  })
+  @IsString()
+  @IsNotEmpty()
+  identifier!: string;
 
   @ApiProperty()
   @IsString()
