@@ -10,10 +10,9 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole } from '../../common/enums/domain.enums';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import {
   ListRecycleBinQueryDto,
@@ -23,14 +22,14 @@ import { RecycleBinService } from './recycle-bin.service';
 
 @ApiTags('Recycle Bin')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('recycle-bin')
 export class RecycleBinController {
   constructor(private readonly recycleBinService: RecycleBinService) {}
 
   @Get()
   @Version('1')
+  @RequirePermission('recycle_bin', 'read')
   @ApiOperation({
     summary: 'List soft-deleted records',
     description:
@@ -45,6 +44,7 @@ export class RecycleBinController {
 
   @Post(':entity/:recordId/restore')
   @Version('1')
+  @RequirePermission('recycle_bin', 'update')
   @ApiOperation({
     summary: 'Restore a recycle bin record',
   })
@@ -61,6 +61,7 @@ export class RecycleBinController {
 
   @Delete(':entity/:recordId/permanent')
   @Version('1')
+  @RequirePermission('recycle_bin', 'delete')
   @ApiOperation({
     summary: 'Permanently delete a recycle bin record',
     description:

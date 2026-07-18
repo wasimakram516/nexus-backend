@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { CurrentUserContextInterceptor } from './common/interceptors/current-user-context.interceptor';
 import { envSchema } from './config/env.schema';
@@ -23,6 +24,7 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { RecycleBinModule } from './modules/recycle-bin/recycle-bin.module';
 import { UploadModule } from './modules/upload/upload.module';
+import { SchedulerModule } from './modules/scheduler/scheduler.module';
 
 @Module({
   imports: [
@@ -30,6 +32,7 @@ import { UploadModule } from './modules/upload/upload.module';
       isGlobal: true,
       validate: (config) => envSchema.parse(config),
     }),
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([
       {
         ttl: 60_000,
@@ -52,6 +55,7 @@ import { UploadModule } from './modules/upload/upload.module';
     UploadModule,
     AuditLogsModule,
     RecycleBinModule,
+    SchedulerModule,
   ],
   providers: [
     AppLoggerService,

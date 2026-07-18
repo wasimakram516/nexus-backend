@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { AuditLogService } from '../../common/services/audit-log.service';
@@ -33,7 +33,7 @@ describe('RecycleBinService', () => {
       update: jest.fn(),
       delete: jest.fn(),
     },
-    permissionTemplate: {
+    role: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
@@ -44,66 +44,77 @@ describe('RecycleBinService', () => {
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     guardian: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     teacher: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     level: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     academicClass: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     section: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     subject: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     staffSalary: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     salaryDeductionRule: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     salaryAdjustment: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     salaryPayment: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     salaryDeductionSummary: {
       updateMany: jest.fn(),
@@ -114,42 +125,52 @@ describe('RecycleBinService', () => {
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     feeStructure: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     studentDiscount: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     studentFineRule: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     studentFine: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     feeVoucher: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     feePayment: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
+    },
+    institutionSetting: {
+      findUnique: jest.fn().mockResolvedValue(null),
     },
   };
 
@@ -197,7 +218,7 @@ describe('RecycleBinService', () => {
           id: 'user-1',
           name: 'Deleted User',
           email: 'deleted@nexus.test',
-          role: UserRole.TEACHER,
+          role: UserRole.STAFF,
           status: UserStatus.SUSPENDED,
           institutionId: 'institution-1',
           deletedAt: new Date('2026-05-06T10:00:00.000Z'),
@@ -262,7 +283,7 @@ describe('RecycleBinService', () => {
       id: 'user-1',
       name: 'Deleted User',
       email: 'deleted@nexus.test',
-      role: UserRole.TEACHER,
+      role: UserRole.STAFF,
       status: UserStatus.ACTIVE,
       institutionId: 'institution-1',
       deletedAt: new Date('2026-05-06T10:00:00.000Z'),
@@ -271,7 +292,7 @@ describe('RecycleBinService', () => {
       id: 'user-1',
       name: 'Deleted User',
       email: 'deleted@nexus.test',
-      role: UserRole.TEACHER,
+      role: UserRole.STAFF,
       status: UserStatus.ACTIVE,
       institutionId: 'institution-1',
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -397,6 +418,200 @@ describe('RecycleBinService', () => {
           },
         ],
       },
+    });
+  });
+
+  describe('permanentlyDeleteRecord — retention gate', () => {
+    const baseCampus = {
+      id: 'campus-1',
+      name: 'North Campus',
+      location: 'Lahore',
+      institutionId: 'institution-1',
+    };
+
+    it('blocks a permanent delete before the retention period has elapsed', async () => {
+      prismaMock.campus.findFirst.mockResolvedValue({
+        ...baseCampus,
+        deletedAt: new Date(), // deleted moments ago, default retention 30 days
+      });
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.CAMPUS,
+          'campus-1',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.campus.delete).not.toHaveBeenCalled();
+    });
+
+    it('allows a permanent delete once the retention period has elapsed with no active children', async () => {
+      const longAgo = new Date();
+      longAgo.setUTCDate(longAgo.getUTCDate() - 31);
+      prismaMock.campus.findFirst.mockResolvedValue({
+        ...baseCampus,
+        deletedAt: longAgo,
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.CAMPUS,
+        'campus-1',
+      );
+
+      expect(prismaMock.campus.delete).toHaveBeenCalled();
+      expect(result).toMatchObject({
+        message: 'Campus permanently deleted successfully',
+      });
+    });
+
+    it('respects a custom institution retentionDays setting instead of the 30-day default', async () => {
+      const eightDaysAgo = new Date();
+      eightDaysAgo.setUTCDate(eightDaysAgo.getUTCDate() - 8);
+      prismaMock.campus.findFirst.mockResolvedValue({
+        ...baseCampus,
+        deletedAt: eightDaysAgo,
+      });
+      prismaMock.institutionSetting.findUnique.mockResolvedValueOnce({
+        value: { retentionDays: 7 },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.CAMPUS,
+        'campus-1',
+      );
+
+      expect(prismaMock.campus.delete).toHaveBeenCalled();
+      expect(result).toMatchObject({
+        message: 'Campus permanently deleted successfully',
+      });
+    });
+  });
+
+  describe('permanentlyDeleteRecord — cascade guard', () => {
+    const longAgo = new Date();
+    longAgo.setUTCDate(longAgo.getUTCDate() - 31);
+    const baseCampus = {
+      id: 'campus-1',
+      name: 'North Campus',
+      location: 'Lahore',
+      institutionId: 'institution-1',
+      deletedAt: longAgo,
+    };
+
+    it('refuses to purge a campus that still has an active (non-deleted) level', async () => {
+      prismaMock.campus.findFirst.mockResolvedValue(baseCampus);
+      prismaMock.level.count.mockResolvedValueOnce(1);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.CAMPUS,
+          'campus-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prismaMock.campus.delete).not.toHaveBeenCalled();
+    });
+
+    it('refuses to purge a campus whose only level is soft-deleted but still has an active class (recursive grandchild check)', async () => {
+      prismaMock.campus.findFirst.mockResolvedValue(baseCampus);
+      // No ACTIVE levels directly under the campus...
+      prismaMock.level.count.mockResolvedValueOnce(0);
+      // ...but the campus's one (soft-deleted) level still has an id...
+      prismaMock.level.findMany.mockResolvedValueOnce([{ id: 'level-1' }]);
+      // ...and that level has an ACTIVE class underneath it.
+      prismaMock.academicClass.count.mockResolvedValueOnce(1);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.CAMPUS,
+          'campus-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prismaMock.campus.delete).not.toHaveBeenCalled();
+    });
+
+    it('allows the purge once every descendant, at every depth, is clear', async () => {
+      prismaMock.campus.findFirst.mockResolvedValue(baseCampus);
+      prismaMock.level.count.mockResolvedValueOnce(0);
+      prismaMock.level.findMany.mockResolvedValueOnce([{ id: 'level-1' }]);
+      prismaMock.academicClass.count.mockResolvedValueOnce(0);
+      prismaMock.academicClass.findMany.mockResolvedValueOnce([]);
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.CAMPUS,
+        'campus-1',
+      );
+
+      expect(prismaMock.campus.delete).toHaveBeenCalled();
+      expect(result).toMatchObject({
+        message: 'Campus permanently deleted successfully',
+      });
+    });
+  });
+
+  describe('listDeletedItems — purge eligibility', () => {
+    it('marks an item eligible once its retention window has elapsed', async () => {
+      const longAgo = new Date();
+      longAgo.setUTCDate(longAgo.getUTCDate() - 31);
+      prismaMock.campus.findMany.mockResolvedValue([
+        {
+          id: 'campus-1',
+          name: 'North Campus',
+          location: 'Lahore',
+          institutionId: 'institution-1',
+          deletedAt: longAgo,
+          deletedBy: null,
+          deleteReason: null,
+          createdAt: longAgo,
+          updatedAt: longAgo,
+        },
+      ]);
+
+      const result = await service.listDeletedItems(adminUser, {
+        page: 1,
+        limit: 10,
+        entity: RecycleBinEntity.CAMPUS,
+      });
+
+      expect(result.data.items[0]).toMatchObject({
+        retentionDays: 30,
+        daysLeft: 0,
+        isPurgeEligible: true,
+      });
+    });
+
+    it('marks a recently-deleted item as not yet eligible, with days remaining', async () => {
+      const yesterday = new Date();
+      yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+      prismaMock.campus.findMany.mockResolvedValue([
+        {
+          id: 'campus-1',
+          name: 'North Campus',
+          location: 'Lahore',
+          institutionId: 'institution-1',
+          deletedAt: yesterday,
+          deletedBy: null,
+          deleteReason: null,
+          createdAt: yesterday,
+          updatedAt: yesterday,
+        },
+      ]);
+
+      const result = await service.listDeletedItems(adminUser, {
+        page: 1,
+        limit: 10,
+        entity: RecycleBinEntity.CAMPUS,
+      });
+
+      expect(result.data.items[0]).toMatchObject({
+        retentionDays: 30,
+        isPurgeEligible: false,
+      });
+      expect(result.data.items[0].daysLeft).toBeGreaterThan(0);
     });
   });
 });

@@ -9,6 +9,7 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsDefined,
   IsEmail,
   IsEnum,
   IsNumber,
@@ -158,7 +159,13 @@ export class UpsertInstitutionSettingDto {
   @IsNotEmpty()
   key!: string;
 
+  // Deliberately untyped — settings are arbitrary per-institution JSON
+  // (primitives, objects, or arrays). @IsDefined() only rejects
+  // undefined; its real job here is giving class-validator's global
+  // ValidationPipe({ whitelist: true }) a recognized decorator so it
+  // doesn't strip/reject this property as unknown.
   @ApiProperty()
+  @IsDefined()
   value!: unknown;
 
   @ApiPropertyOptional()

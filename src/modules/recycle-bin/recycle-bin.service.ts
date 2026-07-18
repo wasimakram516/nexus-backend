@@ -28,6 +28,203 @@ type RecycleBinItem = {
   metadata: Record<string, unknown>;
 };
 
+const DEFAULT_RECYCLE_BIN_RETENTION_DAYS = 30;
+const MIN_RECYCLE_BIN_RETENTION_DAYS = 7;
+const MAX_RECYCLE_BIN_RETENTION_DAYS = 365;
+
+/** Prisma model delegates that appear as cascade-delete children below. */
+type ChildModelKey =
+  | 'level'
+  | 'academicClass'
+  | 'section'
+  | 'subject'
+  | 'student'
+  | 'guardian'
+  | 'teacher'
+  | 'staffSalary'
+  | 'salaryDeductionRule'
+  | 'salaryPayment'
+  | 'salaryAdjustment'
+  | 'bankAccount'
+  | 'feeStructure'
+  | 'studentDiscount'
+  | 'studentFineRule'
+  | 'studentFine'
+  | 'feeVoucher'
+  | 'feePayment';
+
+interface CountableDelegate {
+  count(args: { where: Record<string, unknown> }): Promise<number>;
+  findMany(args: {
+    where: Record<string, unknown>;
+    select: { id: true };
+  }): Promise<Array<{ id: string }>>;
+}
+
+type CascadeChildLink = {
+  entity: RecycleBinEntity;
+  model: ChildModelKey;
+  fkField: string;
+};
+
+/**
+ * Direct onDelete: Cascade edges between the 20 recycle-bin-tracked entity
+ * types, derived from schema.prisma. Deliberately excludes cascades whose
+ * target isn't independently recycle-bin-visible (join tables like
+ * UserCampus/TeacherSubject, log-like rows like Attendance/AuditLog,
+ * SalaryDeductionSummary) — those aren't "active records a user would
+ * notice disappearing," they're incidental cascade debris that's fine to
+ * lose along with an already-30-days-dead parent. Also excludes SetNull
+ * relations (e.g. Student.classId, User.roleId) since those don't delete
+ * anything. Used by assertNoActiveDescendants() to walk the full transitive
+ * blast radius of a hard delete and refuse it if any ACTIVE row is in it.
+ */
+const ENTITY_CASCADE_CHILDREN: Partial<
+  Record<RecycleBinEntity, CascadeChildLink[]>
+> = {
+  [RecycleBinEntity.CAMPUS]: [
+    { entity: RecycleBinEntity.LEVEL, model: 'level', fkField: 'campusId' },
+    {
+      entity: RecycleBinEntity.STUDENT,
+      model: 'student',
+      fkField: 'campusId',
+    },
+    {
+      entity: RecycleBinEntity.GUARDIAN,
+      model: 'guardian',
+      fkField: 'campusId',
+    },
+    {
+      entity: RecycleBinEntity.TEACHER,
+      model: 'teacher',
+      fkField: 'campusId',
+    },
+    {
+      entity: RecycleBinEntity.SALARY,
+      model: 'staffSalary',
+      fkField: 'campusId',
+    },
+    {
+      entity: RecycleBinEntity.SALARY_DEDUCTION_RULE,
+      model: 'salaryDeductionRule',
+      fkField: 'campusId',
+    },
+    {
+      entity: RecycleBinEntity.SALARY_PAYMENT,
+      model: 'salaryPayment',
+      fkField: 'campusId',
+    },
+    {
+      entity: RecycleBinEntity.SALARY_ADJUSTMENT,
+      model: 'salaryAdjustment',
+      fkField: 'campusId',
+    },
+    {
+      entity: RecycleBinEntity.BANK_ACCOUNT,
+      model: 'bankAccount',
+      fkField: 'campusId',
+    },
+    {
+      entity: RecycleBinEntity.FEE_STRUCTURE,
+      model: 'feeStructure',
+      fkField: 'campusId',
+    },
+    {
+      entity: RecycleBinEntity.STUDENT_FINE_RULE,
+      model: 'studentFineRule',
+      fkField: 'campusId',
+    },
+    {
+      entity: RecycleBinEntity.STUDENT_FINE,
+      model: 'studentFine',
+      fkField: 'campusId',
+    },
+  ],
+  [RecycleBinEntity.LEVEL]: [
+    {
+      entity: RecycleBinEntity.CLASS,
+      model: 'academicClass',
+      fkField: 'levelId',
+    },
+  ],
+  [RecycleBinEntity.CLASS]: [
+    { entity: RecycleBinEntity.SECTION, model: 'section', fkField: 'classId' },
+    { entity: RecycleBinEntity.SUBJECT, model: 'subject', fkField: 'classId' },
+    {
+      entity: RecycleBinEntity.FEE_STRUCTURE,
+      model: 'feeStructure',
+      fkField: 'classId',
+    },
+    {
+      entity: RecycleBinEntity.STUDENT_FINE_RULE,
+      model: 'studentFineRule',
+      fkField: 'classId',
+    },
+  ],
+  [RecycleBinEntity.USER]: [
+    { entity: RecycleBinEntity.STUDENT, model: 'student', fkField: 'userId' },
+    {
+      entity: RecycleBinEntity.GUARDIAN,
+      model: 'guardian',
+      fkField: 'userId',
+    },
+    { entity: RecycleBinEntity.TEACHER, model: 'teacher', fkField: 'userId' },
+    {
+      entity: RecycleBinEntity.SALARY_PAYMENT,
+      model: 'salaryPayment',
+      fkField: 'paidBy',
+    },
+    {
+      entity: RecycleBinEntity.SALARY_ADJUSTMENT,
+      model: 'salaryAdjustment',
+      fkField: 'adjustedBy',
+    },
+  ],
+  [RecycleBinEntity.STUDENT]: [
+    {
+      entity: RecycleBinEntity.STUDENT_DISCOUNT,
+      model: 'studentDiscount',
+      fkField: 'studentId',
+    },
+    {
+      entity: RecycleBinEntity.STUDENT_FINE,
+      model: 'studentFine',
+      fkField: 'studentId',
+    },
+    {
+      entity: RecycleBinEntity.FEE_VOUCHER,
+      model: 'feeVoucher',
+      fkField: 'studentId',
+    },
+  ],
+  [RecycleBinEntity.SALARY]: [
+    {
+      entity: RecycleBinEntity.SALARY_PAYMENT,
+      model: 'salaryPayment',
+      fkField: 'salaryId',
+    },
+    {
+      entity: RecycleBinEntity.SALARY_ADJUSTMENT,
+      model: 'salaryAdjustment',
+      fkField: 'salaryId',
+    },
+  ],
+  [RecycleBinEntity.FEE_STRUCTURE]: [
+    {
+      entity: RecycleBinEntity.FEE_VOUCHER,
+      model: 'feeVoucher',
+      fkField: 'feeStructureId',
+    },
+  ],
+  [RecycleBinEntity.FEE_VOUCHER]: [
+    {
+      entity: RecycleBinEntity.FEE_PAYMENT,
+      model: 'feePayment',
+      fkField: 'voucherId',
+    },
+  ],
+};
+
 @Injectable()
 export class RecycleBinService {
   constructor(
@@ -44,7 +241,7 @@ export class RecycleBinService {
     const [
       userItems,
       campusItems,
-      permissionTemplateItems,
+      roleItems,
       studentItems,
       guardianItems,
       teacherItems,
@@ -70,9 +267,9 @@ export class RecycleBinService {
       query.entity && query.entity !== RecycleBinEntity.CAMPUS
         ? Promise.resolve<RecycleBinItem[]>([])
         : this.listDeletedCampuses(institutionId, query.search),
-      query.entity && query.entity !== RecycleBinEntity.PERMISSION_TEMPLATE
+      query.entity && query.entity !== RecycleBinEntity.ROLE
         ? Promise.resolve<RecycleBinItem[]>([])
-        : this.listDeletedPermissionTemplates(institutionId, query.search),
+        : this.listDeletedRoles(institutionId, query.search),
       query.entity && query.entity !== RecycleBinEntity.STUDENT
         ? Promise.resolve<RecycleBinItem[]>([])
         : this.listDeletedStudents(institutionId, query.search),
@@ -132,7 +329,7 @@ export class RecycleBinService {
     const combinedItems = [
       ...userItems,
       ...campusItems,
-      ...permissionTemplateItems,
+      ...roleItems,
       ...studentItems,
       ...guardianItems,
       ...teacherItems,
@@ -157,19 +354,68 @@ export class RecycleBinService {
     const skip = (query.page! - 1) * query.limit!;
     const pageItems = combinedItems.slice(skip, skip + query.limit!);
     const deletedByUsers = await this.loadDeletedByUsers(pageItems);
+    const retentionDaysByInstitution =
+      await this.resolveRetentionDaysForItems(pageItems);
 
     return {
       message: 'Recycle bin items retrieved successfully',
       data: {
-        items: pageItems.map((item) => ({
-          ...item,
-          deletedByUser: item.deletedBy ? deletedByUsers[item.deletedBy] : null,
-        })),
+        items: pageItems.map((item) => {
+          const retentionDays =
+            retentionDaysByInstitution.get(item.institutionId ?? '') ??
+            DEFAULT_RECYCLE_BIN_RETENTION_DAYS;
+          const purgeEligibleAt = this.resolvePurgeEligibleAt(
+            item.deletedAt,
+            retentionDays,
+          );
+          const daysLeft = Math.max(
+            0,
+            Math.ceil(
+              (purgeEligibleAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000),
+            ),
+          );
+
+          return {
+            ...item,
+            deletedByUser: item.deletedBy
+              ? deletedByUsers[item.deletedBy]
+              : null,
+            retentionDays,
+            purgeEligibleAt,
+            daysLeft,
+            isPurgeEligible: daysLeft === 0,
+          };
+        }),
         total: combinedItems.length,
         page: query.page,
         limit: query.limit,
       },
     };
+  }
+
+  /** Batches one setting lookup per distinct institution instead of one per item. */
+  private async resolveRetentionDaysForItems(
+    items: RecycleBinItem[],
+  ): Promise<Map<string, number>> {
+    const institutionIds = Array.from(
+      new Set(
+        items
+          .map((item) => item.institutionId)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    const entries = await Promise.all(
+      institutionIds.map(
+        async (institutionId) =>
+          [
+            institutionId,
+            await this.resolveRetentionDays(institutionId),
+          ] as const,
+      ),
+    );
+
+    return new Map(entries);
   }
 
   async restoreRecord(
@@ -254,8 +500,8 @@ export class RecycleBinService {
         return this.restoreFeePayment(currentUser, recordId);
       }
 
-      if (entity === RecycleBinEntity.PERMISSION_TEMPLATE) {
-        return this.restorePermissionTemplate(currentUser, recordId);
+      if (entity === RecycleBinEntity.ROLE) {
+        return this.restoreRole(currentUser, recordId);
       }
 
       return this.restoreCampus(currentUser, recordId);
@@ -346,8 +592,8 @@ export class RecycleBinService {
       return this.permanentlyDeleteFeePayment(currentUser, recordId);
     }
 
-    if (entity === RecycleBinEntity.PERMISSION_TEMPLATE) {
-      return this.permanentlyDeletePermissionTemplate(currentUser, recordId);
+    if (entity === RecycleBinEntity.ROLE) {
+      return this.permanentlyDeleteRole(currentUser, recordId);
     }
 
     return this.permanentlyDeleteCampus(currentUser, recordId);
@@ -473,11 +719,11 @@ export class RecycleBinService {
     }));
   }
 
-  private async listDeletedPermissionTemplates(
+  private async listDeletedRoles(
     institutionId: string | null,
     search?: string,
   ): Promise<RecycleBinItem[]> {
-    const templates = await this.prisma.permissionTemplate.findMany({
+    const templates = await this.prisma.role.findMany({
       where: {
         deletedAt: { not: null },
         ...(institutionId ? { institutionId } : {}),
@@ -515,7 +761,7 @@ export class RecycleBinService {
     });
 
     return templates.map((template) => ({
-      entity: RecycleBinEntity.PERMISSION_TEMPLATE,
+      entity: RecycleBinEntity.ROLE,
       id: template.id,
       label: template.name,
       subtitle: template.description,
@@ -1474,6 +1720,12 @@ export class RecycleBinService {
     }
 
     this.assertUserScope(currentUser, target);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.USER,
+      userId,
+      target.deletedAt!,
+      target.institutionId,
+    );
 
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.user.delete({
@@ -1566,13 +1818,10 @@ export class RecycleBinService {
     };
   }
 
-  private async restorePermissionTemplate(
-    currentUser: CurrentUser,
-    templateId: string,
-  ) {
-    const template = await this.prisma.permissionTemplate.findFirst({
+  private async restoreRole(currentUser: CurrentUser, roleId: string) {
+    const template = await this.prisma.role.findFirst({
       where: {
-        id: templateId,
+        id: roleId,
         deletedAt: {
           not: null,
         },
@@ -1586,14 +1835,14 @@ export class RecycleBinService {
     });
 
     if (!template) {
-      throw new NotFoundException('Deleted permission template not found.');
+      throw new NotFoundException('Deleted role not found.');
     }
 
     this.assertInstitutionScope(currentUser, template.institutionId);
 
-    const restoredTemplate = await this.prisma.permissionTemplate.update({
+    const restoredTemplate = await this.prisma.role.update({
       where: {
-        id: templateId,
+        id: roleId,
         deletedAt: {
           not: null,
         },
@@ -1606,9 +1855,9 @@ export class RecycleBinService {
     });
 
     await this.auditLogService.log(currentUser, {
-      action: 'PERMISSION_TEMPLATE_RESTORED',
-      entity: 'PermissionTemplate',
-      entityId: templateId,
+      action: 'ROLE_RESTORED',
+      entity: 'Role',
+      entityId: roleId,
       institutionId: template.institutionId,
       metadata: {
         name: restoredTemplate.name,
@@ -1616,7 +1865,7 @@ export class RecycleBinService {
     });
 
     return {
-      message: 'Permission template restored successfully',
+      message: 'Role restored successfully',
       data: restoredTemplate,
     };
   }
@@ -2256,6 +2505,12 @@ export class RecycleBinService {
     }
 
     this.assertCampusScope(currentUser, campus.institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.CAMPUS,
+      campusId,
+      campus.deletedAt!,
+      campus.institutionId,
+    );
 
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.campus.delete({
@@ -2285,13 +2540,13 @@ export class RecycleBinService {
     };
   }
 
-  private async permanentlyDeletePermissionTemplate(
+  private async permanentlyDeleteRole(
     currentUser: CurrentUser,
-    templateId: string,
+    roleId: string,
   ) {
-    const template = await this.prisma.permissionTemplate.findFirst({
+    const template = await this.prisma.role.findFirst({
       where: {
-        id: templateId,
+        id: roleId,
         deletedAt: {
           not: null,
         },
@@ -2300,19 +2555,26 @@ export class RecycleBinService {
         id: true,
         institutionId: true,
         name: true,
+        deletedAt: true,
       },
     });
 
     if (!template) {
-      throw new NotFoundException('Deleted permission template not found.');
+      throw new NotFoundException('Deleted role not found.');
     }
 
     this.assertInstitutionScope(currentUser, template.institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.ROLE,
+      roleId,
+      template.deletedAt!,
+      template.institutionId,
+    );
 
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
-      await this.prisma.permissionTemplate.delete({
+      await this.prisma.role.delete({
         where: {
-          id: templateId,
+          id: roleId,
           deletedAt: {
             not: null,
           },
@@ -2321,9 +2583,9 @@ export class RecycleBinService {
     });
 
     await this.auditLogService.log(currentUser, {
-      action: 'PERMISSION_TEMPLATE_PERMANENTLY_DELETED',
-      entity: 'PermissionTemplate',
-      entityId: templateId,
+      action: 'ROLE_PERMANENTLY_DELETED',
+      entity: 'Role',
+      entityId: roleId,
       institutionId: template.institutionId,
       metadata: {
         name: template.name,
@@ -2331,8 +2593,8 @@ export class RecycleBinService {
     });
 
     return {
-      message: 'Permission template permanently deleted successfully',
-      data: { id: templateId },
+      message: 'Role permanently deleted successfully',
+      data: { id: roleId },
     };
   }
 
@@ -2344,11 +2606,18 @@ export class RecycleBinService {
       where: { id: studentId, deletedAt: { not: null } },
       select: {
         regNo: true,
+        deletedAt: true,
         campus: { select: { institutionId: true } },
       },
     });
     if (!item) throw new NotFoundException('Deleted student not found.');
     this.assertInstitutionScope(currentUser, item.campus.institutionId!);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.STUDENT,
+      studentId,
+      item.deletedAt!,
+      item.campus.institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.student.delete({
         where: { id: studentId, deletedAt: { not: null } },
@@ -2375,11 +2644,18 @@ export class RecycleBinService {
       where: { id: guardianId, deletedAt: { not: null } },
       select: {
         relation: true,
+        deletedAt: true,
         campus: { select: { institutionId: true } },
       },
     });
     if (!item) throw new NotFoundException('Deleted guardian not found.');
     this.assertInstitutionScope(currentUser, item.campus.institutionId!);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.GUARDIAN,
+      guardianId,
+      item.deletedAt!,
+      item.campus.institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.guardian.delete({
         where: { id: guardianId, deletedAt: { not: null } },
@@ -2406,11 +2682,18 @@ export class RecycleBinService {
       where: { id: teacherId, deletedAt: { not: null } },
       select: {
         cnic: true,
+        deletedAt: true,
         campus: { select: { institutionId: true } },
       },
     });
     if (!item) throw new NotFoundException('Deleted teacher not found.');
     this.assertInstitutionScope(currentUser, item.campus.institutionId!);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.TEACHER,
+      teacherId,
+      item.deletedAt!,
+      item.campus.institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.teacher.delete({
         where: { id: teacherId, deletedAt: { not: null } },
@@ -2437,11 +2720,18 @@ export class RecycleBinService {
       where: { id: levelId, deletedAt: { not: null } },
       select: {
         name: true,
+        deletedAt: true,
         campus: { select: { institutionId: true } },
       },
     });
     if (!item) throw new NotFoundException('Deleted level not found.');
     this.assertInstitutionScope(currentUser, item.campus.institutionId!);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.LEVEL,
+      levelId,
+      item.deletedAt!,
+      item.campus.institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.level.delete({
         where: { id: levelId, deletedAt: { not: null } },
@@ -2468,11 +2758,18 @@ export class RecycleBinService {
       where: { id: classId, deletedAt: { not: null } },
       select: {
         name: true,
+        deletedAt: true,
         level: { select: { campus: { select: { institutionId: true } } } },
       },
     });
     if (!item) throw new NotFoundException('Deleted class not found.');
     this.assertInstitutionScope(currentUser, item.level.campus.institutionId!);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.CLASS,
+      classId,
+      item.deletedAt!,
+      item.level.campus.institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.academicClass.delete({
         where: { id: classId, deletedAt: { not: null } },
@@ -2499,6 +2796,7 @@ export class RecycleBinService {
       where: { id: sectionId, deletedAt: { not: null } },
       select: {
         name: true,
+        deletedAt: true,
         class: {
           select: {
             level: { select: { campus: { select: { institutionId: true } } } },
@@ -2510,6 +2808,12 @@ export class RecycleBinService {
     this.assertInstitutionScope(
       currentUser,
       item.class.level.campus.institutionId!,
+    );
+    await this.assertPurgeSafe(
+      RecycleBinEntity.SECTION,
+      sectionId,
+      item.deletedAt!,
+      item.class.level.campus.institutionId,
     );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.section.delete({
@@ -2537,6 +2841,7 @@ export class RecycleBinService {
       where: { id: subjectId, deletedAt: { not: null } },
       select: {
         name: true,
+        deletedAt: true,
         class: {
           select: {
             level: { select: { campus: { select: { institutionId: true } } } },
@@ -2548,6 +2853,12 @@ export class RecycleBinService {
     this.assertInstitutionScope(
       currentUser,
       item.class.level.campus.institutionId!,
+    );
+    await this.assertPurgeSafe(
+      RecycleBinEntity.SUBJECT,
+      subjectId,
+      item.deletedAt!,
+      item.class.level.campus.institutionId,
     );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.subject.delete({
@@ -2575,6 +2886,7 @@ export class RecycleBinService {
       where: { id: salaryId, deletedAt: { not: null } },
       select: {
         userId: true,
+        deletedAt: true,
         campus: { select: { institutionId: true } },
       },
     });
@@ -2584,6 +2896,12 @@ export class RecycleBinService {
       'Deleted salary record',
     );
     this.assertInstitutionScope(currentUser, institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.SALARY,
+      salaryId,
+      item.deletedAt!,
+      institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.staffSalary.delete({
         where: { id: salaryId, deletedAt: { not: null } },
@@ -2609,6 +2927,7 @@ export class RecycleBinService {
     const item = await this.prisma.salaryDeductionRule.findFirst({
       where: { id: ruleId, deletedAt: { not: null } },
       select: {
+        deletedAt: true,
         campus: { select: { institutionId: true } },
       },
     });
@@ -2620,6 +2939,12 @@ export class RecycleBinService {
       'Deleted salary deduction rule',
     );
     this.assertInstitutionScope(currentUser, institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.SALARY_DEDUCTION_RULE,
+      ruleId,
+      item.deletedAt!,
+      institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.salaryDeductionRule.delete({
         where: { id: ruleId, deletedAt: { not: null } },
@@ -2647,6 +2972,7 @@ export class RecycleBinService {
       select: {
         userId: true,
         salaryId: true,
+        deletedAt: true,
         campus: { select: { institutionId: true } },
       },
     });
@@ -2657,6 +2983,12 @@ export class RecycleBinService {
       'Deleted salary adjustment',
     );
     this.assertInstitutionScope(currentUser, institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.SALARY_ADJUSTMENT,
+      adjustmentId,
+      item.deletedAt!,
+      institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.salaryAdjustment.delete({
         where: { id: adjustmentId, deletedAt: { not: null } },
@@ -2687,6 +3019,7 @@ export class RecycleBinService {
       select: {
         userId: true,
         salaryId: true,
+        deletedAt: true,
         campus: { select: { institutionId: true } },
       },
     });
@@ -2696,6 +3029,12 @@ export class RecycleBinService {
       'Deleted salary payment',
     );
     this.assertInstitutionScope(currentUser, institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.SALARY_PAYMENT,
+      paymentId,
+      item.deletedAt!,
+      institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.salaryDeductionSummary.deleteMany({
         where: { salaryPaymentId: paymentId },
@@ -2730,6 +3069,7 @@ export class RecycleBinService {
         bankName: true,
         accountTitle: true,
         accountNumber: true,
+        deletedAt: true,
         campus: { select: { institutionId: true } },
       },
     });
@@ -2739,6 +3079,12 @@ export class RecycleBinService {
       'Deleted bank account',
     );
     this.assertInstitutionScope(currentUser, institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.BANK_ACCOUNT,
+      bankAccountId,
+      item.deletedAt!,
+      institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.bankAccount.delete({
         where: { id: bankAccountId, deletedAt: { not: null } },
@@ -2769,6 +3115,7 @@ export class RecycleBinService {
       where: { id: feeStructureId, deletedAt: { not: null } },
       select: {
         classId: true,
+        deletedAt: true,
         campus: { select: { institutionId: true } },
       },
     });
@@ -2778,6 +3125,12 @@ export class RecycleBinService {
       'Deleted fee structure',
     );
     this.assertInstitutionScope(currentUser, institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.FEE_STRUCTURE,
+      feeStructureId,
+      item.deletedAt!,
+      institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.feeStructure.delete({
         where: { id: feeStructureId, deletedAt: { not: null } },
@@ -2804,6 +3157,7 @@ export class RecycleBinService {
       where: { id: discountId, deletedAt: { not: null } },
       select: {
         studentId: true,
+        deletedAt: true,
         student: {
           select: {
             campus: {
@@ -2822,6 +3176,12 @@ export class RecycleBinService {
       'Deleted student discount',
     );
     this.assertInstitutionScope(currentUser, institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.STUDENT_DISCOUNT,
+      discountId,
+      item.deletedAt!,
+      institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.studentDiscount.delete({
         where: { id: discountId, deletedAt: { not: null } },
@@ -2849,6 +3209,7 @@ export class RecycleBinService {
       select: {
         campusId: true,
         classId: true,
+        deletedAt: true,
         campus: { select: { institutionId: true } },
       },
     });
@@ -2859,6 +3220,12 @@ export class RecycleBinService {
       'Deleted student fine rule',
     );
     this.assertInstitutionScope(currentUser, institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.STUDENT_FINE_RULE,
+      fineRuleId,
+      item.deletedAt!,
+      institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.studentFineRule.delete({
         where: { id: fineRuleId, deletedAt: { not: null } },
@@ -2890,6 +3257,7 @@ export class RecycleBinService {
         studentId: true,
         month: true,
         year: true,
+        deletedAt: true,
         student: {
           select: {
             campus: {
@@ -2907,6 +3275,12 @@ export class RecycleBinService {
       'Deleted student fine',
     );
     this.assertInstitutionScope(currentUser, institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.STUDENT_FINE,
+      fineId,
+      item.deletedAt!,
+      institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.studentFine.delete({
         where: { id: fineId, deletedAt: { not: null } },
@@ -2939,6 +3313,7 @@ export class RecycleBinService {
         studentId: true,
         month: true,
         year: true,
+        deletedAt: true,
         student: {
           select: {
             campus: {
@@ -2956,6 +3331,12 @@ export class RecycleBinService {
       'Deleted fee voucher',
     );
     this.assertInstitutionScope(currentUser, institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.FEE_VOUCHER,
+      voucherId,
+      item.deletedAt!,
+      institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.feeVoucher.delete({
         where: { id: voucherId, deletedAt: { not: null } },
@@ -2988,6 +3369,7 @@ export class RecycleBinService {
         voucherId: true,
         month: true,
         year: true,
+        deletedAt: true,
         voucher: {
           select: {
             student: {
@@ -3009,6 +3391,12 @@ export class RecycleBinService {
       'Deleted fee payment',
     );
     this.assertInstitutionScope(currentUser, institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.FEE_PAYMENT,
+      paymentId,
+      item.deletedAt!,
+      institutionId,
+    );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
       await this.prisma.feePayment.delete({
         where: { id: paymentId, deletedAt: { not: null } },
@@ -3101,6 +3489,112 @@ export class RecycleBinService {
       throw new ForbiddenException(
         'Admins can only manage users within their institution.',
       );
+    }
+  }
+
+  /**
+   * Gate before every permanentlyDeleteX handler's actual .delete() call:
+   * (1) the retention window must have elapsed, and (2) hard-deleting this
+   * record must not cascade into anything still ACTIVE. Both checks apply
+   * uniformly regardless of who triggers the delete (there's no separate
+   * "system" path — purging is always this manual, human-triggered action).
+   */
+  private async assertPurgeSafe(
+    entity: RecycleBinEntity,
+    id: string,
+    deletedAt: Date,
+    institutionId: string | null,
+  ) {
+    const retentionDays = await this.resolveRetentionDays(institutionId);
+    this.assertPurgeEligible(deletedAt, retentionDays);
+    await this.assertNoActiveDescendants(entity, id);
+  }
+
+  private async resolveRetentionDays(
+    institutionId: string | null,
+  ): Promise<number> {
+    if (!institutionId) return DEFAULT_RECYCLE_BIN_RETENTION_DAYS;
+
+    const setting = await this.prisma.institutionSetting.findUnique({
+      where: {
+        institutionId_key_activeScopeKey: {
+          institutionId,
+          key: 'recycle_bin',
+          activeScopeKey: 'ACTIVE',
+        },
+      },
+      select: { value: true },
+    });
+
+    const value = setting?.value;
+    const retentionDays =
+      value &&
+      typeof value === 'object' &&
+      'retentionDays' in value &&
+      typeof (value as { retentionDays: unknown }).retentionDays === 'number'
+        ? (value as { retentionDays: number }).retentionDays
+        : undefined;
+
+    if (retentionDays === undefined) {
+      return DEFAULT_RECYCLE_BIN_RETENTION_DAYS;
+    }
+
+    return Math.min(
+      MAX_RECYCLE_BIN_RETENTION_DAYS,
+      Math.max(MIN_RECYCLE_BIN_RETENTION_DAYS, retentionDays),
+    );
+  }
+
+  private resolvePurgeEligibleAt(deletedAt: Date, retentionDays: number) {
+    const eligibleAt = new Date(deletedAt);
+    eligibleAt.setUTCDate(eligibleAt.getUTCDate() + retentionDays);
+    return eligibleAt;
+  }
+
+  private assertPurgeEligible(deletedAt: Date, retentionDays: number) {
+    const eligibleAt = this.resolvePurgeEligibleAt(deletedAt, retentionDays);
+    if (new Date() < eligibleAt) {
+      throw new ForbiddenException(
+        `This record cannot be permanently deleted until ${eligibleAt.toISOString().slice(0, 10)} (${retentionDays}-day retention period since deletion).`,
+      );
+    }
+  }
+
+  /**
+   * Recursively walks the ENTITY_CASCADE_CHILDREN tree and throws the
+   * moment it finds any still-ACTIVE row in the hard-delete's blast radius.
+   * Only recurses into a child's own children when that child itself has no
+   * ACTIVE rows here — an already-soft-deleted intermediate node can still
+   * have an active grandchild (nothing cascades soft-deletes downward when
+   * a record is moved to the recycle bin), so its children must still be
+   * checked even though the intermediate node itself is dead.
+   */
+  private async assertNoActiveDescendants(
+    entity: RecycleBinEntity,
+    id: string,
+  ): Promise<void> {
+    const links = ENTITY_CASCADE_CHILDREN[entity] ?? [];
+
+    for (const link of links) {
+      const delegate = this.prisma[link.model] as unknown as CountableDelegate;
+      const activeCount = await delegate.count({
+        where: { [link.fkField]: id, deletedAt: null },
+      });
+
+      if (activeCount > 0) {
+        throw new ConflictException(
+          `Cannot permanently delete this record: it still has ${activeCount} active ${link.entity} record(s) that would be lost. Delete or reassign those first.`,
+        );
+      }
+
+      const children = await delegate.findMany({
+        where: { [link.fkField]: id },
+        select: { id: true },
+      });
+
+      for (const child of children) {
+        await this.assertNoActiveDescendants(link.entity, child.id);
+      }
     }
   }
 
