@@ -25,6 +25,10 @@ type RuntimeConfigRecord = {
     autoRenew: boolean;
     startsAt: Date | null;
     endsAt: Date | null;
+    agreedPrice: number | null;
+    currency: string | null;
+    billingCycle: string | null;
+    pricingNotes: string | null;
   } | null;
   /** Active trials get every module unlocked so prospects see the full product. */
   trialFullAccess: boolean;
@@ -155,9 +159,14 @@ export class ModuleAccessService {
         ? {
             displayName: institution.branding.displayName,
             logoUrl: institution.branding.logoUrl,
-            primaryColor: institution.branding.primaryColor,
-            secondaryColor: institution.branding.secondaryColor,
-            accentColor: institution.branding.accentColor,
+            primaryColorLight: institution.branding.primaryColorLight,
+            secondaryColorLight: institution.branding.secondaryColorLight,
+            accentColorLight: institution.branding.accentColorLight,
+            backgroundColorLight: institution.branding.backgroundColorLight,
+            primaryColorDark: institution.branding.primaryColorDark,
+            secondaryColorDark: institution.branding.secondaryColorDark,
+            accentColorDark: institution.branding.accentColorDark,
+            backgroundColorDark: institution.branding.backgroundColorDark,
             theme: institution.branding.theme,
           }
         : null,
@@ -173,6 +182,12 @@ export class ModuleAccessService {
             autoRenew: subscription.autoRenew,
             startsAt: subscription.startsAt ?? null,
             endsAt: subscription.endsAt ?? null,
+            agreedPrice: subscription.agreedPrice
+              ? subscription.agreedPrice.toNumber()
+              : null,
+            currency: subscription.currency ?? null,
+            billingCycle: subscription.billingCycle ?? null,
+            pricingNotes: subscription.pricingNotes ?? null,
           }
         : null,
       trialFullAccess,
