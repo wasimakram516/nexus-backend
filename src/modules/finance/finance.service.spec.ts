@@ -1,6 +1,11 @@
 import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { ModuleKey, UserRole } from '../../prisma/client';
+import {
+  AdjustmentType,
+  AttendanceStatus,
+  ModuleKey,
+  UserRole,
+} from '../../prisma/client';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
@@ -15,7 +20,7 @@ describe('FinanceService', () => {
   const accountantUser: CurrentUser = {
     sub: 'accountant-1',
     email: 'accounts@nexus.test',
-    role: UserRole.ACCOUNTANT,
+    role: UserRole.STAFF,
     institutionId: 'institution-1',
   };
 
@@ -69,10 +74,21 @@ describe('FinanceService', () => {
     salaryAdjustment: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
+      create: jest.fn(),
     },
     salaryPayment: {
       findFirst: jest.fn(),
       findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+    },
+    salaryDeductionSummary: {
+      create: jest.fn(),
+    },
+    attendance: {
+      findMany: jest.fn(),
+    },
+    institutionSetting: {
       findUnique: jest.fn(),
     },
     studentFineRule: {
@@ -396,4 +412,306 @@ describe('FinanceService', () => {
       },
     });
   });
+
+  describe('paySalary — payroll correctness', () => {
+    const salaryRecord = {
+      id: 'salary-1',
+      userId: 'teacher-1',
+      campusId: 'campus-1',
+      role: UserRole.STAFF,
+      baseSalary: 30000,
+    };
+    const rule = {
+      allowedAbsences: 2,
+      absenceDeductionPercent: 100,
+      allowedLates: 3,
+      lateDeductionPercent: 10,
+      allowedHalfDays: 2,
+      halfDayDeductionPercent: 50,
+      allowedLeaves: 5,
+      leaveDeductionPercent: 0,
+    };
+
+    beforeEach(() => {
+      prismaMock.staffSalary.findUnique.mockResolvedValue(salaryRecord);
+      prismaMock.salaryPayment.findFirst.mockResolvedValue(null);
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+        (item: unknown) => Promise.resolve(item),
+      );
+      prismaMock.institutionSetting.findUnique.mockResolvedValue(null);
+      prismaMock.salaryDeductionRule.findFirst.mockResolvedValue(rule);
+      prismaMock.salaryPayment.create.mockImplementation(
+        ({ data }: { data: Record<string, unknown> }) =>
+          Promise.resolve({ id: 'payment-1', ...data }),
+      );
+      prismaMock.salaryDeductionSummary.create.mockResolvedValue({});
+    });
+
+    it('only sums adjustments from the payroll month being paid (Bug #1)', async () => {
+      prismaMock.salaryAdjustment.findMany.mockResolvedValue([
+        { adjustmentType: AdjustmentType.BONUS, amount: 500 },
+        { adjustmentType: AdjustmentType.DEDUCTION, amount: 100 },
+      ]);
+      prismaMock.attendance.findMany.mockResolvedValue([]);
+
+      await service.paySalary(
+        {
+          userId: 'teacher-1',
+          salaryId: 'salary-1',
+          campusId: 'campus-1',
+          month: 3,
+          year: 2026,
+        },
+        accountantUser,
+      );
+
+      expect(prismaMock.salaryAdjustment.findMany).toHaveBeenCalledWith({
+        where: {
+          userId: 'teacher-1',
+          campusId: 'campus-1',
+          month: 3,
+          year: 2026,
+        },
+      });
+    });
+
+    it('deducts exactly the excess absences over the allowed threshold, using only March data (acceptance criterion)', async () => {
+      prismaMock.salaryAdjustment.findMany.mockResolvedValue([
+        { adjustmentType: AdjustmentType.BONUS, amount: 500 },
+        { adjustmentType: AdjustmentType.DEDUCTION, amount: 100 },
+      ]);
+      prismaMock.attendance.findMany.mockResolvedValue(
+        makeAttendance(AttendanceStatus.ABSENT, 4),
+      );
+
+      const result = await service.paySalary(
+        {
+          userId: 'teacher-1',
+          salaryId: 'salary-1',
+          campusId: 'campus-1',
+          month: 3,
+          year: 2026,
+        },
+        accountantUser,
+      );
+
+      // 4 absences - 2 allowed = 2 excess * (30000/30 daily rate) * 100% = 2000
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment -- untyped Prisma mock */
+      expect(prismaMock.salaryDeductionSummary.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          absenceDeduction: 2000,
+          lateDeduction: 0,
+          halfDayDeduction: 0,
+          leaveDeduction: 0,
+          manualDeductions: 100,
+          bonuses: 500,
+          totalDeductions: 2100,
+          finalSalaryPaid: 28400,
+        }),
+      });
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
+      expect(result).toMatchObject({ message: 'Salary paid successfully' });
+    });
+
+    it('deducts nothing when attendance is exactly at the allowed threshold', async () => {
+      prismaMock.salaryAdjustment.findMany.mockResolvedValue([]);
+      prismaMock.attendance.findMany.mockResolvedValue(
+        makeAttendance(AttendanceStatus.ABSENT, 2),
+      );
+
+      await service.paySalary(
+        {
+          userId: 'teacher-1',
+          salaryId: 'salary-1',
+          campusId: 'campus-1',
+          month: 3,
+          year: 2026,
+        },
+        accountantUser,
+      );
+
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment -- untyped Prisma mock */
+      expect(prismaMock.salaryDeductionSummary.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          absenceDeduction: 0,
+          totalDeductions: 0,
+          finalSalaryPaid: 30000,
+        }),
+      });
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
+    });
+
+    it('deducts nothing when there is zero attendance data for the period', async () => {
+      prismaMock.salaryAdjustment.findMany.mockResolvedValue([]);
+      prismaMock.attendance.findMany.mockResolvedValue([]);
+
+      await service.paySalary(
+        {
+          userId: 'teacher-1',
+          salaryId: 'salary-1',
+          campusId: 'campus-1',
+          month: 3,
+          year: 2026,
+        },
+        accountantUser,
+      );
+
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment -- untyped Prisma mock */
+      expect(prismaMock.salaryDeductionSummary.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          absenceDeduction: 0,
+          lateDeduction: 0,
+          halfDayDeduction: 0,
+          leaveDeduction: 0,
+          finalSalaryPaid: 30000,
+        }),
+      });
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
+    });
+
+    it('counts half-days independently of status, e.g. a PRESENT day with an early checkout', async () => {
+      prismaMock.salaryAdjustment.findMany.mockResolvedValue([]);
+      prismaMock.attendance.findMany.mockResolvedValue([
+        ...makeAttendance(AttendanceStatus.PRESENT, 3, true),
+        ...makeAttendance(AttendanceStatus.PRESENT, 5, false),
+      ]);
+
+      await service.paySalary(
+        {
+          userId: 'teacher-1',
+          salaryId: 'salary-1',
+          campusId: 'campus-1',
+          month: 3,
+          year: 2026,
+        },
+        accountantUser,
+      );
+
+      // 3 half-days - 2 allowed = 1 excess * 1000 daily rate * 50% = 500
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment -- untyped Prisma mock */
+      expect(prismaMock.salaryDeductionSummary.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          absenceDeduction: 0,
+          halfDayDeduction: 500,
+          finalSalaryPaid: 29500,
+        }),
+      });
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
+    });
+
+    it('applies zero attendance-based deductions when no SalaryDeductionRule is configured for the campus/role', async () => {
+      prismaMock.salaryDeductionRule.findFirst.mockResolvedValue(null);
+      prismaMock.salaryAdjustment.findMany.mockResolvedValue([]);
+      prismaMock.attendance.findMany.mockResolvedValue(
+        makeAttendance(AttendanceStatus.ABSENT, 10),
+      );
+
+      await service.paySalary(
+        {
+          userId: 'teacher-1',
+          salaryId: 'salary-1',
+          campusId: 'campus-1',
+          month: 3,
+          year: 2026,
+        },
+        accountantUser,
+      );
+
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment -- untyped Prisma mock */
+      expect(prismaMock.salaryDeductionSummary.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          absenceDeduction: 0,
+          finalSalaryPaid: 30000,
+        }),
+      });
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
+    });
+
+    it('rejects a duplicate payment for the same user and payroll period', async () => {
+      prismaMock.salaryPayment.findFirst.mockResolvedValue({
+        id: 'existing-payment',
+      });
+
+      await expect(
+        service.paySalary(
+          {
+            userId: 'teacher-1',
+            salaryId: 'salary-1',
+            campusId: 'campus-1',
+            month: 3,
+            year: 2026,
+          },
+          accountantUser,
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prismaMock.salaryPayment.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('previewSalary', () => {
+    it('returns the same breakdown paySalary would produce, without persisting anything', async () => {
+      prismaMock.staffSalary.findUnique.mockResolvedValue({
+        id: 'salary-1',
+        userId: 'teacher-1',
+        campusId: 'campus-1',
+        role: UserRole.STAFF,
+        baseSalary: 30000,
+      });
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      prismaMock.institutionSetting.findUnique.mockResolvedValue(null);
+      prismaMock.salaryDeductionRule.findFirst.mockResolvedValue({
+        allowedAbsences: 2,
+        absenceDeductionPercent: 100,
+        allowedLates: 3,
+        lateDeductionPercent: 10,
+        allowedHalfDays: 2,
+        halfDayDeductionPercent: 50,
+        allowedLeaves: 5,
+        leaveDeductionPercent: 0,
+      });
+      prismaMock.salaryAdjustment.findMany.mockResolvedValue([
+        { adjustmentType: AdjustmentType.BONUS, amount: 500 },
+      ]);
+      prismaMock.attendance.findMany.mockResolvedValue(
+        makeAttendance(AttendanceStatus.ABSENT, 4),
+      );
+
+      const result = await service.previewSalary(
+        {
+          userId: 'teacher-1',
+          salaryId: 'salary-1',
+          campusId: 'campus-1',
+          month: 3,
+          year: 2026,
+        },
+        accountantUser,
+      );
+
+      expect(result).toMatchObject({
+        message: 'Salary payment preview computed successfully',
+        data: {
+          absenceDeduction: 2000,
+          bonuses: 500,
+          finalSalary: 28500,
+        },
+      });
+      expect(prismaMock.salaryPayment.create).not.toHaveBeenCalled();
+      expect(prismaMock.salaryDeductionSummary.create).not.toHaveBeenCalled();
+    });
+  });
 });
+
+function makeAttendance(
+  status: AttendanceStatus,
+  count: number,
+  halfDay = false,
+) {
+  return Array.from({ length: count }, () => ({ status, halfDay }));
+}

@@ -1,4 +1,4 @@
-﻿import {
+import {
   Body,
   Controller,
   Delete,
@@ -13,10 +13,9 @@
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
 import { DeleteRecordDto } from '../../common/dto/delete-record.dto';
-import { ModuleKey } from '../../prisma/client';
-import { ModulePermission } from '../../common/decorators/module-permission.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { ModulePermissionsGuard } from '../../common/guards/module-permissions.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import {
   CreateBankAccountDto,
@@ -30,6 +29,7 @@ import {
   CreateStudentFineRuleDto,
   SalaryAdjustmentDto,
   SalaryPaymentDto,
+  SalaryPayrollPreviewQueryDto,
   UpdateBankAccountDto,
   UpdateFeeStructureDto,
   UpdateFeeVoucherDto,
@@ -39,14 +39,14 @@ import { FinanceService } from './finance.service';
 
 @ApiTags('Finance')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, ModulePermissionsGuard)
-@ModulePermission(ModuleKey.FINANCE)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('finance')
 export class FinanceController {
   constructor(private readonly financeService: FinanceService) {}
 
   @Post('salaries')
   @Version('1')
+  @RequirePermission('salaries', 'create')
   @ApiOperation({
     summary: 'Create a salary record',
     description:
@@ -61,6 +61,7 @@ export class FinanceController {
 
   @Get('salaries')
   @Version('1')
+  @RequirePermission('salaries', 'read')
   @ApiOperation({
     summary: 'List salary records',
     description:
@@ -75,6 +76,7 @@ export class FinanceController {
 
   @Get('salaries/:salaryId')
   @Version('1')
+  @RequirePermission('salaries', 'read')
   @ApiOperation({
     summary: 'Get a salary record',
     description:
@@ -89,6 +91,7 @@ export class FinanceController {
 
   @Patch('salaries/:salaryId')
   @Version('1')
+  @RequirePermission('salaries', 'update')
   @ApiOperation({
     summary: 'Update a salary record',
     description:
@@ -104,6 +107,7 @@ export class FinanceController {
 
   @Delete('salaries/:salaryId')
   @Version('1')
+  @RequirePermission('salaries', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a salary record',
     description:
@@ -119,6 +123,7 @@ export class FinanceController {
 
   @Post('salary-deduction-rules')
   @Version('1')
+  @RequirePermission('salary_deduction_rules', 'create')
   @ApiOperation({
     summary: 'Create a salary deduction rule',
     description:
@@ -133,6 +138,7 @@ export class FinanceController {
 
   @Get('salary-deduction-rules')
   @Version('1')
+  @RequirePermission('salary_deduction_rules', 'read')
   @ApiOperation({
     summary: 'List salary deduction rules',
     description:
@@ -147,6 +153,7 @@ export class FinanceController {
 
   @Get('salary-deduction-rules/:ruleId')
   @Version('1')
+  @RequirePermission('salary_deduction_rules', 'read')
   @ApiOperation({
     summary: 'Get a salary deduction rule',
     description:
@@ -161,6 +168,7 @@ export class FinanceController {
 
   @Delete('salary-deduction-rules/:ruleId')
   @Version('1')
+  @RequirePermission('salary_deduction_rules', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a salary deduction rule',
     description:
@@ -180,6 +188,7 @@ export class FinanceController {
 
   @Post('salary-adjustments')
   @Version('1')
+  @RequirePermission('salary_adjustments', 'create')
   @ApiOperation({
     summary: 'Create a salary adjustment',
     description:
@@ -194,6 +203,7 @@ export class FinanceController {
 
   @Get('salary-adjustments')
   @Version('1')
+  @RequirePermission('salary_adjustments', 'read')
   @ApiOperation({
     summary: 'List salary adjustments',
     description:
@@ -213,6 +223,7 @@ export class FinanceController {
 
   @Get('salary-adjustments/:adjustmentId')
   @Version('1')
+  @RequirePermission('salary_adjustments', 'read')
   @ApiOperation({
     summary: 'Get a salary adjustment',
     description:
@@ -227,6 +238,7 @@ export class FinanceController {
 
   @Delete('salary-adjustments/:adjustmentId')
   @Version('1')
+  @RequirePermission('salary_adjustments', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a salary adjustment',
     description:
@@ -246,6 +258,7 @@ export class FinanceController {
 
   @Post('salary-payments')
   @Version('1')
+  @RequirePermission('salary_payments', 'create')
   @ApiOperation({
     summary: 'Create a salary payment',
     description:
@@ -260,6 +273,7 @@ export class FinanceController {
 
   @Get('salary-payments')
   @Version('1')
+  @RequirePermission('salary_payments', 'read')
   @ApiOperation({
     summary: 'List salary payments',
     description:
@@ -277,8 +291,24 @@ export class FinanceController {
     );
   }
 
+  @Get('salary-payments/preview')
+  @Version('1')
+  @RequirePermission('salary_payments', 'read')
+  @ApiOperation({
+    summary: 'Preview a salary payment before committing it',
+    description:
+      'Computes the same base salary, bonus, manual-deduction, and attendance-based deduction breakdown that paying this payroll period would produce, without creating a payment record.',
+  })
+  previewSalary(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: SalaryPayrollPreviewQueryDto,
+  ) {
+    return this.financeService.previewSalary(query, currentUser);
+  }
+
   @Get('salary-payments/:paymentId')
   @Version('1')
+  @RequirePermission('salary_payments', 'read')
   @ApiOperation({
     summary: 'Get a salary payment',
     description:
@@ -293,6 +323,7 @@ export class FinanceController {
 
   @Delete('salary-payments/:paymentId')
   @Version('1')
+  @RequirePermission('salary_payments', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a salary payment',
     description:
@@ -312,6 +343,7 @@ export class FinanceController {
 
   @Post('bank-accounts')
   @Version('1')
+  @RequirePermission('bank_accounts', 'create')
   @ApiOperation({
     summary: 'Create a bank account',
     description:
@@ -326,6 +358,7 @@ export class FinanceController {
 
   @Get('bank-accounts')
   @Version('1')
+  @RequirePermission('bank_accounts', 'read')
   @ApiOperation({
     summary: 'List bank accounts',
     description:
@@ -340,6 +373,7 @@ export class FinanceController {
 
   @Get('bank-accounts/:bankAccountId')
   @Version('1')
+  @RequirePermission('bank_accounts', 'read')
   @ApiOperation({
     summary: 'Get a bank account',
     description:
@@ -354,6 +388,7 @@ export class FinanceController {
 
   @Patch('bank-accounts/:bankAccountId')
   @Version('1')
+  @RequirePermission('bank_accounts', 'update')
   @ApiOperation({
     summary: 'Update a bank account',
     description:
@@ -373,6 +408,7 @@ export class FinanceController {
 
   @Delete('bank-accounts/:bankAccountId')
   @Version('1')
+  @RequirePermission('bank_accounts', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a bank account',
     description:
@@ -392,6 +428,7 @@ export class FinanceController {
 
   @Post('fee-structures')
   @Version('1')
+  @RequirePermission('fee_structures', 'create')
   @ApiOperation({
     summary: 'Create a fee structure',
     description:
@@ -406,6 +443,7 @@ export class FinanceController {
 
   @Get('fee-structures')
   @Version('1')
+  @RequirePermission('fee_structures', 'read')
   @ApiOperation({
     summary: 'List fee structures',
     description:
@@ -425,6 +463,7 @@ export class FinanceController {
 
   @Get('fee-structures/:feeStructureId')
   @Version('1')
+  @RequirePermission('fee_structures', 'read')
   @ApiOperation({
     summary: 'Get a fee structure',
     description:
@@ -439,6 +478,7 @@ export class FinanceController {
 
   @Patch('fee-structures/:feeStructureId')
   @Version('1')
+  @RequirePermission('fee_structures', 'update')
   @ApiOperation({
     summary: 'Update a fee structure',
     description:
@@ -458,6 +498,7 @@ export class FinanceController {
 
   @Delete('fee-structures/:feeStructureId')
   @Version('1')
+  @RequirePermission('fee_structures', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a fee structure',
     description:
@@ -477,6 +518,7 @@ export class FinanceController {
 
   @Post('student-discounts')
   @Version('1')
+  @RequirePermission('student_discounts', 'create')
   @ApiOperation({
     summary: 'Create a student discount',
     description:
@@ -491,6 +533,7 @@ export class FinanceController {
 
   @Get('student-discounts')
   @Version('1')
+  @RequirePermission('student_discounts', 'read')
   @ApiOperation({
     summary: 'List student discounts',
     description:
@@ -510,6 +553,7 @@ export class FinanceController {
 
   @Get('student-discounts/:discountId')
   @Version('1')
+  @RequirePermission('student_discounts', 'read')
   @ApiOperation({
     summary: 'Get a student discount',
     description:
@@ -524,6 +568,7 @@ export class FinanceController {
 
   @Delete('student-discounts/:discountId')
   @Version('1')
+  @RequirePermission('student_discounts', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a student discount',
     description:
@@ -543,6 +588,7 @@ export class FinanceController {
 
   @Post('student-fine-rules')
   @Version('1')
+  @RequirePermission('student_fine_rules', 'create')
   @ApiOperation({
     summary: 'Create a student fine rule',
     description:
@@ -557,6 +603,7 @@ export class FinanceController {
 
   @Get('student-fine-rules')
   @Version('1')
+  @RequirePermission('student_fine_rules', 'read')
   @ApiOperation({
     summary: 'List student fine rules',
     description:
@@ -576,6 +623,7 @@ export class FinanceController {
 
   @Get('student-fine-rules/:fineRuleId')
   @Version('1')
+  @RequirePermission('student_fine_rules', 'read')
   @ApiOperation({
     summary: 'Get a student fine rule',
     description:
@@ -590,6 +638,7 @@ export class FinanceController {
 
   @Delete('student-fine-rules/:fineRuleId')
   @Version('1')
+  @RequirePermission('student_fine_rules', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a student fine rule',
     description:
@@ -609,6 +658,7 @@ export class FinanceController {
 
   @Post('student-fines')
   @Version('1')
+  @RequirePermission('student_fines', 'create')
   @ApiOperation({
     summary: 'Create a student fine',
     description:
@@ -623,6 +673,7 @@ export class FinanceController {
 
   @Get('student-fines')
   @Version('1')
+  @RequirePermission('student_fines', 'read')
   @ApiOperation({
     summary: 'List student fines',
     description:
@@ -642,6 +693,7 @@ export class FinanceController {
 
   @Get('student-fines/:fineId')
   @Version('1')
+  @RequirePermission('student_fines', 'read')
   @ApiOperation({
     summary: 'Get a student fine',
     description:
@@ -656,6 +708,7 @@ export class FinanceController {
 
   @Delete('student-fines/:fineId')
   @Version('1')
+  @RequirePermission('student_fines', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a student fine',
     description:
@@ -675,6 +728,7 @@ export class FinanceController {
 
   @Post('fee-vouchers')
   @Version('1')
+  @RequirePermission('fee_vouchers', 'create')
   @ApiOperation({
     summary: 'Create a fee voucher',
     description:
@@ -689,6 +743,7 @@ export class FinanceController {
 
   @Get('fee-vouchers')
   @Version('1')
+  @RequirePermission('fee_vouchers', 'read')
   @ApiOperation({
     summary: 'List fee vouchers',
     description:
@@ -708,6 +763,7 @@ export class FinanceController {
 
   @Get('fee-vouchers/:voucherId')
   @Version('1')
+  @RequirePermission('fee_vouchers', 'read')
   @ApiOperation({
     summary: 'Get a fee voucher',
     description:
@@ -722,6 +778,7 @@ export class FinanceController {
 
   @Patch('fee-vouchers/:voucherId')
   @Version('1')
+  @RequirePermission('fee_vouchers', 'update')
   @ApiOperation({
     summary: 'Update a fee voucher',
     description:
@@ -737,6 +794,7 @@ export class FinanceController {
 
   @Delete('fee-vouchers/:voucherId')
   @Version('1')
+  @RequirePermission('fee_vouchers', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a fee voucher',
     description:
@@ -756,6 +814,7 @@ export class FinanceController {
 
   @Post('fee-payments')
   @Version('1')
+  @RequirePermission('fee_payments', 'create')
   @ApiOperation({
     summary: 'Create a fee payment',
     description:
@@ -770,6 +829,7 @@ export class FinanceController {
 
   @Get('fee-payments')
   @Version('1')
+  @RequirePermission('fee_payments', 'read')
   @ApiOperation({
     summary: 'List fee payments',
     description:
@@ -789,6 +849,7 @@ export class FinanceController {
 
   @Get('fee-payments/:paymentId')
   @Version('1')
+  @RequirePermission('fee_payments', 'read')
   @ApiOperation({
     summary: 'Get a fee payment',
     description:
@@ -803,6 +864,7 @@ export class FinanceController {
 
   @Delete('fee-payments/:paymentId')
   @Version('1')
+  @RequirePermission('fee_payments', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a fee payment',
     description:
