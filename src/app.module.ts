@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { CurrentUserContextInterceptor } from './common/interceptors/current-user-context.interceptor';
 import { envSchema } from './config/env.schema';
@@ -15,6 +16,7 @@ import { CampusesModule } from './modules/campuses/campuses.module';
 import { AcademicsModule } from './modules/academics/academics.module';
 import { PeopleModule } from './modules/people/people.module';
 import { PlatformModule } from './modules/platform/platform.module';
+import { RolesModule } from './modules/roles/roles.module';
 import { CustomFieldsModule } from './modules/custom-fields/custom-fields.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { FinanceModule } from './modules/finance/finance.module';
@@ -22,6 +24,7 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { RecycleBinModule } from './modules/recycle-bin/recycle-bin.module';
 import { UploadModule } from './modules/upload/upload.module';
+import { SchedulerModule } from './modules/scheduler/scheduler.module';
 
 @Module({
   imports: [
@@ -29,6 +32,7 @@ import { UploadModule } from './modules/upload/upload.module';
       isGlobal: true,
       validate: (config) => envSchema.parse(config),
     }),
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([
       {
         ttl: 60_000,
@@ -38,6 +42,7 @@ import { UploadModule } from './modules/upload/upload.module';
     PrismaModule,
     HealthModule,
     PlatformModule,
+    RolesModule,
     AuthModule,
     UsersModule,
     CampusesModule,
@@ -50,6 +55,7 @@ import { UploadModule } from './modules/upload/upload.module';
     UploadModule,
     AuditLogsModule,
     RecycleBinModule,
+    SchedulerModule,
   ],
   providers: [
     AppLoggerService,

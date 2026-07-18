@@ -1,4 +1,4 @@
-﻿import {
+import {
   Body,
   Controller,
   Get,
@@ -13,10 +13,9 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
 import { DeleteRecordDto } from '../../common/dto/delete-record.dto';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
-import { ModuleKey } from '../../prisma/client';
-import { ModulePermission } from '../../common/decorators/module-permission.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { ModulePermissionsGuard } from '../../common/guards/module-permissions.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import {
   AssignUserCampusDto,
@@ -28,14 +27,14 @@ import { CampusesService } from './campuses.service';
 
 @ApiTags('Campuses')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, ModulePermissionsGuard)
-@ModulePermission(ModuleKey.ACADEMICS)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('campuses')
 export class CampusesController {
   constructor(private readonly campusesService: CampusesService) {}
 
   @Post()
   @Version('1')
+  @RequirePermission('campuses', 'create')
   @ApiOperation({
     summary: 'Create a campus',
     description:
@@ -50,6 +49,7 @@ export class CampusesController {
 
   @Get()
   @Version('1')
+  @RequirePermission('campuses', 'read')
   @ApiOperation({
     summary: 'List campuses',
     description:
@@ -64,6 +64,7 @@ export class CampusesController {
 
   @Put(':campusId')
   @Version('1')
+  @RequirePermission('campuses', 'update')
   @ApiOperation({
     summary: 'Update a campus',
     description:
@@ -79,6 +80,7 @@ export class CampusesController {
 
   @Post(':campusId/delete')
   @Version('1')
+  @RequirePermission('campuses', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a campus',
     description:
@@ -94,6 +96,7 @@ export class CampusesController {
 
   @Post('assign-user')
   @Version('1')
+  @RequirePermission('campuses', 'update')
   @ApiOperation({
     summary: 'Assign a user to a campus',
     description:
@@ -108,6 +111,7 @@ export class CampusesController {
 
   @Get(':campusId/users')
   @Version('1')
+  @RequirePermission('campuses', 'read')
   @ApiOperation({
     summary: 'List users assigned to a campus',
     description:
@@ -122,6 +126,7 @@ export class CampusesController {
 
   @Post('remove-user')
   @Version('1')
+  @RequirePermission('campuses', 'update')
   @ApiOperation({
     summary: 'Remove a user from a campus',
     description:

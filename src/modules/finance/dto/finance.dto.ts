@@ -2,11 +2,14 @@ import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import {
   IsDateString,
   IsEnum,
+  IsInt,
   IsNumber,
   IsObject,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
+  Min,
 } from 'class-validator';
 import {
   AdjustmentType,
@@ -53,7 +56,26 @@ export class SalaryAdjustmentDto extends CustomFieldPayloadDto {
   @IsEnum(AdjustmentType)
   adjustmentType!: AdjustmentType;
   @ApiProperty() @IsNumber() amount!: number;
+  @ApiProperty({
+    description: 'Payroll month (1-12) this adjustment applies to.',
+  })
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  month!: number;
+  @ApiProperty({ description: 'Payroll year this adjustment applies to.' })
+  @IsInt()
+  @Min(2000)
+  year!: number;
   @ApiPropertyOptional() @IsOptional() @IsString() remarks?: string;
+}
+
+export class SalaryPayrollPreviewQueryDto {
+  @ApiProperty() @IsUUID() userId!: string;
+  @ApiProperty() @IsUUID() salaryId!: string;
+  @ApiProperty() @IsUUID() campusId!: string;
+  @ApiProperty() @IsInt() @Min(1) @Max(12) month!: number;
+  @ApiProperty() @IsInt() @Min(2000) year!: number;
 }
 
 export class SalaryPaymentDto extends CustomFieldPayloadDto {

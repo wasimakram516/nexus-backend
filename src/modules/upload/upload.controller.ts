@@ -16,10 +16,20 @@ import { CurrentUserDecorator } from '../../common/decorators/current-user.decor
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 
 const ALLOWED_MIME_TYPES = [
-  'image/jpeg', 'image/jpg', 'image/png', 'image/webp',
-  'image/gif', 'image/svg+xml', 'image/heic', 'image/tiff',
-  'video/mp4', 'video/webm', 'video/quicktime', 'video/mpeg',
-  'application/pdf', 'application/msword',
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/svg+xml',
+  'image/heic',
+  'image/tiff',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'video/mpeg',
+  'application/pdf',
+  'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'text/csv',
 ];
@@ -33,14 +43,23 @@ export class UploadController {
 
   @Post()
   @ApiConsumes('multipart/form-data')
-  @ApiQuery({ name: 'subfolder', required: false, description: 'Override subfolder (images/videos/documents/misc)' })
+  @ApiQuery({
+    name: 'subfolder',
+    required: false,
+    description: 'Override subfolder (images/videos/documents/misc)',
+  })
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
       limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
       fileFilter: (_, file, cb) => {
         if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
-          return cb(new BadRequestException(`File type "${file.mimetype}" is not allowed.`), false);
+          return cb(
+            new BadRequestException(
+              `File type "${file.mimetype}" is not allowed.`,
+            ),
+            false,
+          );
         }
         cb(null, true);
       },

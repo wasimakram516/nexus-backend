@@ -15,7 +15,7 @@ const AUTO_AUDIT_EXCLUDED_MODELS = new Set([
   'InstitutionSetting',
   'InstitutionEntitlement',
   'InstitutionSubscription',
-  'PermissionTemplate',
+  'Role',
 ]);
 
 type ModelCapabilities = {
@@ -28,6 +28,12 @@ type ModelCapabilities = {
 };
 
 const ACTIVE_SCOPE_KEY = 'ACTIVE';
+
+/** Never persisted into an audit snapshot, even redacted-in-place. */
+const SNAPSHOT_REDACTED_FIELDS = new Set(['passwordHash', 'tokenHash']);
+const SNAPSHOT_REDACTED_PLACEHOLDER = '[REDACTED]';
+/** Roughly 8KB of serialized JSON per snapshot side (before/after). */
+const SNAPSHOT_MAX_BYTES = 8_000;
 
 const MODEL_CAPABILITIES = new Map<string, ModelCapabilities>(
   Prisma.dmmf.datamodel.models.map((model) => {
@@ -156,6 +162,24 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
               actor?.sub ?? null,
             );
 
+            // Snapshots are only meaningful (and cheap) for single-record
+            // mutations — update/delete always require a unique `where` by
+            // Prisma's own typing, so this is a safe, reliable fetch. Bulk
+            // updateMany/deleteMany are skipped, matching the pre-existing
+            // entityId-capture limitation for those operations. Computed
+            // before the mutation runs, since the pre-image is gone after.
+            const willAudit =
+              !shouldSkipAudit && !AUTO_AUDIT_EXCLUDED_MODELS.has(model);
+            const beforeSnapshot =
+              willAudit && (operation === 'update' || operation === 'delete')
+                ? await PrismaService.fetchPreImage(
+                    service,
+                    contextService,
+                    model,
+                    nextArgs.where,
+                  )
+                : undefined;
+
             const result = await query(nextArgs);
             const auditAction = PrismaService.resolveAuditAction(
               operation,
@@ -184,6 +208,16 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
               result,
               actor?.institutionId ?? null,
             );
+            // Hard deletes (allowHardDelete) leave effectiveOperation as
+            // 'delete', so there's no post-image — the row is truly gone.
+            // Every other tracked action (create/update/upsert, including
+            // soft-delete and restore, which are 'update' under the hood)
+            // has a real result row to use as the after-state.
+            const afterSnapshot = ['create', 'update', 'upsert'].includes(
+              effectiveOperation,
+            )
+              ? result
+              : undefined;
 
             await contextService.runWith({ skipAudit: true }, async () => {
               await service.auditLog.create({
@@ -196,6 +230,8 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
                   metadata: metadata
                     ? PrismaService.toInputJsonValue(metadata)
                     : undefined,
+                  before: PrismaService.buildSnapshot(beforeSnapshot),
+                  after: PrismaService.buildSnapshot(afterSnapshot),
                 },
               });
             });
@@ -816,6 +852,82 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
 
   private static toInputJsonValue(value: unknown): Prisma.InputJsonValue {
     return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+  }
+
+  /**
+   * Fetches the current (pre-mutation) row for a single-record update/delete,
+   * to use as the audit snapshot's "before" side. Never throws — a snapshot
+   * miss should never take down the actual mutation it's describing.
+   */
+  private static async fetchPreImage(
+    service: PrismaService,
+    contextService: RequestContextService,
+    model: string,
+    where: unknown,
+  ): Promise<unknown> {
+    if (!where || typeof where !== 'object' || Array.isArray(where)) {
+      return undefined;
+    }
+
+    const modelProperty = PrismaService.toModelPropertyName(model);
+    const delegate = (service as unknown as Record<string, unknown>)[
+      modelProperty
+    ] as { findUnique?: (args: { where: unknown }) => Promise<unknown> };
+
+    if (!delegate?.findUnique) {
+      return undefined;
+    }
+
+    try {
+      return await contextService.runWith({ skipAudit: true }, () =>
+        delegate.findUnique!({ where }),
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Prisma client delegates are the model name with a lowercase first letter. */
+  private static toModelPropertyName(model: string): string {
+    return model.charAt(0).toLowerCase() + model.slice(1);
+  }
+
+  private static redactSnapshot(value: unknown): unknown {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return value;
+    }
+
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, val]) =>
+        SNAPSHOT_REDACTED_FIELDS.has(key)
+          ? [key, SNAPSHOT_REDACTED_PLACEHOLDER]
+          : [key, val],
+      ),
+    );
+  }
+
+  private static capSnapshotSize(value: unknown): unknown {
+    const serialized = JSON.stringify(value);
+    if (serialized.length <= SNAPSHOT_MAX_BYTES) {
+      return value;
+    }
+
+    return {
+      truncated: true,
+      note: `Snapshot exceeded ${SNAPSHOT_MAX_BYTES} bytes and was omitted.`,
+    };
+  }
+
+  private static buildSnapshot(
+    value: unknown,
+  ): Prisma.InputJsonValue | undefined {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+
+    const redacted = PrismaService.redactSnapshot(value);
+    const capped = PrismaService.capSnapshotSize(redacted);
+    return PrismaService.toInputJsonValue(capped);
   }
 
   private static getModelCapabilities(model: string): ModelCapabilities {

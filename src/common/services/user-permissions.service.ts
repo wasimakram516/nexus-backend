@@ -1,35 +1,32 @@
 import { Injectable } from '@nestjs/common';
-import { ModuleKey, Prisma, UserRole } from '../../prisma/client';
+import { Prisma, UserRole } from '../../prisma/client';
 import { CurrentUser } from '../interfaces/current-user.interface';
 import {
-  ModulePermissionMap,
-  PermissionAction,
+  FeaturePermissionMap,
   PermissionOverrides,
-} from '../interfaces/module-permissions.interface';
+} from '../interfaces/permission.interface';
+import {
+  PERMISSION_CATALOG,
+  PermissionAction,
+  isKnownFeatureAction,
+} from '../constants/permission-catalog.constant';
 import { PrismaService } from '../../prisma/prisma.service';
 
 /**
- * Base permissions applied when a user has NO permission template assigned.
- * Mirrors the pre-permission-system role gates so shipping this is behavior-neutral:
- * staff roles previously had no access to admin-gated module routes, accountants
- * could work the finance module, and everyone could see their own attendance.
+ * Base feature access applied when a STUDENT/GUARDIAN has no Role assigned —
+ * mirrors the pre-redesign behavior where every self-service archetype could
+ * see their own attendance with no configuration required. STAFF gets no
+ * such default: a roleless staff user has zero access until an institution
+ * ADMIN assigns them a Role, which is the entire point of the redesign.
  */
-const ROLE_DEFAULT_PERMISSIONS: Partial<
-  Record<UserRole, Partial<Record<ModuleKey, { view?: boolean; manage?: boolean }>>>
+const SELF_SERVICE_DEFAULTS: Partial<
+  Record<
+    UserRole,
+    Partial<Record<string, Partial<Record<PermissionAction, boolean>>>>
+  >
 > = {
-  [UserRole.TEACHER]: {
-    [ModuleKey.ATTENDANCE]: { view: true },
-  },
-  [UserRole.STUDENT]: {
-    [ModuleKey.ATTENDANCE]: { view: true },
-  },
-  [UserRole.GUARDIAN]: {
-    [ModuleKey.ATTENDANCE]: { view: true },
-  },
-  [UserRole.ACCOUNTANT]: {
-    [ModuleKey.FINANCE]: { view: true, manage: true },
-    [ModuleKey.ATTENDANCE]: { view: true },
-  },
+  [UserRole.STUDENT]: { attendance: { read: true } },
+  [UserRole.GUARDIAN]: { attendance: { read: true } },
 };
 
 @Injectable()
@@ -37,37 +34,36 @@ export class UserPermissionsService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Computes the effective module permission map:
-   * base (assigned template, else role defaults) overlaid with per-user
-   * overrides (allow/deny per module/action). Manage implies view.
+   * Computes the effective feature x action permission map: base (assigned
+   * Role, else the self-service defaults for STUDENT/GUARDIAN) overlaid with
+   * per-user overrides (allow/deny per feature/action).
    */
   resolveEffectivePermissions(
     role: UserRole,
-    templatePermissions: Prisma.JsonValue | null | undefined,
+    rolePermissions: Prisma.JsonValue | null | undefined,
     overrides: Prisma.JsonValue | null | undefined,
-  ): ModulePermissionMap {
-    const base = this.readPermissionMap(templatePermissions);
-    const roleDefaults = ROLE_DEFAULT_PERMISSIONS[role] ?? {};
+  ): FeaturePermissionMap {
+    const base = this.readPermissionMap(rolePermissions);
+    const defaults = SELF_SERVICE_DEFAULTS[role] ?? {};
     const parsedOverrides = this.readOverrides(overrides);
-    const map: ModulePermissionMap = {};
+    const map: FeaturePermissionMap = {};
 
-    for (const moduleKey of Object.values(ModuleKey)) {
-      const fromBase = base
-        ? (base[moduleKey] ?? { view: false, manage: false })
-        : {
-            view: roleDefaults[moduleKey]?.view ?? false,
-            manage: roleDefaults[moduleKey]?.manage ?? false,
-          };
+    for (const feature of PERMISSION_CATALOG) {
+      const fromBase = base?.[feature.key];
+      const fromDefaults = defaults[feature.key];
+      const override = parsedOverrides[feature.key];
+      const state: Partial<Record<PermissionAction, boolean>> = {};
 
-      const override = parsedOverrides[moduleKey];
-      const view =
-        override?.view !== undefined ? override.view === 'allow' : fromBase.view;
-      const manage =
-        override?.manage !== undefined
-          ? override.manage === 'allow'
-          : fromBase.manage;
+      for (const action of feature.actions) {
+        const baseValue = fromBase
+          ? Boolean(fromBase[action])
+          : Boolean(fromDefaults?.[action]);
+        const overrideValue = override?.[action];
+        state[action] =
+          overrideValue !== undefined ? overrideValue === 'allow' : baseValue;
+      }
 
-      map[moduleKey] = { view: view || manage, manage };
+      map[feature.key] = state;
     }
 
     return map;
@@ -79,13 +75,13 @@ export class UserPermissionsService {
    */
   async getEffectivePermissionsForUser(
     userId: string,
-  ): Promise<ModulePermissionMap | null> {
+  ): Promise<FeaturePermissionMap | null> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
         role: true,
         permissionOverrides: true,
-        permissionTemplate: {
+        assignedRole: {
           select: { permissions: true, deletedAt: true },
         },
       },
@@ -99,21 +95,21 @@ export class UserPermissionsService {
       return null;
     }
 
-    const templatePermissions =
-      user.permissionTemplate && !user.permissionTemplate.deletedAt
-        ? user.permissionTemplate.permissions
+    const rolePermissions =
+      user.assignedRole && !user.assignedRole.deletedAt
+        ? user.assignedRole.permissions
         : null;
 
     return this.resolveEffectivePermissions(
       user.role,
-      templatePermissions,
+      rolePermissions,
       user.permissionOverrides,
     );
   }
 
   async can(
     currentUser: CurrentUser,
-    moduleKey: ModuleKey,
+    featureKey: string,
     action: PermissionAction,
   ): Promise<boolean> {
     if (
@@ -128,31 +124,63 @@ export class UserPermissionsService {
       return true;
     }
 
-    return Boolean(map[moduleKey]?.[action]);
+    return Boolean(map[featureKey]?.[action]);
   }
 
-  /** Sanitizes arbitrary JSON into the override shape, dropping unknown keys. */
+  /** Sanitizes arbitrary JSON into the override shape, dropping unknown
+   *  feature keys and actions not defined in the catalog. */
   sanitizeOverrides(value: unknown): PermissionOverrides {
     const sanitized: PermissionOverrides = {};
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return sanitized;
     }
 
-    const moduleKeys = new Set<string>(Object.values(ModuleKey));
-    for (const [key, entry] of Object.entries(value)) {
-      if (!moduleKeys.has(key) || !entry || typeof entry !== 'object') {
+    for (const [featureKey, entry] of Object.entries(value)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
         continue;
       }
       const candidate = entry as Record<string, unknown>;
       const cleaned: PermissionOverrides[string] = {};
-      if (candidate.view === 'allow' || candidate.view === 'deny') {
-        cleaned.view = candidate.view;
+      for (const [action, effect] of Object.entries(candidate)) {
+        if (
+          (effect === 'allow' || effect === 'deny') &&
+          isKnownFeatureAction(featureKey, action)
+        ) {
+          cleaned[action as PermissionAction] = effect;
+        }
       }
-      if (candidate.manage === 'allow' || candidate.manage === 'deny') {
-        cleaned.manage = candidate.manage;
+      if (Object.keys(cleaned).length > 0) {
+        sanitized[featureKey] = cleaned;
       }
-      if (cleaned.view !== undefined || cleaned.manage !== undefined) {
-        sanitized[key] = cleaned;
+    }
+
+    return sanitized;
+  }
+
+  /** Sanitizes arbitrary JSON into a Role's permissions shape, dropping
+   *  unknown feature keys and actions not defined in the catalog. */
+  sanitizeRolePermissions(value: unknown): FeaturePermissionMap {
+    const sanitized: FeaturePermissionMap = {};
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return sanitized;
+    }
+
+    for (const [featureKey, entry] of Object.entries(value)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        continue;
+      }
+      const candidate = entry as Record<string, unknown>;
+      const cleaned: Partial<Record<PermissionAction, boolean>> = {};
+      for (const [action, allowed] of Object.entries(candidate)) {
+        if (
+          typeof allowed === 'boolean' &&
+          isKnownFeatureAction(featureKey, action)
+        ) {
+          cleaned[action as PermissionAction] = allowed;
+        }
+      }
+      if (Object.keys(cleaned).length > 0) {
+        sanitized[featureKey] = cleaned;
       }
     }
 
@@ -161,24 +189,11 @@ export class UserPermissionsService {
 
   private readPermissionMap(
     value: Prisma.JsonValue | null | undefined,
-  ): Record<string, { view: boolean; manage: boolean }> | null {
+  ): FeaturePermissionMap | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return null;
     }
-
-    const map: Record<string, { view: boolean; manage: boolean }> = {};
-    for (const [key, entry] of Object.entries(value)) {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-        continue;
-      }
-      const candidate = entry as Record<string, unknown>;
-      map[key] = {
-        view: candidate.view === true,
-        manage: candidate.manage === true,
-      };
-    }
-
-    return map;
+    return this.sanitizeRolePermissions(value);
   }
 
   private readOverrides(

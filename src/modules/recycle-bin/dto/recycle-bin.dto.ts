@@ -23,7 +23,7 @@ export enum RecycleBinEntity {
   STUDENT_FINE = 'student-fine',
   FEE_VOUCHER = 'fee-voucher',
   FEE_PAYMENT = 'fee-payment',
-  PERMISSION_TEMPLATE = 'permission-template',
+  ROLE = 'role',
 }
 
 export class ListRecycleBinQueryDto extends PaginationQueryDto {

@@ -1,28 +1,32 @@
 import { Controller, Get, Query, UseGuards, Version } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole } from '../../common/enums/domain.enums';
+import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { AuditLogsService } from './audit-logs.service';
 import { ListAuditLogsQueryDto } from './dto/audit-logs.dto';
 
 @ApiTags('Audit Logs')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.SUPERADMIN)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('audit-logs')
 export class AuditLogsController {
   constructor(private readonly auditLogsService: AuditLogsService) {}
 
   @Get()
   @Version('1')
+  @RequirePermission('audit_logs', 'read')
   @ApiOperation({
     summary: 'List audit trail entries',
     description:
-      'Superadmin dashboard endpoint for viewing create, update, delete, login, and other tracked actions across the platform.',
+      'Institution-scoped Activity page endpoint for create, update, delete, login, and other tracked actions. SUPERADMIN sees every institution; everyone else is locked to their own regardless of the institutionId filter.',
   })
-  listAuditLogs(@Query() query: ListAuditLogsQueryDto) {
-    return this.auditLogsService.listAuditLogs(query);
+  listAuditLogs(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: ListAuditLogsQueryDto,
+  ) {
+    return this.auditLogsService.listAuditLogs(currentUser, query);
   }
 }

@@ -11,17 +11,13 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
-import {
-  ModulePermission,
-  SkipModulePermission,
-} from '../../common/decorators/module-permission.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../../common/enums/domain.enums';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { ModulePermissionsGuard } from '../../common/guards/module-permissions.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
-import { ModuleKey } from '../../prisma/client';
 import { AttendanceService } from './attendance.service';
 import {
   AutoAbsentDto,
@@ -35,22 +31,14 @@ import {
 
 @ApiTags('Attendance')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, ModulePermissionsGuard)
-@ModulePermission(ModuleKey.ATTENDANCE)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
 @Controller('attendance')
 export class AttendanceController {
   constructor(private readonly attendanceService: AttendanceService) {}
 
   @Post('check-in')
   @Version('1')
-  @SkipModulePermission()
-  @Roles(
-    UserRole.SUPERADMIN,
-    UserRole.ADMIN,
-    UserRole.ACCOUNTANT,
-    UserRole.TEACHER,
-    UserRole.STUDENT,
-  )
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.STAFF, UserRole.STUDENT)
   @ApiOperation({
     summary: 'Record a check-in event',
     description:
@@ -65,14 +53,7 @@ export class AttendanceController {
 
   @Post('check-out')
   @Version('1')
-  @SkipModulePermission()
-  @Roles(
-    UserRole.SUPERADMIN,
-    UserRole.ADMIN,
-    UserRole.ACCOUNTANT,
-    UserRole.TEACHER,
-    UserRole.STUDENT,
-  )
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.STAFF, UserRole.STUDENT)
   @ApiOperation({
     summary: 'Record a check-out event',
     description:
@@ -87,6 +68,7 @@ export class AttendanceController {
 
   @Post('leave')
   @Version('1')
+  @RequirePermission('attendance', 'update')
   @ApiOperation({
     summary: 'Mark leave for a user',
     description:
@@ -101,6 +83,7 @@ export class AttendanceController {
 
   @Post('bulk-mark')
   @Version('1')
+  @RequirePermission('attendance', 'update')
   @ApiOperation({
     summary: 'Bulk-mark attendance statuses',
     description:
@@ -115,6 +98,7 @@ export class AttendanceController {
 
   @Post('auto-absent')
   @Version('1')
+  @RequirePermission('attendance', 'update')
   @ApiOperation({
     summary: 'Auto-mark absent users',
     description:
@@ -129,7 +113,6 @@ export class AttendanceController {
 
   @Get()
   @Version('1')
-  @SkipModulePermission()
   @ApiOperation({
     summary: 'List attendance records',
     description:
@@ -144,7 +127,6 @@ export class AttendanceController {
 
   @Get('summary')
   @Version('1')
-  @SkipModulePermission()
   @ApiOperation({
     summary: 'Get attendance summary totals',
     description:
@@ -159,7 +141,6 @@ export class AttendanceController {
 
   @Get(':attendanceId')
   @Version('1')
-  @SkipModulePermission()
   @ApiOperation({
     summary: 'Get an attendance record',
     description:
@@ -177,6 +158,7 @@ export class AttendanceController {
 
   @Patch(':attendanceId')
   @Version('1')
+  @RequirePermission('attendance', 'update')
   @ApiOperation({
     summary: 'Update an attendance record',
     description:

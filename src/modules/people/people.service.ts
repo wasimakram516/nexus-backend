@@ -103,6 +103,11 @@ export class PeopleService {
     } catch (error) {
       this.rethrowUniqueConflict(error, 'student');
     }
+    // Students log in with their registration number (see AuthService.login).
+    await this.prisma.user.update({
+      where: { id: dto.userId },
+      data: { identifier: dto.regNo },
+    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
@@ -226,9 +231,18 @@ export class PeopleService {
       data: {
         ...studentFields,
         ...(dto.dob && { dob: new Date(dto.dob) }),
-        ...(dto.admissionDate && { admissionDate: new Date(dto.admissionDate) }),
+        ...(dto.admissionDate && {
+          admissionDate: new Date(dto.admissionDate),
+        }),
       },
     });
+    if (dto.regNo && dto.regNo !== existing.regNo) {
+      // Keep the login identifier in sync with the registration number.
+      await this.prisma.user.update({
+        where: { id: item.userId },
+        data: { identifier: dto.regNo },
+      });
+    }
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         targetCampusId,
@@ -269,7 +283,12 @@ export class PeopleService {
 
     await this.prisma.student.update({
       where: { id: studentId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
 
     return {
@@ -470,7 +489,12 @@ export class PeopleService {
 
     await this.prisma.guardian.update({
       where: { id: guardianId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
 
     return {
@@ -656,7 +680,12 @@ export class PeopleService {
 
     await this.prisma.teacher.update({
       where: { id: teacherId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
 
     return {
@@ -947,7 +976,11 @@ export class PeopleService {
     await this.prisma.studentGuardian.delete({ where: { id: linkId } });
     return {
       message: 'Guardian unlinked successfully',
-      data: { id: link.id, studentId: link.studentId, guardianId: link.guardianId },
+      data: {
+        id: link.id,
+        studentId: link.studentId,
+        guardianId: link.guardianId,
+      },
     };
   }
 
@@ -977,6 +1010,19 @@ export class PeopleService {
     const item = await this.prisma.contact.create({
       data: createData,
     });
+    if (resolvedOwner.personType === ContactPersonType.GUARDIAN) {
+      // Guardians log in with their phone number (see AuthService.login).
+      const guardian = await this.prisma.guardian.findUnique({
+        where: { id: resolvedOwner.personId },
+        select: { userId: true },
+      });
+      if (guardian) {
+        await this.prisma.user.update({
+          where: { id: guardian.userId },
+          data: { identifier: dto.phone1 },
+        });
+      }
+    }
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByContact(
         resolvedOwner.personType,

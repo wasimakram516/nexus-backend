@@ -11,14 +11,14 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { DeleteRecordDto } from '../../common/dto/delete-record.dto';
-import { UserRole } from '../../common/enums/domain.enums';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import {
   ListUsersQueryDto,
+  ResolveUsersQueryDto,
   UpdateProfileDto,
   UpdateUserAccessDto,
 } from './dto/users.dto';
@@ -26,7 +26,7 @@ import { UsersService } from './users.service';
 
 @ApiTags('Users')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
@@ -58,11 +58,11 @@ export class UsersController {
 
   @Get()
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+  @RequirePermission('users', 'read')
   @ApiOperation({
     summary: 'List users',
     description:
-      'Returns institution-scoped users for user management screens. Superadmins can list across institutions, while admins stay within their own institution.',
+      'Returns institution-scoped users for user management screens. Superadmins can list across institutions, while everyone else stays within their own institution.',
   })
   listUsers(
     @CurrentUserDecorator() currentUser: CurrentUser,
@@ -71,13 +71,31 @@ export class UsersController {
     return this.usersService.listUsers(currentUser, query);
   }
 
+  @Get('resolve')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Resolve user IDs to display names',
+    description:
+      'Batch-resolves createdBy/updatedBy-style user IDs to a name/email map for the record-metadata popover. Institution-scoped; no users.read grant required.',
+  })
+  resolveUsers(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: ResolveUsersQueryDto,
+  ) {
+    const ids = query.ids
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    return this.usersService.resolveUsers(currentUser, ids);
+  }
+
   @Put(':userId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+  @RequirePermission('users', 'update')
   @ApiOperation({
     summary: 'Update user access state',
     description:
-      'Use this endpoint to change a user role, suspend/reactivate an account, or apply both changes in one request.',
+      'Use this endpoint to change a user role, suspend/reactivate an account, or apply both changes in one request. A delegated `users.update` grant (non-admin) can never touch or create admin-level accounts.',
   })
   updateUser(
     @CurrentUserDecorator() currentUser: CurrentUser,
@@ -89,7 +107,7 @@ export class UsersController {
 
   @Delete(':userId')
   @Version('1')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+  @RequirePermission('users', 'delete')
   @ApiOperation({
     summary: 'Soft-delete a user',
     description:

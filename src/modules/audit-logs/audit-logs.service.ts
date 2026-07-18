@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
-import { Prisma } from '../../prisma/client';
+import { ForbiddenException, Injectable } from '@nestjs/common';
+import { Prisma, UserRole } from '../../prisma/client';
+import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ListAuditLogsQueryDto } from './dto/audit-logs.dto';
 
@@ -7,10 +8,28 @@ import { ListAuditLogsQueryDto } from './dto/audit-logs.dto';
 export class AuditLogsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async listAuditLogs(query: ListAuditLogsQueryDto) {
+  async listAuditLogs(currentUser: CurrentUser, query: ListAuditLogsQueryDto) {
     const skip = (query.page! - 1) * query.limit!;
     const fromDate = query.fromDate ? new Date(query.fromDate) : null;
     const toDate = query.toDate ? this.normalizeToDate(query.toDate) : null;
+    // Only SUPERADMIN may cross institutions; everyone else — including a
+    // STAFF actor reaching this via a delegated audit_logs.read grant — is
+    // locked to their own institution regardless of what institutionId the
+    // query asked for. A non-superadmin with no institution at all (should
+    // never happen in practice) gets refused outright rather than silently
+    // falling through to an unscoped, cross-institution query.
+    if (
+      currentUser.role !== UserRole.SUPERADMIN &&
+      !currentUser.institutionId
+    ) {
+      throw new ForbiddenException(
+        'Your account is not linked to an institution.',
+      );
+    }
+    const scopedInstitutionId =
+      currentUser.role === UserRole.SUPERADMIN
+        ? query.institutionId
+        : currentUser.institutionId!;
     const where: Prisma.AuditLogWhereInput = {
       ...(query.search
         ? {
@@ -86,7 +105,7 @@ export class AuditLogsService {
         : {}),
       ...(query.entityId ? { entityId: query.entityId } : {}),
       ...(query.userId ? { userId: query.userId } : {}),
-      ...(query.institutionId ? { institutionId: query.institutionId } : {}),
+      ...(scopedInstitutionId ? { institutionId: scopedInstitutionId } : {}),
       ...(fromDate || toDate
         ? {
             createdAt: {

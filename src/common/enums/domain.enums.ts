@@ -1,10 +1,9 @@
 export enum UserRole {
   SUPERADMIN = 'SUPERADMIN',
   ADMIN = 'ADMIN',
-  TEACHER = 'TEACHER',
+  STAFF = 'STAFF',
   STUDENT = 'STUDENT',
   GUARDIAN = 'GUARDIAN',
-  ACCOUNTANT = 'ACCOUNTANT',
 }
 
 export enum UserStatus {

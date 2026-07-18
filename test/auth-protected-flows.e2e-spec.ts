@@ -26,6 +26,7 @@ import { AuthController } from '../src/modules/auth/auth.controller';
 import { AuthService } from '../src/modules/auth/auth.service';
 import { PlatformPublicController } from '../src/modules/platform/platform-public.controller';
 import { PlatformService } from '../src/modules/platform/platform.service';
+import { SignupService } from '../src/modules/platform/signup.service';
 import { FinanceController } from '../src/modules/finance/finance.controller';
 import { FinanceService } from '../src/modules/finance/finance.service';
 import { PeopleController } from '../src/modules/people/people.controller';
@@ -34,6 +35,7 @@ import { RecycleBinController } from '../src/modules/recycle-bin/recycle-bin.con
 import { RecycleBinService } from '../src/modules/recycle-bin/recycle-bin.service';
 import { UsersController } from '../src/modules/users/users.controller';
 import { UsersService } from '../src/modules/users/users.service';
+import { UserPermissionsService } from '../src/common/services/user-permissions.service';
 
 type RequestWithUser = Request & { user?: CurrentUser };
 
@@ -42,7 +44,7 @@ class TestJwtAuthGuard implements CanActivate {
     'teacher-token': {
       sub: 'teacher-user-1',
       email: 'teacher@nexus.test',
-      role: 'TEACHER',
+      role: 'STAFF',
       institutionId: 'institution-1',
       sessionId: 'session-teacher-1',
     },
@@ -121,6 +123,10 @@ describe('Auth and protected flows', () => {
     listPlans: jest.fn(),
   };
 
+  const signupServiceMock = {
+    signup: jest.fn(),
+  };
+
   const academicsServiceMock = {
     deleteLevel: jest.fn(),
     deleteClass: jest.fn(),
@@ -135,6 +141,34 @@ describe('Auth and protected flows', () => {
   const recycleBinServiceMock = {
     listDeletedItems: jest.fn(),
     restoreRecord: jest.fn(),
+  };
+
+  // Mirrors what an institution ADMIN would grant a real "read-only staff"
+  // Role in production: the teacher-user-1 fixture can read students,
+  // salaries, and fee vouchers, but has no create/update/delete grants and
+  // no access to anything else — matching the "roleless STAFF has zero
+  // access; explicit grants only" design (see PermissionsGuard).
+  const STAFF_READ_GRANTS: Record<string, string[]> = {
+    students: ['read'],
+    salaries: ['read'],
+    fee_vouchers: ['read'],
+  };
+
+  const userPermissionsServiceMock = {
+    can: jest.fn(
+      (
+        currentUser: CurrentUser,
+        feature: string,
+        action: string,
+      ): Promise<boolean> => {
+        if (currentUser.role !== 'STAFF') {
+          return Promise.resolve(false);
+        }
+        return Promise.resolve(
+          STAFF_READ_GRANTS[feature]?.includes(action) ?? false,
+        );
+      },
+    ),
   };
 
   beforeAll(async () => {
@@ -181,6 +215,10 @@ describe('Auth and protected flows', () => {
           useValue: platformServiceMock,
         },
         {
+          provide: SignupService,
+          useValue: signupServiceMock,
+        },
+        {
           provide: AuditLogsService,
           useValue: auditLogsServiceMock,
         },
@@ -191,6 +229,10 @@ describe('Auth and protected flows', () => {
         {
           provide: RolesGuard,
           useClass: RolesGuard,
+        },
+        {
+          provide: UserPermissionsService,
+          useValue: userPermissionsServiceMock,
         },
       ],
     })
@@ -290,7 +332,7 @@ describe('Auth and protected flows', () => {
     expect(authServiceMock.getSessions).toHaveBeenCalledWith({
       sub: 'teacher-user-1',
       email: 'teacher@nexus.test',
-      role: 'TEACHER',
+      role: 'STAFF',
       institutionId: 'institution-1',
       sessionId: 'session-teacher-1',
     });
@@ -299,7 +341,7 @@ describe('Auth and protected flows', () => {
     expect(body.error).toBeNull();
   });
 
-  it('forbids teacher access to admin-only user listing', async () => {
+  it('forbids a staff user with no users.read grant from listing users', async () => {
     const response: SupertestResponse = await request(
       app.getHttpServer() as Parameters<typeof request>[0],
     )
@@ -314,7 +356,9 @@ describe('Auth and protected flows', () => {
 
     expect(response.status).toBe(403);
     expect(body.success).toBe(false);
-    expect(body.message).toBe('Forbidden resource');
+    expect(body.message).toBe(
+      'You do not have read permission for users. Ask your administrator for access.',
+    );
     expect(body.data).toBeNull();
     expect(body.error.code).toBe('HTTP_ERROR');
   });
@@ -397,7 +441,7 @@ describe('Auth and protected flows', () => {
     expect(usersServiceMock.updateProfile).toHaveBeenCalledWith(
       expect.objectContaining({
         sub: 'teacher-user-1',
-        role: 'TEACHER',
+        role: 'STAFF',
       }),
       expect.objectContaining(payload),
     );
@@ -442,7 +486,7 @@ describe('Auth and protected flows', () => {
     expect(attendanceServiceMock.getAttendanceSummary).toHaveBeenCalledWith(
       expect.objectContaining({
         sub: 'teacher-user-1',
-        role: 'TEACHER',
+        role: 'STAFF',
       }),
       expect.objectContaining({
         dateFrom: '2026-05-01',
@@ -482,7 +526,7 @@ describe('Auth and protected flows', () => {
     expect(attendanceServiceMock.getAttendanceRecord).toHaveBeenCalledWith(
       expect.objectContaining({
         sub: 'teacher-user-1',
-        role: 'TEACHER',
+        role: 'STAFF',
       }),
       attendanceId,
     );
@@ -567,7 +611,7 @@ describe('Auth and protected flows', () => {
     expect(authServiceMock.revokeSession).toHaveBeenCalledWith(
       expect.objectContaining({
         sub: 'teacher-user-1',
-        role: 'TEACHER',
+        role: 'STAFF',
       }),
       undefined,
     );
@@ -670,7 +714,7 @@ describe('Auth and protected flows', () => {
     expect(peopleServiceMock.getStudent).toHaveBeenCalledWith(
       expect.objectContaining({
         sub: 'teacher-user-1',
-        role: 'TEACHER',
+        role: 'STAFF',
       }),
       studentId,
     );
@@ -775,7 +819,7 @@ describe('Auth and protected flows', () => {
       .send({
         userId: '11111111-1111-4111-8111-111111111111',
         campusId: '22222222-2222-4222-8222-222222222222',
-        role: 'TEACHER',
+        role: 'STAFF',
         joiningDate: '2026-01-01',
         baseSalary: 25000,
         effectiveDate: '2026-05-01',
@@ -850,7 +894,7 @@ describe('Auth and protected flows', () => {
     const payload = {
       userId: '11111111-1111-4111-8111-111111111111',
       campusId: '22222222-2222-4222-8222-222222222222',
-      role: 'TEACHER',
+      role: 'STAFF',
       joiningDate: '2026-01-01',
       baseSalary: 25000,
       effectiveDate: '2026-05-01',
@@ -912,7 +956,7 @@ describe('Auth and protected flows', () => {
     expect(financeServiceMock.getSalary).toHaveBeenCalledWith(
       expect.objectContaining({
         sub: 'teacher-user-1',
-        role: 'TEACHER',
+        role: 'STAFF',
       }),
       salaryId,
     );
@@ -1039,7 +1083,7 @@ describe('Auth and protected flows', () => {
     expect(financeServiceMock.listFeeVouchers).toHaveBeenCalledWith(
       expect.objectContaining({
         sub: 'teacher-user-1',
-        role: 'TEACHER',
+        role: 'STAFF',
       }),
       '22222222-2222-4222-8222-222222222222',
       undefined,
@@ -1152,24 +1196,51 @@ describe('Auth and protected flows', () => {
     expect(body.error).toBeNull();
   });
 
-  it('forbids admin access to the superadmin audit dashboard', async () => {
+  it('forbids a STAFF actor with no audit_logs.read grant from listing audit logs', async () => {
+    const response: SupertestResponse = await request(
+      app.getHttpServer() as Parameters<typeof request>[0],
+    )
+      .get('/api/v1/audit-logs?page=1&limit=10')
+      .set('Authorization', 'Bearer teacher-token');
+    const body = response.body as {
+      success: boolean;
+      message: string;
+      data: null;
+    };
+
+    expect(response.status).toBe(403);
+    expect(body.success).toBe(false);
+    expect(body.message).toBe(
+      'You do not have read permission for audit logs. Ask your administrator for access.',
+    );
+    expect(body.data).toBeNull();
+  });
+
+  it('allows an institution ADMIN onto the Activity page (decision #33), scoped to their own institution', async () => {
+    auditLogsServiceMock.listAuditLogs.mockResolvedValue({
+      message: 'Audit logs retrieved successfully',
+      data: {
+        items: [],
+        total: 0,
+        page: 1,
+        limit: 10,
+        totalPages: 0,
+        hasNextPage: false,
+        hasPreviousPage: false,
+      },
+    });
+
     const response: SupertestResponse = await request(
       app.getHttpServer() as Parameters<typeof request>[0],
     )
       .get('/api/v1/audit-logs?page=1&limit=10')
       .set('Authorization', 'Bearer admin-token');
-    const body = response.body as {
-      success: boolean;
-      message: string;
-      data: null;
-      error: { code: string };
-    };
 
-    expect(response.status).toBe(403);
-    expect(body.success).toBe(false);
-    expect(body.message).toBe('Forbidden resource');
-    expect(body.data).toBeNull();
-    expect(body.error.code).toBe('HTTP_ERROR');
+    expect(response.status).toBe(200);
+    expect(auditLogsServiceMock.listAuditLogs).toHaveBeenCalledWith(
+      expect.objectContaining({ sub: 'admin-user-1', role: 'ADMIN' }),
+      expect.objectContaining({ page: 1, limit: 10 }),
+    );
   });
 
   it('allows superadmin to list audit logs with frontend-friendly pagination fields', async () => {
@@ -1214,6 +1285,7 @@ describe('Auth and protected flows', () => {
 
     expect(response.status).toBe(200);
     expect(auditLogsServiceMock.listAuditLogs).toHaveBeenCalledWith(
+      expect.objectContaining({ sub: 'superadmin-user-1', role: 'SUPERADMIN' }),
       expect.objectContaining({
         page: 1,
         limit: 10,

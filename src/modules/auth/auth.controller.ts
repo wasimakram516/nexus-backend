@@ -19,10 +19,9 @@ import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { REFRESH_TOKEN_COOKIE } from '../../common/constants/auth.constants';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole } from '../../common/enums/domain.enums';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { AuthService } from './auth.service';
 import { LoginDto, RegisterDto, RevokeSessionDto } from './dto/auth.dto';
@@ -34,13 +33,13 @@ export class AuthController {
 
   @Post('register')
   @Version('1')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermission('users', 'create')
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Register a new user account',
     description:
-      'Protected admin endpoint for creating new user accounts within the platform.',
+      'Creates a new user account. SUPERADMIN/ADMIN always allowed; a STAFF user needs an explicit `users.create` grant, and can never create admin-level accounts.',
   })
   register(
     @Body() dto: RegisterDto,
@@ -54,9 +53,9 @@ export class AuthController {
   @HttpCode(200)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({
-    summary: 'Log in with email and password',
+    summary: 'Log in with identifier and password',
     description:
-      'Returns the authenticated user context and sets the refresh-token cookie used by the refresh endpoint.',
+      'Accepts email (staff/admin), registration number (student), or phone (guardian) as the identifier. Returns the authenticated user context and sets the refresh-token cookie used by the refresh endpoint.',
   })
   login(
     @Body() dto: LoginDto,
@@ -97,9 +96,13 @@ export class AuthController {
   })
   logout(
     @CurrentUserDecorator() currentUser: CurrentUser,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    return this.authService.logout(currentUser, res);
+    return this.authService.logout(currentUser, res, {
+      userAgent: req.headers['user-agent'],
+      ipAddress: req.ip,
+    });
   }
 
   @Get('sessions')

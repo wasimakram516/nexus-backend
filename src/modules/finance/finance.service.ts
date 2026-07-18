@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   AdjustmentType as PrismaAdjustmentType,
+  AttendanceStatus as PrismaAttendanceStatus,
   UserRole,
 } from '../../prisma/client';
 import { CustomFieldEntity } from '../../common/constants/custom-field-entities.constants';
@@ -28,11 +29,40 @@ import {
   CreateStudentFineRuleDto,
   SalaryAdjustmentDto,
   SalaryPaymentDto,
+  SalaryPayrollPreviewQueryDto,
   UpdateBankAccountDto,
   UpdateFeeStructureDto,
   UpdateFeeVoucherDto,
   UpdateSalaryDto,
 } from './dto/finance.dto';
+
+const DEFAULT_PAYROLL_PER_DAY_BASIS = 30;
+
+export interface PayrollBreakdown {
+  baseSalary: number;
+  perDayBasis: number;
+  dailyRate: number;
+  bonuses: number;
+  manualDeductions: number;
+  absenceDeduction: number;
+  lateDeduction: number;
+  halfDayDeduction: number;
+  leaveDeduction: number;
+  totalDeductions: number;
+  finalSalary: number;
+  attendance: {
+    absentCount: number;
+    lateCount: number;
+    halfDayCount: number;
+    leaveCount: number;
+  };
+  rule: {
+    allowedAbsences: number;
+    allowedLates: number;
+    allowedHalfDays: number;
+    allowedLeaves: number;
+  } | null;
+}
 
 @Injectable()
 export class FinanceService {
@@ -208,7 +238,12 @@ export class FinanceService {
     );
     await this.prisma.staffSalary.update({
       where: { id: salaryId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
 
     return {
@@ -346,7 +381,12 @@ export class FinanceService {
     );
     await this.prisma.salaryDeductionRule.update({
       where: { id: ruleId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
 
     return {
@@ -472,7 +512,12 @@ export class FinanceService {
     );
     await this.prisma.salaryAdjustment.update({
       where: { id: adjustmentId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
 
     return {
@@ -514,33 +559,19 @@ export class FinanceService {
       );
     }
 
-    const adjustments = await this.prisma.salaryAdjustment.findMany({
-      where: {
-        userId: dto.userId,
-        campusId: dto.campusId,
-      },
-    });
-    const bonuses = adjustments
-      .filter(
-        (item: { adjustmentType: string }) =>
-          item.adjustmentType === PrismaAdjustmentType.BONUS,
-      )
-      .reduce(
-        (sum: number, item: { amount: { toString(): string } }) =>
-          sum + Number(item.amount),
-        0,
+    const institutionId =
+      await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
+        dto.campusId,
       );
-    const manualDeductions = adjustments
-      .filter(
-        (item: { adjustmentType: string }) =>
-          item.adjustmentType === PrismaAdjustmentType.DEDUCTION,
-      )
-      .reduce(
-        (sum: number, item: { amount: { toString(): string } }) =>
-          sum + Number(item.amount),
-        0,
-      );
-    const finalSalary = Number(salary.baseSalary) + bonuses - manualDeductions;
+    const breakdown = await this.buildPayrollBreakdown(
+      dto.userId,
+      dto.campusId,
+      salary.role,
+      dto.month,
+      dto.year,
+      Number(salary.baseSalary),
+      institutionId,
+    );
 
     const { customFields, ...paymentData } = dto;
     const item = await this.prisma.salaryPayment.create({
@@ -551,9 +582,9 @@ export class FinanceService {
         month: paymentData.month,
         year: paymentData.year,
         baseSalaryAtPayment: salary.baseSalary,
-        totalDeductions: manualDeductions,
-        totalBonuses: bonuses,
-        finalSalaryPaid: finalSalary,
+        totalDeductions: breakdown.totalDeductions,
+        totalBonuses: breakdown.bonuses,
+        finalSalaryPaid: breakdown.finalSalary,
         paymentDate: new Date(),
         paidBy: currentUser.sub,
       },
@@ -566,21 +597,17 @@ export class FinanceService {
         campusId: dto.campusId,
         month: dto.month,
         year: dto.year,
-        absenceDeduction: 0,
-        lateDeduction: 0,
-        halfDayDeduction: 0,
-        leaveDeduction: 0,
-        manualDeductions,
-        bonuses,
-        totalDeductions: manualDeductions,
-        finalSalaryPaid: finalSalary,
+        absenceDeduction: breakdown.absenceDeduction,
+        lateDeduction: breakdown.lateDeduction,
+        halfDayDeduction: breakdown.halfDayDeduction,
+        leaveDeduction: breakdown.leaveDeduction,
+        manualDeductions: breakdown.manualDeductions,
+        bonuses: breakdown.bonuses,
+        totalDeductions: breakdown.totalDeductions,
+        finalSalaryPaid: breakdown.finalSalary,
       },
     });
 
-    const institutionId =
-      await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
-        dto.campusId,
-      );
     await this.entityCustomFieldsService.saveValues({
       institutionId,
       moduleKey: ModuleKey.FINANCE,
@@ -593,6 +620,48 @@ export class FinanceService {
       CustomFieldEntity.SALARY_PAYMENT,
     );
     return { message: 'Salary paid successfully', data };
+  }
+
+  async previewSalary(
+    query: SalaryPayrollPreviewQueryDto,
+    currentUser: CurrentUser,
+  ) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.FINANCE,
+    );
+    await this.campusAccessService.assertCampusAccess(
+      currentUser,
+      query.campusId,
+    );
+    const salary = await this.prisma.staffSalary.findUnique({
+      where: { id: query.salaryId },
+    });
+    if (!salary) throw new NotFoundException('Salary record not found.');
+    if (salary.campusId !== query.campusId || salary.userId !== query.userId) {
+      throw new ForbiddenException(
+        'Salary preview must match the selected salary record and campus.',
+      );
+    }
+
+    const institutionId =
+      await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
+        query.campusId,
+      );
+    const breakdown = await this.buildPayrollBreakdown(
+      query.userId,
+      query.campusId,
+      salary.role,
+      query.month,
+      query.year,
+      Number(salary.baseSalary),
+      institutionId,
+    );
+
+    return {
+      message: 'Salary payment preview computed successfully',
+      data: breakdown,
+    };
   }
 
   async listSalaryPayments(
@@ -675,7 +744,12 @@ export class FinanceService {
       currentUser,
       existing.campusId,
     );
-    const softDeleteData = { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub };
+    const softDeleteData = {
+      deletedAt: new Date(),
+      deletedBy: currentUser.sub,
+      deleteReason: reason ?? null,
+      updatedBy: currentUser.sub,
+    };
     await this.prisma.salaryDeductionSummary.updateMany({
       where: { salaryPaymentId: paymentId },
       data: softDeleteData,
@@ -850,7 +924,12 @@ export class FinanceService {
     );
     await this.prisma.bankAccount.update({
       where: { id: bankAccountId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
 
     return {
@@ -1057,7 +1136,12 @@ export class FinanceService {
     );
     await this.prisma.feeStructure.update({
       where: { id: feeStructureId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
 
     return {
@@ -1189,7 +1273,12 @@ export class FinanceService {
     );
     await this.prisma.studentDiscount.update({
       where: { id: discountId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
 
     return {
@@ -1323,7 +1412,12 @@ export class FinanceService {
     );
     await this.prisma.studentFineRule.update({
       where: { id: fineRuleId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
 
     return {
@@ -1482,7 +1576,12 @@ export class FinanceService {
     );
     await this.prisma.studentFine.update({
       where: { id: fineId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
 
     return {
@@ -1810,7 +1909,12 @@ export class FinanceService {
     );
     await this.prisma.feeVoucher.update({
       where: { id: voucherId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
 
     return {
@@ -2018,7 +2122,12 @@ export class FinanceService {
     );
     await this.prisma.feePayment.update({
       where: { id: paymentId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
     const remainingPayment = await this.prisma.feePayment.findFirst({
       where: { voucherId: existing.voucherId },
@@ -2063,6 +2172,157 @@ export class FinanceService {
         'Salary record does not belong to the selected user and campus.',
       );
     }
+  }
+
+  private async resolvePerDayBasis(institutionId: string) {
+    const setting = await this.prisma.institutionSetting.findUnique({
+      where: {
+        institutionId_key_activeScopeKey: {
+          institutionId,
+          key: 'payroll',
+          activeScopeKey: 'ACTIVE',
+        },
+      },
+      select: { value: true },
+    });
+
+    const value = setting?.value;
+    const perDayBasis =
+      value &&
+      typeof value === 'object' &&
+      'perDayBasis' in value &&
+      typeof (value as { perDayBasis: unknown }).perDayBasis === 'number'
+        ? (value as { perDayBasis: number }).perDayBasis
+        : undefined;
+
+    return perDayBasis && perDayBasis > 0
+      ? perDayBasis
+      : DEFAULT_PAYROLL_PER_DAY_BASIS;
+  }
+
+  /**
+   * Computes the full payroll breakdown for a user/salary/period: real
+   * attendance-based deductions from the campus+role SalaryDeductionRule
+   * (only the excess over each allowed threshold is deducted, mirroring the
+   * attendance module's own status/half-day counting convention) plus the
+   * month-scoped bonus/manual-deduction adjustments. Shared by paySalary()
+   * (which persists the result) and previewSalary() (which does not), so the
+   * two can never drift apart.
+   */
+  private async buildPayrollBreakdown(
+    userId: string,
+    campusId: string,
+    role: UserRole,
+    month: number,
+    year: number,
+    baseSalary: number,
+    institutionId: string,
+  ): Promise<PayrollBreakdown> {
+    const adjustments = await this.prisma.salaryAdjustment.findMany({
+      where: { userId, campusId, month, year },
+    });
+    const bonuses = adjustments
+      .filter((item) => item.adjustmentType === PrismaAdjustmentType.BONUS)
+      .reduce((sum, item) => sum + Number(item.amount), 0);
+    const manualDeductions = adjustments
+      .filter((item) => item.adjustmentType === PrismaAdjustmentType.DEDUCTION)
+      .reduce((sum, item) => sum + Number(item.amount), 0);
+
+    const rule = await this.prisma.salaryDeductionRule.findFirst({
+      where: { campusId, role, deletedAt: null },
+    });
+
+    const perDayBasis = await this.resolvePerDayBasis(institutionId);
+    const dailyRate = baseSalary / perDayBasis;
+
+    const periodStart = new Date(Date.UTC(year, month - 1, 1));
+    const periodEnd = new Date(Date.UTC(year, month, 1));
+    const attendanceRecords = await this.prisma.attendance.findMany({
+      where: {
+        userId,
+        campusId,
+        date: { gte: periodStart, lt: periodEnd },
+      },
+      select: { status: true, halfDay: true },
+    });
+
+    const counts = attendanceRecords.reduce(
+      (accumulator, item) => {
+        if (item.status === PrismaAttendanceStatus.ABSENT) {
+          accumulator.absentCount += 1;
+        } else if (item.status === PrismaAttendanceStatus.LATE) {
+          accumulator.lateCount += 1;
+        } else if (item.status === PrismaAttendanceStatus.LEAVE) {
+          accumulator.leaveCount += 1;
+        }
+        accumulator.halfDayCount += item.halfDay ? 1 : 0;
+        return accumulator;
+      },
+      { absentCount: 0, lateCount: 0, halfDayCount: 0, leaveCount: 0 },
+    );
+
+    // No configured rule for this campus/role means the institution hasn't
+    // opted into attendance-based deductions yet — leave them at zero
+    // rather than guessing at thresholds.
+    const excessDeduction = (count: number, allowed: number, percent: number) =>
+      Math.max(0, count - allowed) * dailyRate * (percent / 100);
+
+    const absenceDeduction = rule
+      ? excessDeduction(
+          counts.absentCount,
+          rule.allowedAbsences,
+          Number(rule.absenceDeductionPercent),
+        )
+      : 0;
+    const lateDeduction = rule
+      ? excessDeduction(
+          counts.lateCount,
+          rule.allowedLates,
+          Number(rule.lateDeductionPercent),
+        )
+      : 0;
+    const halfDayDeduction = rule
+      ? excessDeduction(
+          counts.halfDayCount,
+          rule.allowedHalfDays,
+          Number(rule.halfDayDeductionPercent),
+        )
+      : 0;
+    const leaveDeduction = rule
+      ? excessDeduction(
+          counts.leaveCount,
+          rule.allowedLeaves,
+          Number(rule.leaveDeductionPercent),
+        )
+      : 0;
+
+    const attendanceDeductions =
+      absenceDeduction + lateDeduction + halfDayDeduction + leaveDeduction;
+    const totalDeductions = manualDeductions + attendanceDeductions;
+    const finalSalary = baseSalary + bonuses - totalDeductions;
+
+    return {
+      baseSalary,
+      perDayBasis,
+      dailyRate,
+      bonuses,
+      manualDeductions,
+      absenceDeduction,
+      lateDeduction,
+      halfDayDeduction,
+      leaveDeduction,
+      totalDeductions,
+      finalSalary,
+      attendance: counts,
+      rule: rule
+        ? {
+            allowedAbsences: rule.allowedAbsences,
+            allowedLates: rule.allowedLates,
+            allowedHalfDays: rule.allowedHalfDays,
+            allowedLeaves: rule.allowedLeaves,
+          }
+        : null,
+    };
   }
 
   private async resolveSalaryCampusId(salaryId: string) {

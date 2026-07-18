@@ -9,6 +9,7 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsDefined,
   IsEmail,
   IsEnum,
   IsNumber,
@@ -80,7 +81,9 @@ export class UpdateInstitutionDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  @Matches(/^[a-z0-9-]+$/, { message: 'slug must be lowercase, alphanumeric and hyphens only' })
+  @Matches(/^[a-z0-9-]+$/, {
+    message: 'slug must be lowercase, alphanumeric and hyphens only',
+  })
   slug?: string;
 
   @ApiPropertyOptional({
@@ -132,17 +135,42 @@ export class UpdateBrandingDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  primaryColor?: string;
+  primaryColorLight?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  secondaryColor?: string;
+  secondaryColorLight?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  accentColor?: string;
+  accentColorLight?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  backgroundColorLight?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  primaryColorDark?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  secondaryColorDark?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  accentColorDark?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  backgroundColorDark?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -156,7 +184,13 @@ export class UpsertInstitutionSettingDto {
   @IsNotEmpty()
   key!: string;
 
+  // Deliberately untyped — settings are arbitrary per-institution JSON
+  // (primitives, objects, or arrays). @IsDefined() only rejects
+  // undefined; its real job here is giving class-validator's global
+  // ValidationPipe({ whitelist: true }) a recognized decorator so it
+  // doesn't strip/reject this property as unknown.
   @ApiProperty()
+  @IsDefined()
   value!: unknown;
 
   @ApiPropertyOptional()
@@ -269,26 +303,6 @@ export class UpdateSubscriptionDto {
 export class UpdateInstitutionAccessDto extends UpdateInstitutionDto {}
 
 export class UpdateSubscriptionAccessDto extends UpdateSubscriptionDto {}
-
-export class CreatePermissionTemplateDto {
-  @ApiProperty()
-  @IsString()
-  @IsNotEmpty()
-  name!: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  description?: string;
-
-  @ApiProperty({ type: 'object', additionalProperties: true })
-  @IsObject()
-  permissions!: Record<string, unknown>;
-}
-
-export class UpdatePermissionTemplateDto extends PartialType(
-  CreatePermissionTemplateDto,
-) {}
 
 export class ListInstitutionsQueryDto {
   @ApiPropertyOptional({ enum: InstitutionStatus })

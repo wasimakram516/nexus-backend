@@ -43,9 +43,12 @@ describe('ModuleAccessService', () => {
       branding: {
         displayName: 'Nexus Academy',
         logoUrl: null,
-        primaryColor: '#111111',
-        secondaryColor: '#222222',
-        accentColor: '#333333',
+        primaryColorLight: '#111111',
+        secondaryColorLight: '#222222',
+        accentColorLight: '#333333',
+        primaryColorDark: '#444444',
+        secondaryColorDark: '#555555',
+        accentColorDark: '#666666',
         theme: 'default',
       },
       settings: [

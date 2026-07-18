@@ -23,6 +23,7 @@ describe('PeopleService', () => {
   const prismaMock = {
     user: {
       findUnique: jest.fn(),
+      update: jest.fn().mockResolvedValue({}),
     },
     student: {
       findUnique: jest.fn(),

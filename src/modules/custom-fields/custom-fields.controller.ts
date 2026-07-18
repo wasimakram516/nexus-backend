@@ -11,10 +11,9 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole } from '../../common/enums/domain.enums';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CustomFieldsService } from './custom-fields.service';
 import {
@@ -27,14 +26,14 @@ import {
 
 @ApiTags('Custom Fields')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('custom-fields')
 export class CustomFieldsController {
   constructor(private readonly customFieldsService: CustomFieldsService) {}
 
   @Post('definitions')
   @Version('1')
+  @RequirePermission('custom_fields', 'create')
   @ApiOperation({
     summary: 'Create a custom field definition',
     description:
@@ -49,6 +48,7 @@ export class CustomFieldsController {
 
   @Get('definitions')
   @Version('1')
+  @RequirePermission('custom_fields', 'read')
   @ApiOperation({
     summary: 'List custom field definitions',
     description:
@@ -63,6 +63,7 @@ export class CustomFieldsController {
 
   @Patch('definitions/:definitionId')
   @Version('1')
+  @RequirePermission('custom_fields', 'update')
   @ApiOperation({
     summary: 'Update a custom field definition',
     description:
@@ -82,6 +83,7 @@ export class CustomFieldsController {
 
   @Post('values')
   @Version('1')
+  @RequirePermission('custom_fields', 'update')
   @ApiOperation({
     summary: 'Upsert a custom field value',
     description:
@@ -96,6 +98,7 @@ export class CustomFieldsController {
 
   @Get('values')
   @Version('1')
+  @RequirePermission('custom_fields', 'read')
   @ApiOperation({
     summary: 'List custom field values',
     description:

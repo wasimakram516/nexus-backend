@@ -167,7 +167,12 @@ export class AcademicsService {
     if (!existing) throw new NotFoundException('Level not found.');
     await this.prisma.level.update({
       where: { id: levelId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
     return {
       message: 'Level moved to recycle bin successfully',
@@ -315,7 +320,12 @@ export class AcademicsService {
     if (!existing) throw new NotFoundException('Class not found.');
     await this.prisma.academicClass.update({
       where: { id: classId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
     return {
       message: 'Class moved to recycle bin successfully',
@@ -465,7 +475,12 @@ export class AcademicsService {
     if (!existing) throw new NotFoundException('Section not found.');
     await this.prisma.section.update({
       where: { id: sectionId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
     return {
       message: 'Section moved to recycle bin successfully',
@@ -615,7 +630,12 @@ export class AcademicsService {
     if (!existing) throw new NotFoundException('Subject not found.');
     await this.prisma.subject.update({
       where: { id: subjectId },
-      data: { deletedAt: new Date(), deletedBy: currentUser.sub, deleteReason: reason ?? null, updatedBy: currentUser.sub },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
     });
     return {
       message: 'Subject moved to recycle bin successfully',

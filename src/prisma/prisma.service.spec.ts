@@ -24,6 +24,18 @@ describe('PrismaService audit helpers', () => {
       result: unknown,
       fallbackInstitutionId: string | null,
     ) => Promise<string | null>;
+    buildSnapshot: (value: unknown) => unknown;
+    fetchPreImage: (
+      service: Record<string, unknown>,
+      contextService: {
+        runWith: (
+          state: Record<string, unknown>,
+          callback: () => Promise<unknown>,
+        ) => Promise<unknown>;
+      },
+      model: string,
+      where: unknown,
+    ) => Promise<unknown>;
   };
 
   const PrismaServiceInternal =
@@ -92,6 +104,114 @@ describe('PrismaService audit helpers', () => {
     expect(service.campus.findUnique).toHaveBeenCalledWith({
       where: { id: 'campus-1' },
       select: { institutionId: true },
+    });
+  });
+
+  describe('buildSnapshot', () => {
+    it('redacts passwordHash and tokenHash while keeping other fields', () => {
+      expect(
+        PrismaServiceInternal.buildSnapshot({
+          id: 'user-1',
+          email: 'user@nexus.test',
+          passwordHash: 'super-secret-hash',
+        }),
+      ).toEqual({
+        id: 'user-1',
+        email: 'user@nexus.test',
+        passwordHash: '[REDACTED]',
+      });
+
+      expect(
+        PrismaServiceInternal.buildSnapshot({
+          id: 'session-1',
+          tokenHash: 'refresh-token-hash',
+        }),
+      ).toEqual({
+        id: 'session-1',
+        tokenHash: '[REDACTED]',
+      });
+    });
+
+    it('returns undefined for null/undefined input instead of storing an empty snapshot', () => {
+      expect(PrismaServiceInternal.buildSnapshot(undefined)).toBeUndefined();
+      expect(PrismaServiceInternal.buildSnapshot(null)).toBeUndefined();
+    });
+
+    it('caps oversized snapshots instead of storing the full payload', () => {
+      const hugeValue = { blob: 'x'.repeat(20_000) };
+
+      const result = PrismaServiceInternal.buildSnapshot(hugeValue) as {
+        truncated: boolean;
+        note: string;
+      };
+
+      expect(result.truncated).toBe(true);
+      expect(result.note).toContain('exceeded');
+      expect(JSON.stringify(result).length).toBeLessThan(20_000);
+    });
+
+    it('leaves small snapshots untouched', () => {
+      expect(
+        PrismaServiceInternal.buildSnapshot({ id: 'level-1', name: 'Grade 1' }),
+      ).toEqual({ id: 'level-1', name: 'Grade 1' });
+    });
+  });
+
+  describe('fetchPreImage', () => {
+    const contextService = {
+      runWith: jest
+        .fn<
+          Promise<unknown>,
+          [Record<string, unknown>, () => Promise<unknown>]
+        >()
+        .mockImplementation((_state, callback) => callback()),
+    };
+
+    it('fetches the current row via the model delegate matching the where clause', async () => {
+      const service = {
+        level: {
+          findUnique: jest
+            .fn()
+            .mockResolvedValue({ id: 'level-1', name: 'Grade 1' }),
+        },
+      };
+
+      await expect(
+        PrismaServiceInternal.fetchPreImage(service, contextService, 'Level', {
+          id: 'level-1',
+        }),
+      ).resolves.toEqual({ id: 'level-1', name: 'Grade 1' });
+      expect(service.level.findUnique).toHaveBeenCalledWith({
+        where: { id: 'level-1' },
+      });
+    });
+
+    it('returns undefined instead of throwing when the lookup fails', async () => {
+      const service = {
+        level: {
+          findUnique: jest.fn().mockRejectedValue(new Error('db down')),
+        },
+      };
+
+      await expect(
+        PrismaServiceInternal.fetchPreImage(service, contextService, 'Level', {
+          id: 'level-1',
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('returns undefined when the where clause is not an object (bulk-safe)', async () => {
+      const service = { level: { findUnique: jest.fn() } };
+
+      await expect(
+        PrismaServiceInternal.fetchPreImage(
+          service,
+          contextService,
+          'Level',
+          undefined,
+        ),
+      ).resolves.toBeUndefined();
+      expect(service.level.findUnique).not.toHaveBeenCalled();
     });
   });
 });

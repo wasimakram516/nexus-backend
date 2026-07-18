@@ -5,41 +5,31 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ModuleKey, UserRole } from '../../prisma/client';
+import { UserRole } from '../../prisma/client';
 import {
-  MODULE_PERMISSION_KEY,
-  SKIP_MODULE_PERMISSION_KEY,
-} from '../decorators/module-permission.decorator';
+  REQUIRE_PERMISSION_KEY,
+  RequiredPermission,
+} from '../decorators/require-permission.decorator';
 import { CurrentUser } from '../interfaces/current-user.interface';
 import { UserPermissionsService } from '../services/user-permissions.service';
 
 @Injectable()
-export class ModulePermissionsGuard implements CanActivate {
+export class PermissionsGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly userPermissionsService: UserPermissionsService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const skip = this.reflector.getAllAndOverride<boolean>(
-      SKIP_MODULE_PERMISSION_KEY,
+    const required = this.reflector.getAllAndOverride<RequiredPermission>(
+      REQUIRE_PERMISSION_KEY,
       [context.getHandler(), context.getClass()],
     );
-    if (skip) {
+    if (!required) {
       return true;
     }
 
-    const moduleKey = this.reflector.getAllAndOverride<ModuleKey>(
-      MODULE_PERMISSION_KEY,
-      [context.getHandler(), context.getClass()],
-    );
-    if (!moduleKey) {
-      return true;
-    }
-
-    const request = context
-      .switchToHttp()
-      .getRequest<{ user?: CurrentUser; method: string }>();
+    const request = context.switchToHttp().getRequest<{ user?: CurrentUser }>();
     const user = request.user;
     if (!user) {
       return false;
@@ -49,16 +39,15 @@ export class ModulePermissionsGuard implements CanActivate {
       return true;
     }
 
-    const action = request.method === 'GET' ? 'view' : 'manage';
     const allowed = await this.userPermissionsService.can(
       user,
-      moduleKey,
-      action,
+      required.feature,
+      required.action,
     );
 
     if (!allowed) {
       throw new ForbiddenException(
-        `You do not have ${action} permission for the ${moduleKey.toLowerCase()} module. Ask your administrator for access.`,
+        `You do not have ${required.action} permission for ${required.feature.replace(/_/g, ' ')}. Ask your administrator for access.`,
       );
     }
 

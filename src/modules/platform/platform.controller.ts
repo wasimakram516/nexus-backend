@@ -19,13 +19,13 @@ import { UserRole } from '../../common/enums/domain.enums';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
+import { CreateRoleDto, UpdateRoleDto } from '../roles/dto/roles.dto';
+import { RolesService } from '../roles/roles.service';
 import {
   CreatePlanDto,
   CreateInstitutionDto,
-  CreatePermissionTemplateDto,
   ListInstitutionsQueryDto,
   UpdateInstitutionAccessDto,
-  UpdatePermissionTemplateDto,
   UpdatePlanDto,
   UpdateBrandingDto,
   UpdateSubscriptionAccessDto,
@@ -40,7 +40,10 @@ import { PlatformService } from './platform.service';
 @Roles(UserRole.SUPERADMIN)
 @Controller('platform')
 export class PlatformController {
-  constructor(private readonly platformService: PlatformService) {}
+  constructor(
+    private readonly platformService: PlatformService,
+    private readonly rolesService: RolesService,
+  ) {}
 
   @Post('plans')
   @Version('1')
@@ -205,90 +208,81 @@ export class PlatformController {
     );
   }
 
-  @Post('institutions/:institutionId/permission-templates')
+  @Post('institutions/:institutionId/roles')
   @Version('1')
   @ApiOperation({
-    summary: 'Create a permission template',
+    summary: 'Create a role',
     description:
-      'Creates a reusable permission template for an institution so admins can apply consistent access presets.',
+      'Superadmin escape hatch to create a role for any institution. Institution admins use POST /roles instead.',
   })
-  createPermissionTemplate(
+  createRole(
     @Param('institutionId') institutionId: string,
-    @Body() dto: CreatePermissionTemplateDto,
+    @Body() dto: CreateRoleDto,
     @CurrentUserDecorator() currentUser: CurrentUser,
   ) {
-    return this.platformService.createPermissionTemplate(
+    return this.rolesService.createRole(institutionId, dto, currentUser);
+  }
+
+  @Get('institutions/:institutionId/roles')
+  @Version('1')
+  @ApiOperation({
+    summary: 'List roles',
+    description: 'Returns roles for an institution from the platform scope.',
+  })
+  listRoles(@Param('institutionId') institutionId: string) {
+    return this.rolesService.listRoles(institutionId);
+  }
+
+  @Get('institutions/:institutionId/roles/:roleId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get a role',
+    description: 'Returns one role for inspection or editing.',
+  })
+  getRole(
+    @Param('institutionId') institutionId: string,
+    @Param('roleId') roleId: string,
+  ) {
+    return this.rolesService.getRole(institutionId, roleId);
+  }
+
+  @Patch('institutions/:institutionId/roles/:roleId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Update a role',
+    description:
+      'Updates an existing role while preserving the institution scope.',
+  })
+  updateRole(
+    @Param('institutionId') institutionId: string,
+    @Param('roleId') roleId: string,
+    @Body() dto: UpdateRoleDto,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.rolesService.updateRole(
       institutionId,
+      roleId,
       dto,
       currentUser,
     );
   }
 
-  @Get('institutions/:institutionId/permission-templates')
+  @Delete('institutions/:institutionId/roles/:roleId')
   @Version('1')
   @ApiOperation({
-    summary: 'List permission templates',
+    summary: 'Soft-delete a role',
     description:
-      'Returns permission templates for an institution to power role and access-management screens.',
+      'Moves a role to the recycle bin instead of permanently removing it immediately.',
   })
-  listPermissionTemplates(@Param('institutionId') institutionId: string) {
-    return this.platformService.listPermissionTemplates(institutionId);
-  }
-
-  @Get('institutions/:institutionId/permission-templates/:templateId')
-  @Version('1')
-  @ApiOperation({
-    summary: 'Get a permission template',
-    description:
-      'Returns one permission template for inspection, editing, or assignment workflows.',
-  })
-  getPermissionTemplate(
+  deleteRole(
     @Param('institutionId') institutionId: string,
-    @Param('templateId') templateId: string,
-  ) {
-    return this.platformService.getPermissionTemplate(
-      institutionId,
-      templateId,
-    );
-  }
-
-  @Patch('institutions/:institutionId/permission-templates/:templateId')
-  @Version('1')
-  @ApiOperation({
-    summary: 'Update a permission template',
-    description:
-      'Updates an existing permission template while preserving the institution scope.',
-  })
-  updatePermissionTemplate(
-    @Param('institutionId') institutionId: string,
-    @Param('templateId') templateId: string,
-    @Body() dto: UpdatePermissionTemplateDto,
-    @CurrentUserDecorator() currentUser: CurrentUser,
-  ) {
-    return this.platformService.updatePermissionTemplate(
-      institutionId,
-      templateId,
-      dto,
-      currentUser,
-    );
-  }
-
-  @Delete('institutions/:institutionId/permission-templates/:templateId')
-  @Version('1')
-  @ApiOperation({
-    summary: 'Soft-delete a permission template',
-    description:
-      'Moves a permission template to the recycle bin instead of permanently removing it immediately.',
-  })
-  deletePermissionTemplate(
-    @Param('institutionId') institutionId: string,
-    @Param('templateId') templateId: string,
+    @Param('roleId') roleId: string,
     @CurrentUserDecorator() currentUser: CurrentUser,
     @Body() dto: DeleteRecordDto,
   ) {
-    return this.platformService.deletePermissionTemplate(
+    return this.rolesService.deleteRole(
       institutionId,
-      templateId,
+      roleId,
       currentUser,
       dto.reason,
     );

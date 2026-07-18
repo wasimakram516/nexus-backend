@@ -24,7 +24,23 @@ export class CampusAccessService {
       return campuses.map((campus: { id: string }) => campus.id);
     }
 
-    if (user.role === UserRole.ADMIN || user.role === UserRole.ACCOUNTANT) {
+    if (user.role === UserRole.STAFF) {
+      // Teaching staff are bound to their profile's campus; non-teaching
+      // staff (front-desk, accountants, campus admins) use their explicit
+      // UserCampus assignments instead.
+      const teacher = await this.prisma.teacher.findFirst({
+        where: {
+          userId: user.sub,
+          campus: {
+            deletedAt: null,
+          },
+        },
+        select: { campusId: true },
+      });
+      if (teacher) {
+        return [teacher.campusId];
+      }
+
       const records = await this.prisma.userCampus.findMany({
         where: {
           userId: user.sub,
@@ -37,8 +53,8 @@ export class CampusAccessService {
       return records.map((record: { campusId: string }) => record.campusId);
     }
 
-    if (user.role === UserRole.TEACHER) {
-      const teacher = await this.prisma.teacher.findFirst({
+    if (user.role === UserRole.ADMIN) {
+      const records = await this.prisma.userCampus.findMany({
         where: {
           userId: user.sub,
           campus: {
@@ -47,7 +63,7 @@ export class CampusAccessService {
         },
         select: { campusId: true },
       });
-      return teacher ? [teacher.campusId] : [];
+      return records.map((record: { campusId: string }) => record.campusId);
     }
 
     if (user.role === UserRole.STUDENT) {

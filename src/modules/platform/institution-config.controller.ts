@@ -1,8 +1,6 @@
 import { Controller, Get, UseGuards, Version } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole } from '../../common/enums/domain.enums';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
@@ -26,17 +24,5 @@ export class InstitutionConfigController {
   })
   getMyRuntimeConfig(@CurrentUserDecorator() currentUser: CurrentUser) {
     return this.institutionConfigService.getMyRuntimeConfig(currentUser);
-  }
-
-  @Get('permission-templates')
-  @Version('1')
-  @Roles(UserRole.ADMIN)
-  @ApiOperation({
-    summary: 'List my institution permission templates',
-    description:
-      'Returns the permission templates of the admin own institution so they can be assigned to staff users.',
-  })
-  getMyPermissionTemplates(@CurrentUserDecorator() currentUser: CurrentUser) {
-    return this.institutionConfigService.getMyPermissionTemplates(currentUser);
   }
 }

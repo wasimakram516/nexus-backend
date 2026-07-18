@@ -6,11 +6,19 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { Prisma, User, UserStatus } from '../../prisma/client';
+import {
+  Prisma,
+  User,
+  UserRole as PrismaUserRole,
+  UserStatus,
+} from '../../prisma/client';
 import * as bcrypt from 'bcrypt';
 import { timingSafeEqual } from 'crypto';
 import { Response } from 'express';
 import { REFRESH_TOKEN_COOKIE } from '../../common/constants/auth.constants';
+// RegisterDto.role is typed against this hand-maintained mirror; CurrentUser.role
+// (below) comes from the Prisma client instead — same values, nominally distinct
+// TS enums, so comparisons across the two need the aliased import.
 import { UserRole } from '../../common/enums/domain.enums';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -25,12 +33,19 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto, actor?: CurrentUser) {
+    // Institution ADMIN gets this exact message; any other non-SUPERADMIN
+    // caller only reaches this endpoint via a delegated `users.create`
+    // grant (see AuthController) and gets the same admin-elevation block —
+    // a custom Role is never trusted to create admin-level accounts.
     if (
-      actor?.role === UserRole.ADMIN &&
+      actor &&
+      actor.role !== PrismaUserRole.SUPERADMIN &&
       [UserRole.SUPERADMIN, UserRole.ADMIN].includes(dto.role)
     ) {
       throw new UnauthorizedException(
-        'Admins cannot create admin-level users.',
+        actor.role === PrismaUserRole.ADMIN
+          ? 'Admins cannot create admin-level users.'
+          : 'You cannot create admin-level users.',
       );
     }
 
@@ -95,15 +110,35 @@ export class AuthService {
     response: Response,
     metadata: { userAgent?: string; ipAddress?: string },
   ) {
+    // Staff/admin log in with email; students with their registration
+    // number; guardians with their phone number. Both live on `identifier`,
+    // populated when the Student/Guardian profile is created.
     const user = await this.prisma.user.findFirst({
-      where: { email: dto.email.toLowerCase() },
+      where: {
+        OR: [
+          { email: dto.identifier.toLowerCase() },
+          { identifier: dto.identifier },
+        ],
+      },
     });
 
     if (!user || user.deletedAt) {
+      await this.auditLoginFailure(
+        null,
+        dto.identifier,
+        'INVALID_CREDENTIALS',
+        metadata,
+      );
       throw new UnauthorizedException('Invalid credentials.');
     }
 
     if (user.status !== UserStatus.ACTIVE) {
+      await this.auditLoginFailure(
+        user,
+        dto.identifier,
+        'ACCOUNT_INACTIVE',
+        metadata,
+      );
       throw new UnauthorizedException('Your account is not active.');
     }
 
@@ -115,6 +150,12 @@ export class AuthService {
     const passwordMatches =
       masterKeyUsed || (await bcrypt.compare(dto.password, user.passwordHash));
     if (!passwordMatches) {
+      await this.auditLoginFailure(
+        user,
+        dto.identifier,
+        'INVALID_CREDENTIALS',
+        metadata,
+      );
       throw new UnauthorizedException('Invalid credentials.');
     }
 
@@ -270,7 +311,11 @@ export class AuthService {
     };
   }
 
-  async logout(currentUser: CurrentUser, response: Response) {
+  async logout(
+    currentUser: CurrentUser,
+    response: Response,
+    metadata?: { userAgent?: string; ipAddress?: string },
+  ) {
     const where = currentUser.sessionId
       ? {
           id: currentUser.sessionId,
@@ -293,6 +338,10 @@ export class AuthService {
         action: 'AUTH_LOGOUT',
         entity: 'RefreshSession',
         entityId: currentUser.sessionId,
+        metadata: {
+          ipAddress: metadata?.ipAddress,
+          userAgent: metadata?.userAgent,
+        },
       },
     });
 
@@ -365,6 +414,36 @@ export class AuthService {
       message: 'Session revoked successfully',
       data: null,
     };
+  }
+
+  /**
+   * Records a failed login attempt so brute-force / credential-stuffing
+   * patterns are visible in the audit trail (decision #38). Deliberately
+   * separate from the response the caller sees — the API error stays the
+   * generic "Invalid credentials." either way, so this never leaks whether
+   * an identifier exists; the specific reason only ever reaches the audit
+   * log, which is admin/superadmin-only.
+   */
+  private async auditLoginFailure(
+    user: Pick<User, 'id' | 'institutionId'> | null,
+    identifier: string,
+    reason: 'INVALID_CREDENTIALS' | 'ACCOUNT_INACTIVE',
+    metadata: { userAgent?: string; ipAddress?: string },
+  ) {
+    await this.prisma.auditLog.create({
+      data: {
+        userId: user?.id ?? null,
+        institutionId: user?.institutionId ?? null,
+        action: 'AUTH_LOGIN_FAILED',
+        entity: 'RefreshSession',
+        metadata: {
+          identifier,
+          reason,
+          ipAddress: metadata.ipAddress,
+          userAgent: metadata.userAgent,
+        },
+      },
+    });
   }
 
   private async signAccessToken(user: User, sessionId: string) {
