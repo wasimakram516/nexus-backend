@@ -428,98 +428,99 @@ export class RecycleBinService {
     entity: RecycleBinEntity,
     recordId: string,
   ) {
+    // Every branch below is explicitly `await`ed, not just `return`ed, even
+    // though that looks redundant — `return <promise>` inside a try block
+    // does NOT let this block's `catch` intercept a later rejection (the
+    // function already exited at the `return`), so `rethrowRestoreConflict`
+    // below would silently never fire on a restore-time unique-constraint
+    // collision (P2002), surfacing a raw 500 instead of a clean 409. Keep
+    // this `await` on any future branch added to this method.
     try {
       if (entity === RecycleBinEntity.USER) {
-        return this.restoreUser(currentUser, recordId);
+        return await this.restoreUser(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.STUDENT) {
-        return this.restoreStudent(currentUser, recordId);
+        return await this.restoreStudent(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.GUARDIAN) {
-        return this.restoreGuardian(currentUser, recordId);
+        return await this.restoreGuardian(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.TEACHER) {
-        return this.restoreTeacher(currentUser, recordId);
+        return await this.restoreTeacher(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.LEVEL) {
-        return this.restoreLevel(currentUser, recordId);
+        return await this.restoreLevel(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.CLASS) {
-        return this.restoreClass(currentUser, recordId);
+        return await this.restoreClass(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.SECTION) {
-        return this.restoreSection(currentUser, recordId);
+        return await this.restoreSection(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.SUBJECT) {
-        return this.restoreSubject(currentUser, recordId);
+        return await this.restoreSubject(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.SALARY) {
-        return this.restoreSalary(currentUser, recordId);
+        return await this.restoreSalary(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.SALARY_DEDUCTION_RULE) {
-        return this.restoreSalaryDeductionRule(currentUser, recordId);
+        return await this.restoreSalaryDeductionRule(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.SALARY_ADJUSTMENT) {
-        return this.restoreSalaryAdjustment(currentUser, recordId);
+        return await this.restoreSalaryAdjustment(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.SALARY_PAYMENT) {
-        return this.restoreSalaryPayment(currentUser, recordId);
+        return await this.restoreSalaryPayment(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.BANK_ACCOUNT) {
-        return this.restoreBankAccount(currentUser, recordId);
+        return await this.restoreBankAccount(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.FEE_STRUCTURE) {
-        return this.restoreFeeStructure(currentUser, recordId);
+        return await this.restoreFeeStructure(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.STUDENT_DISCOUNT) {
-        return this.restoreStudentDiscount(currentUser, recordId);
+        return await this.restoreStudentDiscount(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.STUDENT_FINE_RULE) {
-        return this.restoreStudentFineRule(currentUser, recordId);
+        return await this.restoreStudentFineRule(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.STUDENT_FINE) {
-        return this.restoreStudentFine(currentUser, recordId);
+        return await this.restoreStudentFine(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.FEE_VOUCHER) {
-        return this.restoreFeeVoucher(currentUser, recordId);
+        return await this.restoreFeeVoucher(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.FEE_PAYMENT) {
-        return this.restoreFeePayment(currentUser, recordId);
+        return await this.restoreFeePayment(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.ROLE) {
-        return this.restoreRole(currentUser, recordId);
+        return await this.restoreRole(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.ACADEMIC_YEAR) {
-        // Deliberately awaited (unlike the sibling `return this.restoreX(...)`
-        // branches above) so a rejection is actually thrown from within this
-        // try block for `rethrowRestoreConflict` below to catch. A bare
-        // `return <promise>` inside a try does NOT get its rejection caught
-        // by the enclosing catch — that's a real, verified gap already
-        // present for every other entity here, tracked as a follow-up fix.
         return await this.restoreAcademicYear(currentUser, recordId);
       }
 
-      return this.restoreCampus(currentUser, recordId);
+      return await this.restoreCampus(currentUser, recordId);
     } catch (error) {
       this.rethrowRestoreConflict(error, entity);
       throw error;
