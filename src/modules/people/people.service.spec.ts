@@ -1,4 +1,8 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Gender } from '../../common/enums/domain.enums';
 import { ModuleKey, UserRole } from '../../prisma/client';
@@ -35,8 +39,11 @@ describe('PeopleService', () => {
       findUnique: jest.fn(),
       update: jest.fn(),
     },
-    teacher: {
+    staffProfile: {
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
       update: jest.fn(),
     },
     teacherSubject: {
@@ -49,6 +56,9 @@ describe('PeopleService', () => {
     contact: {
       create: jest.fn(),
     },
+    userCampus: {
+      upsert: jest.fn(),
+    },
   };
 
   const campusAccessServiceMock = {
@@ -57,7 +67,7 @@ describe('PeopleService', () => {
     assertSectionAccess: jest.fn(),
     assertStudentAccess: jest.fn(),
     assertGuardianAccess: jest.fn(),
-    assertTeacherAccess: jest.fn(),
+    assertStaffProfileAccess: jest.fn(),
     assertSubjectAccess: jest.fn(),
     getScopedCampusIds: jest.fn(),
   };
@@ -66,7 +76,7 @@ describe('PeopleService', () => {
     resolveInstitutionIdByCampus: jest.fn(),
     resolveInstitutionIdByStudent: jest.fn(),
     resolveInstitutionIdByGuardian: jest.fn(),
-    resolveInstitutionIdByTeacher: jest.fn(),
+    resolveInstitutionIdByStaffProfile: jest.fn(),
     resolveInstitutionIdByContact: jest.fn(),
     saveValues: jest.fn(),
     attachToItem: jest.fn(),
@@ -267,7 +277,7 @@ describe('PeopleService', () => {
       id: 'contact-1',
       studentId: 'student-1',
       guardianId: null,
-      teacherId: null,
+      staffProfileId: null,
       personType: 'STUDENT',
       phone1: '03001234567',
     });
@@ -306,7 +316,9 @@ describe('PeopleService', () => {
 
   it('blocks duplicate teacher subject assignments for the same section mapping', async () => {
     campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
-    campusAccessServiceMock.assertTeacherAccess.mockResolvedValue('campus-1');
+    campusAccessServiceMock.assertStaffProfileAccess.mockResolvedValue(
+      'campus-1',
+    );
     campusAccessServiceMock.assertClassAccess.mockResolvedValue('campus-1');
     campusAccessServiceMock.assertSubjectAccess.mockResolvedValue('campus-1');
     campusAccessServiceMock.assertSectionAccess.mockResolvedValue('campus-1');
@@ -317,7 +329,7 @@ describe('PeopleService', () => {
 
     await expect(
       service.assignTeacherSubject(currentUser, {
-        teacherId: 'teacher-1',
+        staffProfileId: 'staff-profile-1',
         classId: 'class-1',
         subjectId: 'subject-1',
         sectionId: 'section-1',
@@ -328,7 +340,9 @@ describe('PeopleService', () => {
 
   it('rejects assignment when the section belongs to a different class', async () => {
     campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
-    campusAccessServiceMock.assertTeacherAccess.mockResolvedValue('campus-1');
+    campusAccessServiceMock.assertStaffProfileAccess.mockResolvedValue(
+      'campus-1',
+    );
     campusAccessServiceMock.assertClassAccess.mockResolvedValue('campus-1');
     campusAccessServiceMock.assertSubjectAccess.mockResolvedValue('campus-1');
     campusAccessServiceMock.assertSectionAccess.mockResolvedValue('campus-1');
@@ -336,12 +350,283 @@ describe('PeopleService', () => {
 
     await expect(
       service.assignTeacherSubject(currentUser, {
-        teacherId: 'teacher-1',
+        staffProfileId: 'staff-profile-1',
         classId: 'class-1',
         subjectId: 'subject-1',
         sectionId: 'section-9',
         campusId: 'campus-1',
       }),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  describe('createStaffProfile', () => {
+    const baseDto = {
+      userId: 'user-1',
+      employmentType: 'TEACHING' as never,
+      designation: 'Teacher',
+      gender: Gender.MALE,
+      campusId: 'campus-1',
+      joiningDate: '2026-01-05',
+    };
+
+    it('creates a new staff profile when no soft-deleted row exists for the user', async () => {
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        institutionId: 'institution-1',
+        role: UserRole.STAFF,
+      });
+      prismaMock.staffProfile.findFirst.mockResolvedValue(null);
+      prismaMock.staffProfile.create.mockResolvedValue({
+        id: 'staff-profile-1',
+        userId: 'user-1',
+        campusId: 'campus-1',
+      });
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+        (item: Record<string, unknown>) => ({ ...item, customFields: {} }),
+      );
+
+      await service.createStaffProfile(currentUser, baseDto);
+
+      expect(prismaMock.staffProfile.create).toHaveBeenCalledWith({
+        data: {
+          userId: 'user-1',
+          employmentType: 'TEACHING',
+          designation: 'Teacher',
+          gender: Gender.MALE,
+          campusId: 'campus-1',
+          joiningDate: new Date('2026-01-05'),
+        },
+      });
+      expect(prismaMock.staffProfile.update).not.toHaveBeenCalled();
+    });
+
+    it('reactivates a soft-deleted staff profile instead of creating a new one, since userId is not scoped by activeScopeKey', async () => {
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        institutionId: 'institution-1',
+        role: UserRole.STAFF,
+      });
+      prismaMock.staffProfile.findFirst.mockResolvedValue({
+        id: 'staff-profile-1',
+      });
+      prismaMock.staffProfile.update.mockResolvedValue({
+        id: 'staff-profile-1',
+        userId: 'user-1',
+        campusId: 'campus-1',
+      });
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+        (item: Record<string, unknown>) => ({ ...item, customFields: {} }),
+      );
+
+      await service.createStaffProfile(currentUser, baseDto);
+
+      expect(prismaMock.staffProfile.create).not.toHaveBeenCalled();
+      expect(prismaMock.staffProfile.update).toHaveBeenCalledWith({
+        where: { id: 'staff-profile-1' },
+        data: {
+          userId: 'user-1',
+          employmentType: 'TEACHING',
+          designation: 'Teacher',
+          gender: Gender.MALE,
+          campusId: 'campus-1',
+          joiningDate: new Date('2026-01-05'),
+          deletedAt: null,
+          deletedBy: null,
+          deleteReason: null,
+        },
+      });
+    });
+
+    it('syncs a matching UserCampus row on create so the staff member resolves to their home campus', async () => {
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        institutionId: 'institution-1',
+        role: UserRole.STAFF,
+      });
+      prismaMock.staffProfile.findFirst.mockResolvedValue(null);
+      prismaMock.staffProfile.create.mockResolvedValue({
+        id: 'staff-profile-1',
+        userId: 'user-1',
+        campusId: 'campus-1',
+      });
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+        (item: Record<string, unknown>) => ({ ...item, customFields: {} }),
+      );
+
+      await service.createStaffProfile(currentUser, baseDto);
+
+      expect(prismaMock.userCampus.upsert).toHaveBeenCalledWith({
+        where: {
+          userId_campusId_activeScopeKey: {
+            userId: 'user-1',
+            campusId: 'campus-1',
+            activeScopeKey: 'ACTIVE',
+          },
+        },
+        create: { userId: 'user-1', campusId: 'campus-1' },
+        update: {},
+      });
+    });
+
+    it('syncs a matching UserCampus row when a staff profile is moved to a new campus', async () => {
+      campusAccessServiceMock.assertStaffProfileAccess.mockResolvedValue(
+        'campus-1',
+      );
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-2');
+      prismaMock.staffProfile.findUnique.mockResolvedValue({
+        id: 'staff-profile-1',
+        userId: 'user-1',
+        campusId: 'campus-1',
+      });
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        institutionId: 'institution-1',
+        role: UserRole.STAFF,
+      });
+      prismaMock.staffProfile.update.mockResolvedValue({
+        id: 'staff-profile-1',
+        userId: 'user-1',
+        campusId: 'campus-2',
+      });
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+        (item: Record<string, unknown>) => ({ ...item, customFields: {} }),
+      );
+
+      await service.updateStaffProfile(currentUser, 'staff-profile-1', {
+        campusId: 'campus-2',
+      });
+
+      expect(prismaMock.userCampus.upsert).toHaveBeenCalledWith({
+        where: {
+          userId_campusId_activeScopeKey: {
+            userId: 'user-1',
+            campusId: 'campus-2',
+            activeScopeKey: 'ACTIVE',
+          },
+        },
+        create: { userId: 'user-1', campusId: 'campus-2' },
+        update: {},
+      });
+    });
+  });
+
+  it('scopes staff profile listing to accessible campuses for non-superadmins', async () => {
+    campusAccessServiceMock.getScopedCampusIds.mockResolvedValue(['campus-1']);
+    prismaMock.staffProfile.findMany.mockResolvedValue([
+      { id: 'staff-profile-1', campusId: 'campus-1' },
+    ]);
+    entityCustomFieldsServiceMock.attachToItems.mockResolvedValue([
+      { id: 'staff-profile-1', campusId: 'campus-1', customFields: {} },
+    ]);
+
+    const result = await service.listStaffProfiles(currentUser);
+
+    expect(prismaMock.staffProfile.findMany).toHaveBeenCalledWith({
+      where: { campusId: { in: ['campus-1'] } },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(result).toMatchObject({
+      message: 'Staff profiles retrieved successfully',
+      data: [{ id: 'staff-profile-1', campusId: 'campus-1' }],
+    });
+  });
+
+  it('retrieves a staff profile with attached custom fields', async () => {
+    campusAccessServiceMock.assertStaffProfileAccess.mockResolvedValue(
+      'campus-1',
+    );
+    prismaMock.staffProfile.findUnique.mockResolvedValue({
+      id: 'staff-profile-1',
+      campusId: 'campus-1',
+    });
+    entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+      id: 'staff-profile-1',
+      campusId: 'campus-1',
+      customFields: { emergencyContact: '03001234567' },
+    });
+
+    const result = await service.getStaffProfile(
+      currentUser,
+      'staff-profile-1',
+    );
+
+    expect(result).toMatchObject({
+      message: 'Staff profile retrieved successfully',
+      data: {
+        id: 'staff-profile-1',
+        customFields: { emergencyContact: '03001234567' },
+      },
+    });
+  });
+
+  it('throws NotFoundException getting a staff profile that does not exist', async () => {
+    campusAccessServiceMock.assertStaffProfileAccess.mockResolvedValue(
+      'campus-1',
+    );
+    prismaMock.staffProfile.findUnique.mockResolvedValue(null);
+    entityCustomFieldsServiceMock.attachToItem.mockResolvedValue(null);
+
+    await expect(
+      service.getStaffProfile(currentUser, 'missing-staff-profile'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('moves a staff profile to the recycle bin on delete', async () => {
+    campusAccessServiceMock.assertStaffProfileAccess.mockResolvedValue(
+      'campus-1',
+    );
+    prismaMock.staffProfile.findUnique.mockResolvedValue({
+      id: 'staff-profile-1',
+      campusId: 'campus-1',
+      userId: 'user-1',
+      cnic: '12345-1234567-1',
+    });
+    prismaMock.staffProfile.update.mockResolvedValue({});
+
+    const result = await service.deleteStaffProfile(
+      currentUser,
+      'staff-profile-1',
+      'No longer employed',
+    );
+
+    expect(prismaMock.staffProfile.update).toHaveBeenCalledWith({
+      where: { id: 'staff-profile-1' },
+      data: {
+        deletedAt: expect.any(Date),
+        deletedBy: currentUser.sub,
+        deleteReason: 'No longer employed',
+        updatedBy: currentUser.sub,
+      },
+    });
+    expect(result).toMatchObject({
+      message: 'Staff profile moved to recycle bin successfully',
+      data: { id: 'staff-profile-1' },
+    });
+  });
+
+  it('throws NotFoundException deleting a staff profile that does not exist', async () => {
+    campusAccessServiceMock.assertStaffProfileAccess.mockResolvedValue(
+      'campus-1',
+    );
+    prismaMock.staffProfile.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.deleteStaffProfile(currentUser, 'missing-staff-profile'),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

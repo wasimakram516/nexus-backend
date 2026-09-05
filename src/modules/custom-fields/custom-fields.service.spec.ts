@@ -56,7 +56,7 @@ describe('CustomFieldsService', () => {
             assertSubjectAccess: jest.fn(),
             assertStudentAccess: jest.fn(),
             assertGuardianAccess: jest.fn(),
-            assertTeacherAccess: jest.fn(),
+            assertStaffProfileAccess: jest.fn(),
           },
         },
         {

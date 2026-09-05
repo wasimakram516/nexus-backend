@@ -24,7 +24,7 @@ describe('AttendanceService', () => {
       findUniqueOrThrow: jest.fn(),
       findMany: jest.fn(),
     },
-    teacher: {
+    staffProfile: {
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
       findMany: jest.fn(),
@@ -262,7 +262,7 @@ describe('AttendanceService', () => {
     prismaMock.student.findMany.mockResolvedValue([
       { userId: 'student-user-1' },
     ]);
-    prismaMock.teacher.findMany.mockResolvedValue([]);
+    prismaMock.staffProfile.findMany.mockResolvedValue([]);
     prismaMock.userCampus.findMany.mockResolvedValue([]);
     prismaMock.attendance.upsert.mockResolvedValue({ id: 'attendance-1' });
 
@@ -303,6 +303,7 @@ describe('AttendanceService', () => {
       message: 'Attendance marked successfully',
       data: {
         marked: 1,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.arrayContaining() is intentionally typed `any` by @types/jest
         skipped: expect.arrayContaining([
           { userId: 'student-user-1', reason: 'DUPLICATE_ENTRY' },
           { userId: 'guardian-user-1', reason: 'ROLE_NOT_ALLOWED' },
@@ -318,7 +319,7 @@ describe('AttendanceService', () => {
       id: 'teacher-user-1',
       role: UserRole.STAFF,
     });
-    prismaMock.teacher.findUnique.mockResolvedValue({
+    prismaMock.staffProfile.findUnique.mockResolvedValue({
       userId: 'teacher-user-1',
       campusId: 'campus-1',
     });

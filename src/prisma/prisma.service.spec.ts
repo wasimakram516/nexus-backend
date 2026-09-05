@@ -107,6 +107,44 @@ describe('PrismaService audit helpers', () => {
     });
   });
 
+  // M2 Phase 2 (StaffProfile generalization) § 7.7: this ref key was renamed
+  // from teacherId -> staffProfileId. Without both the extracted key and the
+  // Prisma delegate call renamed together, a staff Contact row (which has no
+  // direct campusId of its own) would silently fail to resolve an
+  // institutionId, breaking its visibility on the institution-scoped
+  // Activity page filter.
+  it('resolves institution ids from related staff profile records via the renamed staffProfileId ref', async () => {
+    const contextService = {
+      runWith: jest
+        .fn<
+          Promise<unknown>,
+          [Record<string, unknown>, () => Promise<unknown>]
+        >()
+        .mockImplementation((_state, callback) => callback()),
+    };
+    const service = {
+      staffProfile: {
+        findUnique: jest.fn().mockResolvedValue({
+          campus: { institutionId: 'institution-1' },
+        }),
+      },
+    };
+
+    await expect(
+      PrismaServiceInternal.resolveAuditInstitutionId(
+        service,
+        contextService,
+        { data: { staffProfileId: 'staff-profile-1' } },
+        null,
+        null,
+      ),
+    ).resolves.toBe('institution-1');
+    expect(service.staffProfile.findUnique).toHaveBeenCalledWith({
+      where: { id: 'staff-profile-1' },
+      select: { campus: { select: { institutionId: true } } },
+    });
+  });
+
   describe('buildSnapshot', () => {
     it('redacts passwordHash and tokenHash while keeping other fields', () => {
       expect(

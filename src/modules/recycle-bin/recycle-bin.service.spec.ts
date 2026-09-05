@@ -57,7 +57,7 @@ describe('RecycleBinService', () => {
       delete: jest.fn(),
       count: jest.fn().mockResolvedValue(0),
     },
-    teacher: {
+    staffProfile: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
@@ -839,6 +839,228 @@ describe('RecycleBinService', () => {
         ),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(prismaMock.academicYear.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('StaffProfile recycle bin wiring', () => {
+    const baseStaffProfile = {
+      id: 'staff-profile-1',
+      cnic: '12345-1234567-1',
+      designation: 'Teacher',
+      campus: { institutionId: 'institution-1' },
+    };
+
+    it('lists deleted staff profiles filtered by institution and search', async () => {
+      prismaMock.staffProfile.findMany.mockResolvedValue([
+        {
+          ...baseStaffProfile,
+          deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+          deletedBy: 'admin-1',
+          deleteReason: null,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-05-06T09:00:00.000Z'),
+        },
+      ]);
+      prismaMock.user.findMany.mockResolvedValueOnce([
+        {
+          id: 'admin-1',
+          name: 'Admin User',
+          email: 'admin@nexus.test',
+          role: UserRole.ADMIN,
+        },
+      ]);
+
+      const result = await service.listDeletedItems(adminUser, {
+        page: 1,
+        limit: 10,
+        entity: RecycleBinEntity.STAFF_PROFILE,
+        search: '12345',
+      });
+
+      expect(prismaMock.staffProfile.findMany).toHaveBeenCalledWith({
+        where: {
+          deletedAt: { not: null },
+          campus: { institutionId: 'institution-1' },
+          OR: [
+            { cnic: { contains: '12345', mode: 'insensitive' } },
+            { designation: { contains: '12345', mode: 'insensitive' } },
+            { user: { name: { contains: '12345', mode: 'insensitive' } } },
+          ],
+        },
+        select: {
+          id: true,
+          cnic: true,
+          designation: true,
+          campus: { select: { institutionId: true } },
+          deletedAt: true,
+          deletedBy: true,
+          deleteReason: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: { deletedAt: 'desc' },
+      });
+      expect(result).toMatchObject({
+        message: 'Recycle bin items retrieved successfully',
+        data: {
+          total: 1,
+          items: [
+            {
+              entity: RecycleBinEntity.STAFF_PROFILE,
+              id: 'staff-profile-1',
+              label: '12345-1234567-1',
+              subtitle: 'Teacher',
+            },
+          ],
+        },
+      });
+    });
+
+    it('restores a soft-deleted staff profile and records an audit log', async () => {
+      prismaMock.staffProfile.findFirst.mockResolvedValue({
+        ...baseStaffProfile,
+        deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+      });
+      prismaMock.staffProfile.update.mockResolvedValue({
+        ...baseStaffProfile,
+        deletedAt: null,
+        deletedBy: null,
+        deleteReason: null,
+      });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.STAFF_PROFILE,
+        'staff-profile-1',
+      );
+
+      expect(prismaMock.staffProfile.update).toHaveBeenCalledWith({
+        where: { id: 'staff-profile-1', deletedAt: { not: null } },
+        data: { deletedAt: null, deletedBy: null, deleteReason: null },
+      });
+      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
+        adminUser,
+        expect.objectContaining({
+          action: 'STAFF_PROFILE_RESTORED',
+          entity: 'StaffProfile',
+          entityId: 'staff-profile-1',
+        }),
+      );
+      expect(result).toMatchObject({
+        message: 'Staff profile restored successfully',
+        data: { id: 'staff-profile-1' },
+      });
+    });
+
+    it('returns 404 restoring a staff profile that is not in the recycle bin', async () => {
+      prismaMock.staffProfile.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.STAFF_PROFILE,
+          'missing-staff-profile',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prismaMock.staffProfile.update).not.toHaveBeenCalled();
+    });
+
+    it('blocks an admin from restoring a staff profile belonging to another institution', async () => {
+      prismaMock.staffProfile.findFirst.mockResolvedValue({
+        ...baseStaffProfile,
+        campus: { institutionId: 'institution-2' },
+        deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+      });
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.STAFF_PROFILE,
+          'staff-profile-1',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.staffProfile.update).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a unique-constraint collision on restore as a 409 conflict', async () => {
+      prismaMock.staffProfile.findFirst.mockResolvedValue({
+        ...baseStaffProfile,
+        deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+      });
+      prismaMock.staffProfile.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('duplicate', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.STAFF_PROFILE,
+          'staff-profile-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('permanently deletes a staff profile once the retention period has elapsed', async () => {
+      const longAgo = new Date();
+      longAgo.setUTCDate(longAgo.getUTCDate() - 31);
+      prismaMock.staffProfile.findFirst.mockResolvedValue({
+        ...baseStaffProfile,
+        deletedAt: longAgo,
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.STAFF_PROFILE,
+        'staff-profile-1',
+      );
+
+      expect(prismaMock.staffProfile.delete).toHaveBeenCalledWith({
+        where: { id: 'staff-profile-1', deletedAt: { not: null } },
+      });
+      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
+        adminUser,
+        expect.objectContaining({
+          action: 'STAFF_PROFILE_PERMANENTLY_DELETED',
+          entity: 'StaffProfile',
+          entityId: 'staff-profile-1',
+        }),
+      );
+      expect(result).toMatchObject({
+        message: 'Staff profile permanently deleted successfully',
+        data: { id: 'staff-profile-1' },
+      });
+    });
+
+    it('blocks a permanent delete of a staff profile before the retention period has elapsed', async () => {
+      prismaMock.staffProfile.findFirst.mockResolvedValue({
+        ...baseStaffProfile,
+        deletedAt: new Date(), // deleted moments ago, default retention 30 days
+      });
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.STAFF_PROFILE,
+          'staff-profile-1',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.staffProfile.delete).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 permanently deleting a staff profile that is not in the recycle bin', async () => {
+      prismaMock.staffProfile.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.STAFF_PROFILE,
+          'missing-staff-profile',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prismaMock.staffProfile.delete).not.toHaveBeenCalled();
     });
   });
 });

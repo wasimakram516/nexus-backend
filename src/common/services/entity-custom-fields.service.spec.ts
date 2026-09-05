@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { ModuleKey } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -15,6 +15,9 @@ describe('EntityCustomFieldsService', () => {
     customFieldValue: {
       findMany: jest.fn(),
       upsert: jest.fn(),
+    },
+    staffProfile: {
+      findUnique: jest.fn(),
     },
     $transaction: jest.fn(),
   };
@@ -103,5 +106,29 @@ describe('EntityCustomFieldsService', () => {
         },
       },
     ]);
+  });
+
+  describe('resolveInstitutionIdByStaffProfile', () => {
+    it('resolves the institution via the staff profile campus', async () => {
+      prismaMock.staffProfile.findUnique.mockResolvedValue({
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.resolveInstitutionIdByStaffProfile('staff-profile-1'),
+      ).resolves.toBe('institution-1');
+      expect(prismaMock.staffProfile.findUnique).toHaveBeenCalledWith({
+        where: { id: 'staff-profile-1' },
+        select: { campus: { select: { institutionId: true } } },
+      });
+    });
+
+    it('throws NotFoundException when the staff profile has no resolvable institution', async () => {
+      prismaMock.staffProfile.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resolveInstitutionIdByStaffProfile('missing-staff-profile'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
   });
 });
