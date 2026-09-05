@@ -21,13 +21,13 @@ import {
   AssignTeacherSubjectDto,
   CreateContactDto,
   CreateGuardianDto,
+  CreateStaffProfileDto,
   CreateStudentDto,
-  CreateTeacherDto,
   LinkGuardianDto,
   StudentPromotionDto,
   UpdateGuardianDto,
+  UpdateStaffProfileDto,
   UpdateStudentDto,
-  UpdateTeacherDto,
 } from './dto/people.dto';
 import { PeopleService } from './people.service';
 
@@ -196,81 +196,89 @@ export class PeopleController {
     );
   }
 
-  @Post('teachers')
+  @Post('staff-profiles')
   @Version('1')
-  @RequirePermission('teachers', 'create')
+  @RequirePermission('staff_profiles', 'create')
   @ApiOperation({
-    summary: 'Create a teacher',
+    summary: 'Create a staff profile',
     description:
-      'Creates a teacher record that can be used across academics, attendance, and payroll flows.',
+      'Creates a staff profile (teaching or non-teaching) that can be used across academics, attendance, and payroll flows.',
   })
-  createTeacher(
+  createStaffProfile(
     @CurrentUserDecorator() currentUser: CurrentUserPayload,
-    @Body() dto: CreateTeacherDto,
+    @Body() dto: CreateStaffProfileDto,
   ) {
-    return this.peopleService.createTeacher(currentUser, dto);
+    return this.peopleService.createStaffProfile(currentUser, dto);
   }
 
-  @Get('teachers')
+  @Get('staff-profiles')
   @Version('1')
-  @RequirePermission('teachers', 'read')
+  @RequirePermission('staff_profiles', 'read')
   @ApiOperation({
-    summary: 'List teachers',
+    summary: 'List staff profiles',
     description:
-      'Returns teachers visible to the authenticated user, optionally filtered by campus.',
+      'Returns staff profiles visible to the authenticated user, optionally filtered by campus.',
   })
-  listTeachers(
+  listStaffProfiles(
     @CurrentUserDecorator() currentUser: CurrentUserPayload,
     @Query('campusId') campusId?: string,
   ) {
-    return this.peopleService.listTeachers(currentUser, campusId);
+    return this.peopleService.listStaffProfiles(currentUser, campusId);
   }
 
-  @Get('teachers/:teacherId')
+  @Get('staff-profiles/:staffProfileId')
   @Version('1')
-  @RequirePermission('teachers', 'read')
+  @RequirePermission('staff_profiles', 'read')
   @ApiOperation({
-    summary: 'Get a teacher',
+    summary: 'Get a staff profile',
     description:
-      'Returns one teacher record with scoped access checks for frontend detail screens.',
+      'Returns one staff profile with scoped access checks for frontend detail screens.',
   })
-  getTeacher(
+  getStaffProfile(
     @CurrentUserDecorator() currentUser: CurrentUserPayload,
-    @Param('teacherId') teacherId: string,
+    @Param('staffProfileId') staffProfileId: string,
   ) {
-    return this.peopleService.getTeacher(currentUser, teacherId);
+    return this.peopleService.getStaffProfile(currentUser, staffProfileId);
   }
 
-  @Patch('teachers/:teacherId')
+  @Patch('staff-profiles/:staffProfileId')
   @Version('1')
-  @RequirePermission('teachers', 'update')
+  @RequirePermission('staff_profiles', 'update')
   @ApiOperation({
-    summary: 'Update a teacher',
+    summary: 'Update a staff profile',
     description:
-      'Updates teacher profile and staffing details within the current access scope.',
+      'Updates staff profile and employment details within the current access scope.',
   })
-  updateTeacher(
+  updateStaffProfile(
     @CurrentUserDecorator() currentUser: CurrentUserPayload,
-    @Param('teacherId') teacherId: string,
-    @Body() dto: UpdateTeacherDto,
+    @Param('staffProfileId') staffProfileId: string,
+    @Body() dto: UpdateStaffProfileDto,
   ) {
-    return this.peopleService.updateTeacher(currentUser, teacherId, dto);
+    return this.peopleService.updateStaffProfile(
+      currentUser,
+      staffProfileId,
+      dto,
+    );
   }
 
-  @Delete('teachers/:teacherId')
+  @Delete('staff-profiles/:staffProfileId')
   @Version('1')
-  @RequirePermission('teachers', 'delete')
+  @RequirePermission('staff_profiles', 'delete')
   @ApiOperation({
-    summary: 'Soft-delete a teacher',
+    summary: 'Soft-delete a staff profile',
     description:
-      'Moves a teacher record to the recycle bin instead of permanently deleting it immediately.',
+      'Moves a staff profile to the recycle bin instead of permanently deleting it immediately.',
   })
-  deleteTeacher(
+  deleteStaffProfile(
     @CurrentUserDecorator() currentUser: CurrentUserPayload,
-    @Param('teacherId') teacherId: string,
+    @Param('staffProfileId') staffProfileId: string,
     @Body() dto: DeleteRecordDto,
   ) {
-    return this.peopleService.deleteTeacher(currentUser, teacherId, dto.reason);
+    return this.peopleService.deleteStaffProfile(
+      currentUser,
+      staffProfileId,
+      dto.reason,
+    );
   }
 
   @Post('student-guardians')

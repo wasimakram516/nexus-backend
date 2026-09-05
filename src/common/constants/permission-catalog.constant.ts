@@ -84,8 +84,8 @@ export const PERMISSION_CATALOG: readonly PermissionFeatureDef[] = [
     actions: ALL_ACTIONS,
   },
   {
-    key: 'teachers',
-    label: 'Teachers',
+    key: 'staff_profiles',
+    label: 'Staff Profiles',
     module: ModuleKey.PEOPLE,
     actions: ALL_ACTIONS,
   },

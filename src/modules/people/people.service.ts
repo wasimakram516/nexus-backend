@@ -21,13 +21,13 @@ import {
   AssignTeacherSubjectDto,
   CreateContactDto,
   CreateGuardianDto,
+  CreateStaffProfileDto,
   CreateStudentDto,
-  CreateTeacherDto,
   LinkGuardianDto,
   StudentPromotionDto,
   UpdateGuardianDto,
+  UpdateStaffProfileDto,
   UpdateStudentDto,
-  UpdateTeacherDto,
 } from './dto/people.dto';
 
 @Injectable()
@@ -503,7 +503,10 @@ export class PeopleService {
     };
   }
 
-  async createTeacher(currentUser: CurrentUser, dto: CreateTeacherDto) {
+  async createStaffProfile(
+    currentUser: CurrentUser,
+    dto: CreateStaffProfileDto,
+  ) {
     await this.moduleAccessService.assertModuleEnabledForUser(
       currentUser,
       ModuleKey.PEOPLE,
@@ -517,8 +520,18 @@ export class PeopleService {
       dto.userId,
       dto.campusId,
     );
-    const { customFields, ...teacherData } = dto;
-    const deletedTeacher = await this.prisma.teacher.findFirst({
+    const { customFields, ...staffProfileFields } = dto;
+    // Prisma DateTime columns reject date-only strings like "2026-01-01".
+    const staffProfileData = {
+      ...staffProfileFields,
+      joiningDate: new Date(dto.joiningDate),
+    };
+    // StaffProfile.userId is @unique directly (not part of a compound
+    // [userId, activeScopeKey] unique like most soft-deletable entities), so
+    // a soft-deleted profile's userId slot is NOT automatically freed for
+    // reuse — reactivate the existing row instead of trying (and failing) to
+    // create a new one. Preserved from the legacy Teacher implementation.
+    const deletedStaffProfile = await this.prisma.staffProfile.findFirst({
       where: {
         userId: dto.userId,
         deletedAt: { not: null },
@@ -527,20 +540,21 @@ export class PeopleService {
     });
     let item;
     try {
-      item = deletedTeacher
-        ? await this.prisma.teacher.update({
-            where: { id: deletedTeacher.id },
+      item = deletedStaffProfile
+        ? await this.prisma.staffProfile.update({
+            where: { id: deletedStaffProfile.id },
             data: {
-              ...teacherData,
+              ...staffProfileData,
               deletedAt: null,
               deletedBy: null,
               deleteReason: null,
             },
           })
-        : await this.prisma.teacher.create({ data: teacherData });
+        : await this.prisma.staffProfile.create({ data: staffProfileData });
     } catch (error) {
-      this.rethrowUniqueConflict(error, 'teacher');
+      this.rethrowUniqueConflict(error, 'staff profile');
     }
+    await this.syncUserCampusAssignment(dto.userId, dto.campusId);
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
@@ -548,18 +562,18 @@ export class PeopleService {
     await this.entityCustomFieldsService.saveValues({
       institutionId,
       moduleKey: ModuleKey.PEOPLE,
-      entityType: CustomFieldEntity.TEACHER,
+      entityType: CustomFieldEntity.STAFF_PROFILE,
       entityId: item.id,
       values: customFields,
     });
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
-      CustomFieldEntity.TEACHER,
+      CustomFieldEntity.STAFF_PROFILE,
     );
-    return { message: 'Teacher created successfully', data };
+    return { message: 'Staff profile created successfully', data };
   }
 
-  async listTeachers(currentUser: CurrentUser, campusId?: string) {
+  async listStaffProfiles(currentUser: CurrentUser, campusId?: string) {
     await this.moduleAccessService.assertModuleEnabledForUser(
       currentUser,
       ModuleKey.PEOPLE,
@@ -568,7 +582,7 @@ export class PeopleService {
       currentUser,
       campusId,
     );
-    const items = await this.prisma.teacher.findMany({
+    const items = await this.prisma.staffProfile.findMany({
       where:
         currentUser.role === UserRole.SUPERADMIN && !campusId
           ? undefined
@@ -577,52 +591,58 @@ export class PeopleService {
     });
     const data = await this.entityCustomFieldsService.attachToItems(
       items,
-      CustomFieldEntity.TEACHER,
+      CustomFieldEntity.STAFF_PROFILE,
     );
-    return { message: 'Teachers retrieved successfully', data };
+    return { message: 'Staff profiles retrieved successfully', data };
   }
 
-  async getTeacher(currentUser: CurrentUser, teacherId: string) {
+  async getStaffProfile(currentUser: CurrentUser, staffProfileId: string) {
     await this.moduleAccessService.assertModuleEnabledForUser(
       currentUser,
       ModuleKey.PEOPLE,
     );
-    await this.campusAccessService.assertTeacherAccess(currentUser, teacherId);
+    await this.campusAccessService.assertStaffProfileAccess(
+      currentUser,
+      staffProfileId,
+    );
 
-    const item = await this.prisma.teacher.findUnique({
-      where: { id: teacherId },
+    const item = await this.prisma.staffProfile.findUnique({
+      where: { id: staffProfileId },
     });
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
-      CustomFieldEntity.TEACHER,
+      CustomFieldEntity.STAFF_PROFILE,
     );
 
     if (!data) {
-      throw new NotFoundException('Teacher not found.');
+      throw new NotFoundException('Staff profile not found.');
     }
 
-    return { message: 'Teacher retrieved successfully', data };
+    return { message: 'Staff profile retrieved successfully', data };
   }
 
-  async updateTeacher(
+  async updateStaffProfile(
     currentUser: CurrentUser,
-    teacherId: string,
-    dto: UpdateTeacherDto,
+    staffProfileId: string,
+    dto: UpdateStaffProfileDto,
   ) {
     await this.moduleAccessService.assertModuleEnabledForUser(
       currentUser,
       ModuleKey.PEOPLE,
     );
 
-    const existing = await this.prisma.teacher.findUnique({
-      where: { id: teacherId },
+    const existing = await this.prisma.staffProfile.findUnique({
+      where: { id: staffProfileId },
     });
 
     if (!existing) {
-      throw new NotFoundException('Teacher not found.');
+      throw new NotFoundException('Staff profile not found.');
     }
 
-    await this.campusAccessService.assertTeacherAccess(currentUser, teacherId);
+    await this.campusAccessService.assertStaffProfileAccess(
+      currentUser,
+      staffProfileId,
+    );
     const targetCampusId = dto.campusId ?? existing.campusId;
     await this.campusAccessService.assertCampusAccess(
       currentUser,
@@ -635,11 +655,15 @@ export class PeopleService {
       targetCampusId,
     );
 
-    const { customFields, ...teacherData } = dto;
-    const item = await this.prisma.teacher.update({
-      where: { id: teacherId },
-      data: teacherData,
+    const { customFields, ...staffProfileFields } = dto;
+    const item = await this.prisma.staffProfile.update({
+      where: { id: staffProfileId },
+      data: {
+        ...staffProfileFields,
+        ...(dto.joiningDate && { joiningDate: new Date(dto.joiningDate) }),
+      },
     });
+    await this.syncUserCampusAssignment(item.userId, targetCampusId);
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         targetCampusId,
@@ -647,39 +671,42 @@ export class PeopleService {
     await this.entityCustomFieldsService.saveValues({
       institutionId,
       moduleKey: ModuleKey.PEOPLE,
-      entityType: CustomFieldEntity.TEACHER,
+      entityType: CustomFieldEntity.STAFF_PROFILE,
       entityId: item.id,
       values: customFields,
     });
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
-      CustomFieldEntity.TEACHER,
+      CustomFieldEntity.STAFF_PROFILE,
     );
-    return { message: 'Teacher updated successfully', data };
+    return { message: 'Staff profile updated successfully', data };
   }
 
-  async deleteTeacher(
+  async deleteStaffProfile(
     currentUser: CurrentUser,
-    teacherId: string,
+    staffProfileId: string,
     reason?: string,
   ) {
     await this.moduleAccessService.assertModuleEnabledForUser(
       currentUser,
       ModuleKey.PEOPLE,
     );
-    await this.campusAccessService.assertTeacherAccess(currentUser, teacherId);
+    await this.campusAccessService.assertStaffProfileAccess(
+      currentUser,
+      staffProfileId,
+    );
 
-    const existing = await this.prisma.teacher.findUnique({
-      where: { id: teacherId },
+    const existing = await this.prisma.staffProfile.findUnique({
+      where: { id: staffProfileId },
       select: { id: true, campusId: true, userId: true, cnic: true },
     });
 
     if (!existing) {
-      throw new NotFoundException('Teacher not found.');
+      throw new NotFoundException('Staff profile not found.');
     }
 
-    await this.prisma.teacher.update({
-      where: { id: teacherId },
+    await this.prisma.staffProfile.update({
+      where: { id: staffProfileId },
       data: {
         deletedAt: new Date(),
         deletedBy: currentUser.sub,
@@ -689,7 +716,7 @@ export class PeopleService {
     });
 
     return {
-      message: 'Teacher moved to recycle bin successfully',
+      message: 'Staff profile moved to recycle bin successfully',
       data: existing,
     };
   }
@@ -846,10 +873,11 @@ export class PeopleService {
       currentUser,
       dto.campusId,
     );
-    const teacherCampusId = await this.campusAccessService.assertTeacherAccess(
-      currentUser,
-      dto.teacherId,
-    );
+    const teacherCampusId =
+      await this.campusAccessService.assertStaffProfileAccess(
+        currentUser,
+        dto.staffProfileId,
+      );
     const classCampusId = await this.campusAccessService.assertClassAccess(
       currentUser,
       dto.classId,
@@ -880,7 +908,7 @@ export class PeopleService {
 
     const existingAssignment = await this.prisma.teacherSubject.findFirst({
       where: {
-        teacherId: dto.teacherId,
+        staffProfileId: dto.staffProfileId,
         classId: dto.classId,
         subjectId: dto.subjectId,
         sectionId: dto.sectionId,
@@ -1104,10 +1132,40 @@ export class PeopleService {
       return;
     }
 
-    if (normalized === ContactPersonType.TEACHER) {
-      await this.campusAccessService.assertTeacherAccess(currentUser, personId);
+    if (normalized === ContactPersonType.STAFF) {
+      await this.campusAccessService.assertStaffProfileAccess(
+        currentUser,
+        personId,
+      );
       return;
     }
+  }
+
+  /**
+   * Keeps UserCampus in sync with a staff member's home campus. Once every
+   * employee has a StaffProfile row, CampusAccessService.getCampusIdsForUser
+   * resolves STAFF purely from UserCampus (§ 7.6) — so every staff profile's
+   * campus must also be present there, or a staff member with no other
+   * UserCampus assignment would end up with zero accessible campuses.
+   * Idempotent — mirrors the upsert-on-unique-constraint pattern already
+   * used by linkGuardian() for StudentGuardian.
+   *
+   * @param {string} userId - The staff member's user id.
+   * @param {string} campusId - The staff profile's home campus id.
+   * @returns {Promise<void>}
+   */
+  private async syncUserCampusAssignment(userId: string, campusId: string) {
+    await this.prisma.userCampus.upsert({
+      where: {
+        userId_campusId_activeScopeKey: {
+          userId,
+          campusId,
+          activeScopeKey: 'ACTIVE',
+        },
+      },
+      create: { userId, campusId },
+      update: {},
+    });
   }
 
   private assertSameCampus(

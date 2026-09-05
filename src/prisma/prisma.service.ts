@@ -64,7 +64,7 @@ type AuditReferenceIds = Partial<{
   sectionId: string;
   studentId: string;
   guardianId: string;
-  teacherId: string;
+  staffProfileId: string;
   userId: string;
   salaryId: string;
   salaryPaymentId: string;
@@ -595,7 +595,7 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
         'sectionId',
         'studentId',
         'guardianId',
-        'teacherId',
+        'staffProfileId',
         'userId',
         'salaryId',
         'salaryPaymentId',
@@ -731,15 +731,15 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
       }
     }
 
-    if (refs.teacherId) {
-      const teacher = await fetchWithinContext(() =>
-        service.teacher.findUnique({
-          where: { id: refs.teacherId! },
+    if (refs.staffProfileId) {
+      const staffProfile = await fetchWithinContext(() =>
+        service.staffProfile.findUnique({
+          where: { id: refs.staffProfileId! },
           select: { campus: { select: { institutionId: true } } },
         }),
       );
-      if (teacher?.campus.institutionId) {
-        return teacher.campus.institutionId;
+      if (staffProfile?.campus.institutionId) {
+        return staffProfile.campus.institutionId;
       }
     }
 

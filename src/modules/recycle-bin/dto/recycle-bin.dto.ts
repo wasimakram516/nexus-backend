@@ -7,7 +7,7 @@ export enum RecycleBinEntity {
   CAMPUS = 'campus',
   STUDENT = 'student',
   GUARDIAN = 'guardian',
-  TEACHER = 'teacher',
+  STAFF_PROFILE = 'staff-profile',
   LEVEL = 'level',
   CLASS = 'class',
   SECTION = 'section',

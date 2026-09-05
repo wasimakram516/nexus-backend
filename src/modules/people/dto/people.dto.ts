@@ -8,6 +8,7 @@ import {
 } from 'class-validator';
 import {
   ContactPersonType,
+  EmploymentType,
   Gender,
   GuardianRelation,
   Religion,
@@ -46,15 +47,25 @@ export class CreateGuardianDto extends CustomFieldPayloadDto {
 
 export class UpdateGuardianDto extends PartialType(CreateGuardianDto) {}
 
-export class CreateTeacherDto extends CustomFieldPayloadDto {
+export class CreateStaffProfileDto extends CustomFieldPayloadDto {
   @ApiProperty() @IsUUID() userId!: string;
+  @ApiProperty({ enum: EmploymentType })
+  @IsEnum(EmploymentType)
+  employmentType!: EmploymentType;
+  @ApiProperty({
+    description:
+      'Free text — institutions define their own designations. Per-designation profile fields come from Custom Fields.',
+  })
+  @IsString()
+  designation!: string;
   @ApiPropertyOptional() @IsOptional() @IsString() cnic?: string;
   @ApiProperty({ enum: Gender }) @IsEnum(Gender) gender!: Gender;
   @ApiProperty() @IsUUID() campusId!: string;
   @ApiPropertyOptional() @IsOptional() @IsString() picture?: string;
+  @ApiProperty() @IsDateString() joiningDate!: string;
 }
 
-export class UpdateTeacherDto extends PartialType(CreateTeacherDto) {}
+export class UpdateStaffProfileDto extends PartialType(CreateStaffProfileDto) {}
 
 export class LinkGuardianDto extends CustomFieldPayloadDto {
   @ApiProperty() @IsUUID() studentId!: string;
@@ -73,7 +84,7 @@ export class StudentPromotionDto extends CustomFieldPayloadDto {
 }
 
 export class AssignTeacherSubjectDto extends CustomFieldPayloadDto {
-  @ApiProperty() @IsUUID() teacherId!: string;
+  @ApiProperty() @IsUUID() staffProfileId!: string;
   @ApiProperty() @IsUUID() classId!: string;
   @ApiProperty() @IsUUID() subjectId!: string;
   @ApiProperty({

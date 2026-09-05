@@ -25,22 +25,16 @@ export class CampusAccessService {
     }
 
     if (user.role === UserRole.STAFF) {
-      // Teaching staff are bound to their profile's campus; non-teaching
-      // staff (front-desk, accountants, campus admins) use their explicit
-      // UserCampus assignments instead.
-      const teacher = await this.prisma.teacher.findFirst({
-        where: {
-          userId: user.sub,
-          campus: {
-            deletedAt: null,
-          },
-        },
-        select: { campusId: true },
-      });
-      if (teacher) {
-        return [teacher.campusId];
-      }
-
+      // Every employee now has a StaffProfile row (teaching AND
+      // non-teaching), so "check the profile first" would silently pin a
+      // multi-campus campus-admin (decision #20: a full-permission role +
+      // UserCampus scoping) to just their profile's one home campus,
+      // breaking that scoping. Resolve purely from UserCampus instead — the
+      // same shape as the ADMIN branch above — and rely on StaffProfile
+      // create/update syncing a matching UserCampus row (see
+      // PeopleService.syncUserCampusAssignment) so teaching staff still
+      // resolve to exactly their one home campus. See
+      // M2-PEOPLE-ACADEMIC-DESIGN.md § 7.6.
       const records = await this.prisma.userCampus.findMany({
         where: {
           userId: user.sub,
@@ -223,16 +217,18 @@ export class CampusAccessService {
     return this.assertCampusAccess(user, guardian.campusId);
   }
 
-  async assertTeacherAccess(user: CurrentUser, teacherId: string) {
-    const teacher = await this.prisma.teacher.findUnique({
-      where: { id: teacherId },
+  async assertStaffProfileAccess(user: CurrentUser, staffProfileId: string) {
+    const staffProfile = await this.prisma.staffProfile.findUnique({
+      where: { id: staffProfileId },
       select: { campusId: true },
     });
 
-    if (!teacher) {
-      throw new ForbiddenException('You do not have access to this teacher.');
+    if (!staffProfile) {
+      throw new ForbiddenException(
+        'You do not have access to this staff profile.',
+      );
     }
 
-    return this.assertCampusAccess(user, teacher.campusId);
+    return this.assertCampusAccess(user, staffProfile.campusId);
   }
 }

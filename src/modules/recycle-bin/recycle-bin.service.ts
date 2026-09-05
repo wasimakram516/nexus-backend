@@ -40,7 +40,7 @@ type ChildModelKey =
   | 'subject'
   | 'student'
   | 'guardian'
-  | 'teacher'
+  | 'staffProfile'
   | 'staffSalary'
   | 'salaryDeductionRule'
   | 'salaryPayment'
@@ -95,8 +95,8 @@ const ENTITY_CASCADE_CHILDREN: Partial<
       fkField: 'campusId',
     },
     {
-      entity: RecycleBinEntity.TEACHER,
-      model: 'teacher',
+      entity: RecycleBinEntity.STAFF_PROFILE,
+      model: 'staffProfile',
       fkField: 'campusId',
     },
     {
@@ -168,7 +168,11 @@ const ENTITY_CASCADE_CHILDREN: Partial<
       model: 'guardian',
       fkField: 'userId',
     },
-    { entity: RecycleBinEntity.TEACHER, model: 'teacher', fkField: 'userId' },
+    {
+      entity: RecycleBinEntity.STAFF_PROFILE,
+      model: 'staffProfile',
+      fkField: 'userId',
+    },
     {
       entity: RecycleBinEntity.SALARY_PAYMENT,
       model: 'salaryPayment',
@@ -244,7 +248,7 @@ export class RecycleBinService {
       roleItems,
       studentItems,
       guardianItems,
-      teacherItems,
+      staffProfileItems,
       levelItems,
       classItems,
       sectionItems,
@@ -277,9 +281,9 @@ export class RecycleBinService {
       query.entity && query.entity !== RecycleBinEntity.GUARDIAN
         ? Promise.resolve<RecycleBinItem[]>([])
         : this.listDeletedGuardians(institutionId, query.search),
-      query.entity && query.entity !== RecycleBinEntity.TEACHER
+      query.entity && query.entity !== RecycleBinEntity.STAFF_PROFILE
         ? Promise.resolve<RecycleBinItem[]>([])
-        : this.listDeletedTeachers(institutionId, query.search),
+        : this.listDeletedStaffProfiles(institutionId, query.search),
       query.entity && query.entity !== RecycleBinEntity.LEVEL
         ? Promise.resolve<RecycleBinItem[]>([])
         : this.listDeletedLevels(institutionId, query.search),
@@ -336,7 +340,7 @@ export class RecycleBinService {
       ...roleItems,
       ...studentItems,
       ...guardianItems,
-      ...teacherItems,
+      ...staffProfileItems,
       ...levelItems,
       ...classItems,
       ...sectionItems,
@@ -448,8 +452,8 @@ export class RecycleBinService {
         return await this.restoreGuardian(currentUser, recordId);
       }
 
-      if (entity === RecycleBinEntity.TEACHER) {
-        return await this.restoreTeacher(currentUser, recordId);
+      if (entity === RecycleBinEntity.STAFF_PROFILE) {
+        return await this.restoreStaffProfile(currentUser, recordId);
       }
 
       if (entity === RecycleBinEntity.LEVEL) {
@@ -544,8 +548,8 @@ export class RecycleBinService {
       return this.permanentlyDeleteGuardian(currentUser, recordId);
     }
 
-    if (entity === RecycleBinEntity.TEACHER) {
-      return this.permanentlyDeleteTeacher(currentUser, recordId);
+    if (entity === RecycleBinEntity.STAFF_PROFILE) {
+      return this.permanentlyDeleteStaffProfile(currentUser, recordId);
     }
 
     if (entity === RecycleBinEntity.LEVEL) {
@@ -889,11 +893,11 @@ export class RecycleBinService {
     }));
   }
 
-  private async listDeletedTeachers(
+  private async listDeletedStaffProfiles(
     institutionId: string | null,
     search?: string,
   ): Promise<RecycleBinItem[]> {
-    const items = await this.prisma.teacher.findMany({
+    const items = await this.prisma.staffProfile.findMany({
       where: {
         deletedAt: { not: null },
         ...(institutionId ? { campus: { institutionId } } : {}),
@@ -901,6 +905,7 @@ export class RecycleBinService {
           ? {
               OR: [
                 { cnic: { contains: search, mode: 'insensitive' } },
+                { designation: { contains: search, mode: 'insensitive' } },
                 { user: { name: { contains: search, mode: 'insensitive' } } },
               ],
             }
@@ -909,6 +914,7 @@ export class RecycleBinService {
       select: {
         id: true,
         cnic: true,
+        designation: true,
         campus: { select: { institutionId: true } },
         deletedAt: true,
         deletedBy: true,
@@ -920,10 +926,10 @@ export class RecycleBinService {
     });
 
     return items.map((item) => ({
-      entity: RecycleBinEntity.TEACHER,
+      entity: RecycleBinEntity.STAFF_PROFILE,
       id: item.id,
       label: item.cnic ?? item.id,
-      subtitle: 'Teacher',
+      subtitle: item.designation,
       institutionId: item.campus.institutionId,
       deletedAt: item.deletedAt!,
       deletedBy: item.deletedBy,
@@ -932,6 +938,7 @@ export class RecycleBinService {
       updatedAt: item.updatedAt,
       metadata: {
         cnic: item.cnic,
+        designation: item.designation,
       },
     }));
   }
@@ -2004,29 +2011,34 @@ export class RecycleBinService {
     return { message: 'Guardian restored successfully', data: restored };
   }
 
-  private async restoreTeacher(currentUser: CurrentUser, teacherId: string) {
-    const item = await this.prisma.teacher.findFirst({
-      where: { id: teacherId, deletedAt: { not: null } },
+  private async restoreStaffProfile(
+    currentUser: CurrentUser,
+    staffProfileId: string,
+  ) {
+    const item = await this.prisma.staffProfile.findFirst({
+      where: { id: staffProfileId, deletedAt: { not: null } },
       select: {
         id: true,
         cnic: true,
         campus: { select: { institutionId: true } },
       },
     });
-    if (!item) throw new NotFoundException('Deleted teacher not found.');
+    if (!item) {
+      throw new NotFoundException('Deleted staff profile not found.');
+    }
     this.assertInstitutionScope(currentUser, item.campus.institutionId!);
-    const restored = await this.prisma.teacher.update({
-      where: { id: teacherId, deletedAt: { not: null } },
+    const restored = await this.prisma.staffProfile.update({
+      where: { id: staffProfileId, deletedAt: { not: null } },
       data: { deletedAt: null, deletedBy: null, deleteReason: null },
     });
     await this.auditLogService.log(currentUser, {
-      action: 'TEACHER_RESTORED',
-      entity: 'Teacher',
-      entityId: teacherId,
+      action: 'STAFF_PROFILE_RESTORED',
+      entity: 'StaffProfile',
+      entityId: staffProfileId,
       institutionId: item.campus.institutionId,
       metadata: { cnic: item.cnic },
     });
-    return { message: 'Teacher restored successfully', data: restored };
+    return { message: 'Staff profile restored successfully', data: restored };
   }
 
   private async restoreLevel(currentUser: CurrentUser, levelId: string) {
@@ -2795,41 +2807,43 @@ export class RecycleBinService {
     };
   }
 
-  private async permanentlyDeleteTeacher(
+  private async permanentlyDeleteStaffProfile(
     currentUser: CurrentUser,
-    teacherId: string,
+    staffProfileId: string,
   ) {
-    const item = await this.prisma.teacher.findFirst({
-      where: { id: teacherId, deletedAt: { not: null } },
+    const item = await this.prisma.staffProfile.findFirst({
+      where: { id: staffProfileId, deletedAt: { not: null } },
       select: {
         cnic: true,
         deletedAt: true,
         campus: { select: { institutionId: true } },
       },
     });
-    if (!item) throw new NotFoundException('Deleted teacher not found.');
+    if (!item) {
+      throw new NotFoundException('Deleted staff profile not found.');
+    }
     this.assertInstitutionScope(currentUser, item.campus.institutionId!);
     await this.assertPurgeSafe(
-      RecycleBinEntity.TEACHER,
-      teacherId,
+      RecycleBinEntity.STAFF_PROFILE,
+      staffProfileId,
       item.deletedAt!,
       item.campus.institutionId,
     );
     await this.requestContext.runWith({ allowHardDelete: true }, async () => {
-      await this.prisma.teacher.delete({
-        where: { id: teacherId, deletedAt: { not: null } },
+      await this.prisma.staffProfile.delete({
+        where: { id: staffProfileId, deletedAt: { not: null } },
       });
     });
     await this.auditLogService.log(currentUser, {
-      action: 'TEACHER_PERMANENTLY_DELETED',
-      entity: 'Teacher',
-      entityId: teacherId,
+      action: 'STAFF_PROFILE_PERMANENTLY_DELETED',
+      entity: 'StaffProfile',
+      entityId: staffProfileId,
       institutionId: item.campus.institutionId,
       metadata: { cnic: item.cnic },
     });
     return {
-      message: 'Teacher permanently deleted successfully',
-      data: { id: teacherId },
+      message: 'Staff profile permanently deleted successfully',
+      data: { id: staffProfileId },
     };
   }
 

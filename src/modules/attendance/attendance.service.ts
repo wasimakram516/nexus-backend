@@ -275,7 +275,7 @@ export class AttendanceService {
       .filter((user) => user.role === PrismaUserRole.STUDENT)
       .map((user) => user.id);
     // STAFF covers both teaching and non-teaching employees; membership is
-    // proven by EITHER a Teacher profile at this campus (teaching staff) OR
+    // proven by EITHER a StaffProfile at this campus (teaching staff) OR
     // an explicit UserCampus assignment (non-teaching staff, campus admins).
     const staffIds = users
       .filter(
@@ -293,7 +293,7 @@ export class AttendanceService {
           })
         : Promise.resolve([]),
       staffIds.length
-        ? this.prisma.teacher.findMany({
+        ? this.prisma.staffProfile.findMany({
             where: { userId: { in: staffIds }, campusId: dto.campusId },
             select: { userId: true },
           })
@@ -540,12 +540,15 @@ export class AttendanceService {
     if (role === PrismaUserRole.STAFF) {
       // Teaching staff resolve to their profile's campus; non-teaching
       // staff (accountants, front-desk, campus admins) fall through to the
-      // generic UserCampus assignment lookup below.
-      const teacher = await this.prisma.teacher.findUnique({
+      // generic UserCampus assignment lookup below. This is a different
+      // concern from CampusAccessService's permission scoping (§ 7.6) —
+      // here we want "where does this person physically punch in," which
+      // stays profile-first-then-UserCampus-fallback.
+      const staffProfile = await this.prisma.staffProfile.findUnique({
         where: { userId },
       });
-      if (teacher) {
-        return teacher.campusId;
+      if (staffProfile) {
+        return staffProfile.campusId;
       }
     }
     if (role === PrismaUserRole.GUARDIAN) {

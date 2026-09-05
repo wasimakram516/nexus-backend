@@ -499,8 +499,8 @@ export class CustomFieldsService {
         );
         return;
       }
-      case CustomFieldEntity.TEACHER: {
-        const item = await this.prisma.teacher.findUnique({
+      case CustomFieldEntity.STAFF_PROFILE: {
+        const item = await this.prisma.staffProfile.findUnique({
           where: { id: entityId },
           select: {
             campusId: true,
@@ -773,7 +773,7 @@ export class CustomFieldsService {
           select: {
             studentId: true,
             guardianId: true,
-            teacherId: true,
+            staffProfileId: true,
           },
         });
         const owner = item ? resolveContactOwner(item) : null;
@@ -845,11 +845,11 @@ export class CustomFieldsService {
       return;
     }
 
-    if (normalized === ContactPersonType.TEACHER) {
+    if (normalized === ContactPersonType.STAFF) {
       await this.assertEntityAccess(
         currentUser,
         institutionId,
-        CustomFieldEntity.TEACHER,
+        CustomFieldEntity.STAFF_PROFILE,
         personId,
       );
       return;

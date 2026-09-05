@@ -6,7 +6,7 @@ export const CustomFieldEntity = {
   SUBJECT: 'subject',
   STUDENT: 'student',
   GUARDIAN: 'guardian',
-  TEACHER: 'teacher',
+  STAFF_PROFILE: 'staff_profile',
   STUDENT_GUARDIAN: 'student_guardian',
   STUDENT_HISTORY: 'student_history',
   TEACHER_SUBJECT: 'teacher_subject',

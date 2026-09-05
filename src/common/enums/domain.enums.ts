@@ -36,7 +36,14 @@ export enum GuardianRelation {
 export enum ContactPersonType {
   STUDENT = 'STUDENT',
   GUARDIAN = 'GUARDIAN',
-  TEACHER = 'TEACHER',
+  STAFF = 'STAFF',
+}
+
+/** Mirrors the Prisma `EmploymentType` enum for DTO/code that doesn't import
+ *  the Prisma client type directly (see M2-PEOPLE-ACADEMIC-DESIGN.md § 4.5). */
+export enum EmploymentType {
+  TEACHING = 'TEACHING',
+  NON_TEACHING = 'NON_TEACHING',
 }
 
 export enum AttendanceStatus {

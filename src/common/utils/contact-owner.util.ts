@@ -5,7 +5,7 @@ type NullableString = string | null | undefined;
 export type ContactOwnerFields = {
   studentId?: string;
   guardianId?: string;
-  teacherId?: string;
+  staffProfileId?: string;
 };
 
 export type ResolvedContactOwner = {
@@ -13,6 +13,13 @@ export type ResolvedContactOwner = {
   personId: string;
 };
 
+/**
+ * Normalizes a public-facing contact person type string into the internal
+ * ContactPersonType enum value.
+ *
+ * @param {string} value - Raw person type from a request payload (e.g. "student").
+ * @returns {ContactPersonType | null} The matching enum value, or null if unsupported.
+ */
 export function normalizeContactPersonType(
   value: string,
 ): ContactPersonType | null {
@@ -26,13 +33,22 @@ export function normalizeContactPersonType(
     return ContactPersonType.GUARDIAN;
   }
 
-  if (normalized === 'teacher') {
-    return ContactPersonType.TEACHER;
+  if (normalized === 'staff') {
+    return ContactPersonType.STAFF;
   }
 
   return null;
 }
 
+/**
+ * Builds the FK-backed owner fields for a Contact row from the public
+ * (personType, personId) pair used by the API.
+ *
+ * @param {string} personType - Raw person type from a request payload.
+ * @param {string} personId - The id of the student/guardian/staff profile.
+ * @returns {(ResolvedContactOwner & { ownerFields: ContactOwnerFields }) | null}
+ *   The resolved owner plus the FK field to set, or null if unsupported.
+ */
 export function buildContactOwnerFields(
   personType: string,
   personId: string,
@@ -66,14 +82,24 @@ export function buildContactOwnerFields(
   return {
     personType: normalizedType,
     personId,
-    ownerFields: { teacherId: personId },
+    ownerFields: { staffProfileId: personId },
   };
 }
 
+/**
+ * Resolves the (personType, personId) pair from a Contact row's stored
+ * relation ids.
+ *
+ * @param {object} input - The Contact row's owner FK fields.
+ * @param {NullableString} input.studentId - The student FK, if set.
+ * @param {NullableString} input.guardianId - The guardian FK, if set.
+ * @param {NullableString} input.staffProfileId - The staff profile FK, if set.
+ * @returns {ResolvedContactOwner | null} The resolved owner, or null if none is set.
+ */
 export function resolveContactOwner(input: {
   studentId?: NullableString;
   guardianId?: NullableString;
-  teacherId?: NullableString;
+  staffProfileId?: NullableString;
 }): ResolvedContactOwner | null {
   if (input.studentId) {
     return {
@@ -89,10 +115,10 @@ export function resolveContactOwner(input: {
     };
   }
 
-  if (input.teacherId) {
+  if (input.staffProfileId) {
     return {
-      personType: ContactPersonType.TEACHER,
-      personId: input.teacherId,
+      personType: ContactPersonType.STAFF,
+      personId: input.staffProfileId,
     };
   }
 

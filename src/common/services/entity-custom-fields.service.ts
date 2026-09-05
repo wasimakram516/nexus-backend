@@ -324,9 +324,9 @@ export class EntityCustomFieldsService {
     return institutionId;
   }
 
-  async resolveInstitutionIdByTeacher(teacherId: string) {
-    const teacher = await this.prisma.teacher.findUnique({
-      where: { id: teacherId },
+  async resolveInstitutionIdByStaffProfile(staffProfileId: string) {
+    const staffProfile = await this.prisma.staffProfile.findUnique({
+      where: { id: staffProfileId },
       select: {
         campus: {
           select: {
@@ -336,9 +336,9 @@ export class EntityCustomFieldsService {
       },
     });
 
-    const institutionId = teacher?.campus.institutionId;
+    const institutionId = staffProfile?.campus.institutionId;
     if (!institutionId) {
-      throw new NotFoundException('Institution not found for teacher.');
+      throw new NotFoundException('Institution not found for staff profile.');
     }
 
     return institutionId;
@@ -396,8 +396,8 @@ export class EntityCustomFieldsService {
     if (normalized === ContactPersonType.GUARDIAN) {
       return this.resolveInstitutionIdByGuardian(personId);
     }
-    if (normalized === ContactPersonType.TEACHER) {
-      return this.resolveInstitutionIdByTeacher(personId);
+    if (normalized === ContactPersonType.STAFF) {
+      return this.resolveInstitutionIdByStaffProfile(personId);
     }
 
     throw new BadRequestException(
