@@ -231,4 +231,30 @@ export class CampusAccessService {
 
     return this.assertCampusAccess(user, staffProfile.campusId);
   }
+
+  /**
+   * M2 Phase 3: campus-scoped access check for a StudentEnrollment row.
+   * campusId is denormalized directly onto StudentEnrollment (same
+   * convention as TeacherSubject), so this is a direct lookup rather than a
+   * class -> level -> campus join.
+   *
+   * @param {CurrentUser} user - Authenticated caller.
+   * @param {string} enrollmentId - StudentEnrollment id to check.
+   * @returns {Promise<string>} The enrollment's campusId, once access is confirmed.
+   * @throws {ForbiddenException} If the enrollment doesn't exist or the caller lacks campus access.
+   */
+  async assertEnrollmentAccess(user: CurrentUser, enrollmentId: string) {
+    const enrollment = await this.prisma.studentEnrollment.findUnique({
+      where: { id: enrollmentId },
+      select: { campusId: true },
+    });
+
+    if (!enrollment) {
+      throw new ForbiddenException(
+        'You do not have access to this student enrollment.',
+      );
+    }
+
+    return this.assertCampusAccess(user, enrollment.campusId);
+  }
 }

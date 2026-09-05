@@ -23,11 +23,16 @@ import {
   CreateGuardianDto,
   CreateStaffProfileDto,
   CreateStudentDto,
+  CreateStudentEnrollmentDto,
   LinkGuardianDto,
+  ListStudentEnrollmentsQueryDto,
+  PromotionWizardDto,
   StudentPromotionDto,
   UpdateGuardianDto,
   UpdateStaffProfileDto,
   UpdateStudentDto,
+  UpdateStudentEnrollmentDto,
+  WithdrawStudentDto,
 } from './dto/people.dto';
 import { PeopleService } from './people.service';
 
@@ -66,6 +71,24 @@ export class PeopleController {
     @Query('campusId') campusId?: string,
   ) {
     return this.peopleService.listStudents(currentUser, campusId);
+  }
+
+  // Must be declared before 'students/:studentId' below, or Nest matches
+  // "next-reg-no" as the :studentId param (same gotcha as the academic
+  // years module's 'current' route ordering).
+  @Get('students/next-reg-no')
+  @Version('1')
+  @RequirePermission('students', 'create')
+  @ApiOperation({
+    summary: 'Preview the next registration number',
+    description:
+      'Advisory, read-only preview of the regNo the next admission at this campus would receive, based on the institution’s regNo pattern setting. The actual create still validates uniqueness independently.',
+  })
+  getNextRegNo(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Query('campusId') campusId: string,
+  ) {
+    return this.peopleService.resolveNextRegNo(currentUser, campusId);
   }
 
   @Get('students/:studentId')
@@ -309,6 +332,143 @@ export class PeopleController {
     @Body() dto: StudentPromotionDto,
   ) {
     return this.peopleService.recordPromotion(currentUser, dto);
+  }
+
+  // -----------------------------------------------------------------------
+  // M2 Phase 3 — StudentEnrollment, promotion wizard, withdrawal (§ 6.2).
+  // Every route here is gated on the single `student_enrollments` catalog
+  // key (no separate keys for the wizard/withdrawal — they're specialized
+  // writes against this same resource, per § 5).
+  // -----------------------------------------------------------------------
+
+  @Post('student-enrollments')
+  @Version('1')
+  @RequirePermission('student_enrollments', 'create')
+  @ApiOperation({
+    summary: 'Create a student enrollment',
+    description:
+      'Manual enrollment creation for edge cases such as a mid-year transfer-in student enrolling directly into a specific academic year.',
+  })
+  createStudentEnrollment(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Body() dto: CreateStudentEnrollmentDto,
+  ) {
+    return this.peopleService.createStudentEnrollment(currentUser, dto);
+  }
+
+  @Get('student-enrollments')
+  @Version('1')
+  @RequirePermission('student_enrollments', 'read')
+  @ApiOperation({
+    summary: 'List student enrollments',
+    description:
+      'Returns campus-scoped enrollment rows, optionally filtered by student, academic year, class, section, or status.',
+  })
+  listStudentEnrollments(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Query() query: ListStudentEnrollmentsQueryDto,
+  ) {
+    return this.peopleService.listStudentEnrollments(currentUser, query);
+  }
+
+  @Post('promotions/preview')
+  @Version('1')
+  @RequirePermission('student_enrollments', 'read')
+  @ApiOperation({
+    summary: 'Preview a bulk promotion run',
+    description:
+      'Dry run of the bulk promotion wizard for one campus/source year against a set of class mappings and per-student overrides. No writes.',
+  })
+  previewPromotion(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Body() dto: PromotionWizardDto,
+  ) {
+    return this.peopleService.previewPromotion(currentUser, dto);
+  }
+
+  @Post('promotions/commit')
+  @Version('1')
+  @RequirePermission('student_enrollments', 'create')
+  @ApiOperation({
+    summary: 'Commit a bulk promotion run',
+    description:
+      'Executes the bulk promotion wizard in one transaction: promotes/repeats/leaves every resolvable student. Idempotent on re-run.',
+  })
+  commitPromotion(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Body() dto: PromotionWizardDto,
+  ) {
+    return this.peopleService.commitPromotion(currentUser, dto);
+  }
+
+  @Get('student-enrollments/:enrollmentId')
+  @Version('1')
+  @RequirePermission('student_enrollments', 'read')
+  @ApiOperation({
+    summary: 'Get a student enrollment',
+    description: 'Returns one enrollment row with scoped access checks.',
+  })
+  getStudentEnrollment(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('enrollmentId') enrollmentId: string,
+  ) {
+    return this.peopleService.getStudentEnrollment(currentUser, enrollmentId);
+  }
+
+  @Patch('student-enrollments/:enrollmentId')
+  @Version('1')
+  @RequirePermission('student_enrollments', 'update')
+  @ApiOperation({
+    summary: 'Update a student enrollment',
+    description:
+      'Manual class/section correction or mid-year transfer. Writes a paired StudentHistory row in the same transaction.',
+  })
+  updateStudentEnrollment(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('enrollmentId') enrollmentId: string,
+    @Body() dto: UpdateStudentEnrollmentDto,
+  ) {
+    return this.peopleService.updateStudentEnrollment(
+      currentUser,
+      enrollmentId,
+      dto,
+    );
+  }
+
+  @Post('student-enrollments/:enrollmentId/withdraw')
+  @Version('1')
+  @RequirePermission('student_enrollments', 'update')
+  @ApiOperation({
+    summary: 'Withdraw a student',
+    description:
+      'Formally closes out an enrollment as LEFT. A soft gate on outstanding dues — resubmit with acknowledgeOutstandingDues: true to proceed past the 409.',
+  })
+  withdrawStudent(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('enrollmentId') enrollmentId: string,
+    @Body() dto: WithdrawStudentDto,
+  ) {
+    return this.peopleService.withdrawStudent(currentUser, enrollmentId, dto);
+  }
+
+  @Delete('student-enrollments/:enrollmentId')
+  @Version('1')
+  @RequirePermission('student_enrollments', 'delete')
+  @ApiOperation({
+    summary: 'Soft-delete a student enrollment',
+    description:
+      'Moves an enrollment row to the recycle bin, for correcting a mistaken entry.',
+  })
+  deleteStudentEnrollment(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('enrollmentId') enrollmentId: string,
+    @Body() dto: DeleteRecordDto,
+  ) {
+    return this.peopleService.deleteStudentEnrollment(
+      currentUser,
+      enrollmentId,
+      dto.reason,
+    );
   }
 
   @Post('teacher-subjects')

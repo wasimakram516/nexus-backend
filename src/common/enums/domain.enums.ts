@@ -46,6 +46,15 @@ export enum EmploymentType {
   NON_TEACHING = 'NON_TEACHING',
 }
 
+/** Mirrors the Prisma `EnrollmentStatus` enum for DTO/code that doesn't
+ *  import the Prisma client type directly (see
+ *  M2-PEOPLE-ACADEMIC-DESIGN.md § 4.3). */
+export enum EnrollmentStatus {
+  ACTIVE = 'ACTIVE',
+  PROMOTED = 'PROMOTED',
+  LEFT = 'LEFT',
+}
+
 export enum AttendanceStatus {
   PRESENT = 'PRESENT',
   ABSENT = 'ABSENT',

@@ -108,6 +108,16 @@ export const PERMISSION_CATALOG: readonly PermissionFeatureDef[] = [
     actions: ['create', 'read'],
   },
   {
+    key: 'student_enrollments',
+    label: 'Student Enrollments',
+    module: ModuleKey.PEOPLE,
+    // Also gates the bulk promotion wizard (preview/commit) and the
+    // withdrawal action — no separate catalog keys for those, per
+    // M2-PEOPLE-ACADEMIC-DESIGN.md § 5: they're specialized writes against
+    // this same resource.
+    actions: ALL_ACTIONS,
+  },
+  {
     key: 'contacts',
     label: 'Contacts',
     module: ModuleKey.PEOPLE,
