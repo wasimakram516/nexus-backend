@@ -220,6 +220,12 @@ model Institution {
   customFieldDefinitions CustomFieldDefinition[]
   customFieldValues      CustomFieldValue[]
   auditLogs              AuditLog[]
+  academicYears          AcademicYear[]
+  // M2 Phase 1 (decision #9): single pointer FK to the institution's active
+  // session, matching the existing User.roleId -> Role "pointer to the one
+  // active association" pattern rather than a boolean-flag-plus-index.
+  currentAcademicYearId  String?                   @map("current_academic_year_id") @db.Uuid
+  currentAcademicYear    AcademicYear?             @relation("InstitutionCurrentAcademicYear", fields: [currentAcademicYearId], references: [id], onDelete: SetNull)
 
   @@unique([slug, activeScopeKey], map: "institution_slug_active_scope_unique")
   @@index([status])
@@ -313,6 +319,11 @@ model Campus {
   feeStructures       FeeStructure[]
   fineRules           StudentFineRule[]
   studentFines        StudentFine[]
+  academicYearOverrides AcademicYearCampusOverride[]
+  // M2 Phase 1 (§ 7.2, applied in a later phase): short institution-unique
+  // code used as the {CAMPUS} token in regNo patterns. Nullable, no backfill
+  // required — falls back to the first 3 letters of the campus name.
+  code                String?                  @map("code")
 
   @@index([institutionId])
   @@map("campuses")
@@ -601,6 +612,58 @@ model Subject {
   @@index([classId])
   @@index([createdAt])
   @@map("subjects")
+}
+
+// M2 Phase 1: one row per institution per session, with a separate child
+// table for per-campus date overrides (decision #9: institution-wide with
+// optional per-campus override). See project-tracking/M2-PEOPLE-ACADEMIC-DESIGN.md
+// § 4.2. StudentEnrollment/StudentHistory relations are intentionally NOT
+// added here yet — those land with the Phase 3 StudentEnrollment work.
+model AcademicYear {
+  id             String    @id @default(uuid()) @db.Uuid
+  institutionId  String    @map("institution_id") @db.Uuid
+  name           String
+  startDate      DateTime  @db.Timestamptz(3) @map("start_date")
+  endDate        DateTime  @db.Timestamptz(3) @map("end_date")
+  createdBy      String?   @map("created_by") @db.Uuid
+  updatedBy      String?   @map("updated_by") @db.Uuid
+  deletedAt      DateTime? @db.Timestamptz(3) @map("deleted_at")
+  deletedBy      String?   @map("deleted_by") @db.Uuid
+  deleteReason   String?   @map("delete_reason")
+  activeScopeKey String    @default("ACTIVE") @map("active_scope_key")
+  createdAt      DateTime  @db.Timestamptz(3) @default(now()) @map("created_at")
+  updatedAt      DateTime  @db.Timestamptz(3) @updatedAt @map("updated_at")
+
+  institution            Institution                  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  campusOverrides        AcademicYearCampusOverride[]
+  currentForInstitutions Institution[]                 @relation("InstitutionCurrentAcademicYear")
+
+  @@unique([institutionId, name, activeScopeKey], map: "academic_year_name_unique")
+  @@index([institutionId])
+  @@map("academic_years")
+}
+
+model AcademicYearCampusOverride {
+  id             String    @id @default(uuid()) @db.Uuid
+  academicYearId String    @map("academic_year_id") @db.Uuid
+  campusId       String    @map("campus_id") @db.Uuid
+  startDate      DateTime? @db.Timestamptz(3) @map("start_date")
+  endDate        DateTime? @db.Timestamptz(3) @map("end_date")
+  createdBy      String?   @map("created_by") @db.Uuid
+  updatedBy      String?   @map("updated_by") @db.Uuid
+  deletedAt      DateTime? @db.Timestamptz(3) @map("deleted_at")
+  deletedBy      String?   @map("deleted_by") @db.Uuid
+  deleteReason   String?   @map("delete_reason")
+  activeScopeKey String    @default("ACTIVE") @map("active_scope_key")
+  createdAt      DateTime  @db.Timestamptz(3) @default(now()) @map("created_at")
+  updatedAt      DateTime  @db.Timestamptz(3) @updatedAt @map("updated_at")
+
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  campus       Campus       @relation(fields: [campusId], references: [id], onDelete: Cascade)
+
+  @@unique([academicYearId, campusId, activeScopeKey], map: "academic_year_campus_override_unique")
+  @@index([campusId])
+  @@map("academic_year_campus_overrides")
 }
 
 model Student {
