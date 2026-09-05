@@ -1,5 +1,13 @@
-import { ApiProperty, PartialType } from '@nestjs/swagger';
-import { IsString, IsUUID } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import {
+  IsArray,
+  IsDateString,
+  IsOptional,
+  IsString,
+  IsUUID,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 import { CustomFieldPayloadDto } from '../../../common/dto/custom-field-payload.dto';
 
 export class CreateLevelDto extends CustomFieldPayloadDto {
@@ -49,3 +57,47 @@ export class CreateSubjectDto extends CustomFieldPayloadDto {
 }
 
 export class UpdateSubjectDto extends PartialType(CreateSubjectDto) {}
+
+/**
+ * One entry of `CreateAcademicYearDto.campusOverrides` / `UpdateAcademicYearDto.campusOverrides`.
+ * `startDate`/`endDate` are independently optional — a campus can override
+ * just one of the two, per design doc § 4.2/§ 7.1.
+ */
+export class AcademicYearCampusOverrideInputDto {
+  @ApiProperty()
+  @IsUUID()
+  campusId!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+}
+
+export class CreateAcademicYearDto {
+  @ApiProperty({ description: 'e.g. "2026-27"' })
+  @IsString()
+  name!: string;
+
+  @ApiProperty()
+  @IsDateString()
+  startDate!: string;
+
+  @ApiProperty()
+  @IsDateString()
+  endDate!: string;
+
+  @ApiPropertyOptional({ type: [AcademicYearCampusOverrideInputDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AcademicYearCampusOverrideInputDto)
+  campusOverrides?: AcademicYearCampusOverrideInputDto[];
+}
+
+export class UpdateAcademicYearDto extends PartialType(CreateAcademicYearDto) {}
