@@ -19,6 +19,11 @@ import { UserRole } from '../../common/enums/domain.enums';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
+import { AcademicsService } from '../academics/academics.service';
+import {
+  CreateAcademicYearDto,
+  UpdateAcademicYearDto,
+} from '../academics/dto/academics.dto';
 import { CreateRoleDto, UpdateRoleDto } from '../roles/dto/roles.dto';
 import { RolesService } from '../roles/roles.service';
 import {
@@ -43,6 +48,7 @@ export class PlatformController {
   constructor(
     private readonly platformService: PlatformService,
     private readonly rolesService: RolesService,
+    private readonly academicsService: AcademicsService,
   ) {}
 
   @Post('plans')
@@ -283,6 +289,142 @@ export class PlatformController {
     return this.rolesService.deleteRole(
       institutionId,
       roleId,
+      currentUser,
+      dto.reason,
+    );
+  }
+
+  @Post('institutions/:institutionId/academic-years')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Create an academic year',
+    description:
+      'Superadmin escape hatch to create an academic year for any institution. Institution admins use POST /academics/academic-years instead.',
+  })
+  createAcademicYear(
+    @Param('institutionId') institutionId: string,
+    @Body() dto: CreateAcademicYearDto,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.academicsService.createAcademicYear(
+      institutionId,
+      dto,
+      currentUser,
+    );
+  }
+
+  @Get('institutions/:institutionId/academic-years')
+  @Version('1')
+  @ApiOperation({
+    summary: 'List academic years',
+    description:
+      'Returns academic years for an institution from the platform scope.',
+  })
+  listAcademicYears(
+    @Param('institutionId') institutionId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.academicsService.listAcademicYears(institutionId, currentUser);
+  }
+
+  // Declared before `academic-years/:academicYearId` — otherwise Nest
+  // matches `current` as the `:academicYearId` param and this route never
+  // gets hit, same gotcha as the institution-scoped controller.
+  @Get('institutions/:institutionId/academic-years/current')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get the current academic year',
+    description:
+      "Superadmin escape hatch to resolve any institution's current academic year, applying a per-campus date override when one exists.",
+  })
+  getCurrentAcademicYear(
+    @Param('institutionId') institutionId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query('campusId') campusId?: string,
+  ) {
+    return this.academicsService.getCurrentAcademicYear(
+      institutionId,
+      currentUser,
+      campusId,
+    );
+  }
+
+  @Get('institutions/:institutionId/academic-years/:academicYearId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get an academic year',
+    description: 'Returns one academic year for inspection or editing.',
+  })
+  getAcademicYear(
+    @Param('institutionId') institutionId: string,
+    @Param('academicYearId') academicYearId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.academicsService.getAcademicYear(
+      institutionId,
+      academicYearId,
+      currentUser,
+    );
+  }
+
+  @Patch('institutions/:institutionId/academic-years/:academicYearId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Update an academic year',
+    description:
+      'Updates an existing academic year while preserving the institution scope.',
+  })
+  updateAcademicYear(
+    @Param('institutionId') institutionId: string,
+    @Param('academicYearId') academicYearId: string,
+    @Body() dto: UpdateAcademicYearDto,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.academicsService.updateAcademicYear(
+      institutionId,
+      academicYearId,
+      dto,
+      currentUser,
+    );
+  }
+
+  @Patch(
+    'institutions/:institutionId/academic-years/:academicYearId/set-current',
+  )
+  @Version('1')
+  @ApiOperation({
+    summary: 'Set the current academic year',
+    description:
+      "Superadmin escape hatch to flip any institution's current academic year pointer.",
+  })
+  setCurrentAcademicYear(
+    @Param('institutionId') institutionId: string,
+    @Param('academicYearId') academicYearId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.academicsService.setCurrentAcademicYear(
+      institutionId,
+      academicYearId,
+      currentUser,
+    );
+  }
+
+  @Delete('institutions/:institutionId/academic-years/:academicYearId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Soft-delete an academic year',
+    description:
+      'Moves an academic year to the recycle bin instead of permanently removing it immediately.',
+  })
+  deleteAcademicYear(
+    @Param('institutionId') institutionId: string,
+    @Param('academicYearId') academicYearId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: DeleteRecordDto,
+  ) {
+    return this.academicsService.deleteAcademicYear(
+      institutionId,
+      academicYearId,
       currentUser,
       dto.reason,
     );
