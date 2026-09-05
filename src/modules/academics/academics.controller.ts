@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   Patch,
@@ -18,10 +19,12 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser as CurrentUserPayload } from '../../common/interfaces/current-user.interface';
 import {
+  CreateAcademicYearDto,
   CreateClassDto,
   CreateLevelDto,
   CreateSectionDto,
   CreateSubjectDto,
+  UpdateAcademicYearDto,
   UpdateClassDto,
   UpdateLevelDto,
   UpdateSectionDto,
@@ -350,5 +353,160 @@ export class AcademicsController {
       subjectId,
       dto.reason,
     );
+  }
+
+  @Post('academic-years')
+  @Version('1')
+  @RequirePermission('academic_years', 'create')
+  @ApiOperation({
+    summary: 'Create an academic year',
+    description:
+      'Creates an institution-wide academic year, optionally with per-campus date overrides.',
+  })
+  createAcademicYear(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Body() dto: CreateAcademicYearDto,
+  ) {
+    return this.academicsService.createAcademicYear(
+      this.requireInstitutionId(currentUser),
+      dto,
+      currentUser,
+    );
+  }
+
+  @Get('academic-years')
+  @Version('1')
+  @RequirePermission('academic_years', 'read')
+  @ApiOperation({
+    summary: 'List academic years',
+    description:
+      "Returns every academic year for the caller's institution, flagging which one is current.",
+  })
+  listAcademicYears(@CurrentUserDecorator() currentUser: CurrentUserPayload) {
+    return this.academicsService.listAcademicYears(
+      this.requireInstitutionId(currentUser),
+      currentUser,
+    );
+  }
+
+  // Declared before `academic-years/:id` — otherwise Nest matches
+  // `current` as the `:id` param and this route never gets hit.
+  @Get('academic-years/current')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get the current academic year',
+    description:
+      "Resolves the institution's current academic year, applying a per-campus date override when one exists. " +
+      'Not permission-gated — every authenticated institution user needs this for a dashboard selector, same tier as self-attendance routes.',
+  })
+  getCurrentAcademicYear(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Query('campusId') campusId?: string,
+  ) {
+    return this.academicsService.getCurrentAcademicYear(
+      this.requireInstitutionId(currentUser),
+      currentUser,
+      campusId,
+    );
+  }
+
+  @Get('academic-years/:id')
+  @Version('1')
+  @RequirePermission('academic_years', 'read')
+  @ApiOperation({
+    summary: 'Get an academic year',
+    description:
+      "Returns one academic year for the caller's institution with its campus overrides.",
+  })
+  getAcademicYear(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('id') id: string,
+  ) {
+    return this.academicsService.getAcademicYear(
+      this.requireInstitutionId(currentUser),
+      id,
+      currentUser,
+    );
+  }
+
+  @Patch('academic-years/:id')
+  @Version('1')
+  @RequirePermission('academic_years', 'update')
+  @ApiOperation({
+    summary: 'Update an academic year',
+    description:
+      'Updates name/dates and, when campusOverrides is provided, replaces all campus date overrides.',
+  })
+  updateAcademicYear(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() dto: UpdateAcademicYearDto,
+  ) {
+    return this.academicsService.updateAcademicYear(
+      this.requireInstitutionId(currentUser),
+      id,
+      dto,
+      currentUser,
+    );
+  }
+
+  @Patch('academic-years/:id/set-current')
+  @Version('1')
+  @RequirePermission('academic_years', 'update')
+  @ApiOperation({
+    summary: 'Set the current academic year',
+    description:
+      "Flips the institution's current academic year pointer to the given year.",
+  })
+  setCurrentAcademicYear(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('id') id: string,
+  ) {
+    return this.academicsService.setCurrentAcademicYear(
+      this.requireInstitutionId(currentUser),
+      id,
+      currentUser,
+    );
+  }
+
+  @Delete('academic-years/:id')
+  @Version('1')
+  @RequirePermission('academic_years', 'delete')
+  @ApiOperation({
+    summary: 'Soft-delete an academic year',
+    description:
+      "Moves an academic year to the recycle bin. Blocked with a 409 while it is the institution's current academic year.",
+  })
+  deleteAcademicYear(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() dto: DeleteRecordDto,
+  ) {
+    return this.academicsService.deleteAcademicYear(
+      this.requireInstitutionId(currentUser),
+      id,
+      currentUser,
+      dto.reason,
+    );
+  }
+
+  /**
+   * Resolve the caller's own institution id for the institution-scoped
+   * AcademicYear routes, mirroring `RolesController.requireInstitutionId`.
+   * The superadmin platform mirror (`/platform/institutions/:institutionId/academic-years`)
+   * takes its institution id from the path param instead — this helper is
+   * only for the JWT-derived path used by regular institution users.
+   *
+   * @param {CurrentUserPayload} currentUser - Authenticated caller.
+   * @returns {string} The caller's institution id.
+   * @throws {ForbiddenException} If the caller's account is not scoped to an institution.
+   */
+  private requireInstitutionId(currentUser: CurrentUserPayload): string {
+    if (!currentUser.institutionId) {
+      throw new ForbiddenException(
+        'Your account is not scoped to an institution.',
+      );
+    }
+    return currentUser.institutionId;
   }
 }
