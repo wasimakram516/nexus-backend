@@ -1,10 +1,14 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { AuditLogService } from '../../common/services/audit-log.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { UserRole, UserStatus } from '../../prisma/client';
+import { Prisma, UserRole, UserStatus } from '../../prisma/client';
 import { RecycleBinEntity } from './dto/recycle-bin.dto';
 import { RecycleBinService } from './recycle-bin.service';
 
@@ -171,6 +175,13 @@ describe('RecycleBinService', () => {
     },
     institutionSetting: {
       findUnique: jest.fn().mockResolvedValue(null),
+    },
+    academicYear: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
   };
 
@@ -612,6 +623,222 @@ describe('RecycleBinService', () => {
         isPurgeEligible: false,
       });
       expect(result.data.items[0].daysLeft).toBeGreaterThan(0);
+    });
+  });
+
+  describe('AcademicYear recycle bin wiring', () => {
+    const baseAcademicYear = {
+      id: 'year-1',
+      name: '2025-26',
+      institutionId: 'institution-1',
+    };
+
+    it('lists deleted academic years filtered by institution and search', async () => {
+      prismaMock.academicYear.findMany.mockResolvedValue([
+        {
+          ...baseAcademicYear,
+          deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+          deletedBy: 'admin-1',
+          deleteReason: null,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-05-06T09:00:00.000Z'),
+        },
+      ]);
+      prismaMock.user.findMany.mockResolvedValueOnce([
+        {
+          id: 'admin-1',
+          name: 'Admin User',
+          email: 'admin@nexus.test',
+          role: UserRole.ADMIN,
+        },
+      ]);
+
+      const result = await service.listDeletedItems(adminUser, {
+        page: 1,
+        limit: 10,
+        entity: RecycleBinEntity.ACADEMIC_YEAR,
+        search: '2025',
+      });
+
+      expect(prismaMock.academicYear.findMany).toHaveBeenCalledWith({
+        where: {
+          deletedAt: { not: null },
+          institutionId: 'institution-1',
+          name: { contains: '2025', mode: 'insensitive' },
+        },
+        select: {
+          id: true,
+          name: true,
+          institutionId: true,
+          deletedAt: true,
+          deletedBy: true,
+          deleteReason: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: { deletedAt: 'desc' },
+      });
+      expect(result).toMatchObject({
+        message: 'Recycle bin items retrieved successfully',
+        data: {
+          total: 1,
+          items: [
+            {
+              entity: RecycleBinEntity.ACADEMIC_YEAR,
+              id: 'year-1',
+              label: '2025-26',
+              subtitle: 'Academic Year',
+            },
+          ],
+        },
+      });
+    });
+
+    it('restores a soft-deleted academic year and records an audit log', async () => {
+      prismaMock.academicYear.findFirst.mockResolvedValue({
+        ...baseAcademicYear,
+        deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+      });
+      prismaMock.academicYear.update.mockResolvedValue({
+        ...baseAcademicYear,
+        deletedAt: null,
+        deletedBy: null,
+        deleteReason: null,
+      });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.ACADEMIC_YEAR,
+        'year-1',
+      );
+
+      expect(prismaMock.academicYear.update).toHaveBeenCalledWith({
+        where: { id: 'year-1', deletedAt: { not: null } },
+        data: { deletedAt: null, deletedBy: null, deleteReason: null },
+      });
+      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
+        adminUser,
+        expect.objectContaining({
+          action: 'ACADEMIC_YEAR_RESTORED',
+          entity: 'AcademicYear',
+          entityId: 'year-1',
+        }),
+      );
+      expect(result).toMatchObject({
+        message: 'Academic year restored successfully',
+        data: { id: 'year-1', name: '2025-26' },
+      });
+    });
+
+    it('returns 404 restoring an academic year that is not in the recycle bin', async () => {
+      prismaMock.academicYear.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.ACADEMIC_YEAR,
+          'missing-year',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prismaMock.academicYear.update).not.toHaveBeenCalled();
+    });
+
+    it('blocks an admin from restoring an academic year belonging to another institution', async () => {
+      prismaMock.academicYear.findFirst.mockResolvedValue({
+        ...baseAcademicYear,
+        institutionId: 'institution-2',
+        deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+      });
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.ACADEMIC_YEAR,
+          'year-1',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.academicYear.update).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a name collision on restore as a 409 conflict', async () => {
+      prismaMock.academicYear.findFirst.mockResolvedValue({
+        ...baseAcademicYear,
+        deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+      });
+      prismaMock.academicYear.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('duplicate', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.ACADEMIC_YEAR,
+          'year-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('permanently deletes an academic year once the retention period has elapsed', async () => {
+      const longAgo = new Date();
+      longAgo.setUTCDate(longAgo.getUTCDate() - 31);
+      prismaMock.academicYear.findFirst.mockResolvedValue({
+        ...baseAcademicYear,
+        deletedAt: longAgo,
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.ACADEMIC_YEAR,
+        'year-1',
+      );
+
+      expect(prismaMock.academicYear.delete).toHaveBeenCalledWith({
+        where: { id: 'year-1', deletedAt: { not: null } },
+      });
+      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
+        adminUser,
+        expect.objectContaining({
+          action: 'ACADEMIC_YEAR_PERMANENTLY_DELETED',
+          entity: 'AcademicYear',
+          entityId: 'year-1',
+        }),
+      );
+      expect(result).toMatchObject({
+        message: 'Academic year permanently deleted successfully',
+        data: { id: 'year-1' },
+      });
+    });
+
+    it('blocks a permanent delete of an academic year before the retention period has elapsed', async () => {
+      prismaMock.academicYear.findFirst.mockResolvedValue({
+        ...baseAcademicYear,
+        deletedAt: new Date(), // deleted moments ago, default retention 30 days
+      });
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.ACADEMIC_YEAR,
+          'year-1',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.academicYear.delete).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 permanently deleting an academic year that is not in the recycle bin', async () => {
+      prismaMock.academicYear.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.ACADEMIC_YEAR,
+          'missing-year',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prismaMock.academicYear.delete).not.toHaveBeenCalled();
     });
   });
 });

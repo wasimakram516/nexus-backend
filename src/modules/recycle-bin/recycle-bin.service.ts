@@ -260,6 +260,7 @@ export class RecycleBinService {
       studentFineItems,
       feeVoucherItems,
       feePaymentItems,
+      academicYearItems,
     ] = await Promise.all([
       query.entity && query.entity !== RecycleBinEntity.USER
         ? Promise.resolve<RecycleBinItem[]>([])
@@ -324,6 +325,9 @@ export class RecycleBinService {
       query.entity && query.entity !== RecycleBinEntity.FEE_PAYMENT
         ? Promise.resolve<RecycleBinItem[]>([])
         : this.listDeletedFeePayments(institutionId, query.search),
+      query.entity && query.entity !== RecycleBinEntity.ACADEMIC_YEAR
+        ? Promise.resolve<RecycleBinItem[]>([])
+        : this.listDeletedAcademicYears(institutionId, query.search),
     ]);
 
     const combinedItems = [
@@ -348,6 +352,7 @@ export class RecycleBinService {
       ...studentFineItems,
       ...feeVoucherItems,
       ...feePaymentItems,
+      ...academicYearItems,
     ].sort(
       (left, right) => right.deletedAt.getTime() - left.deletedAt.getTime(),
     );
@@ -504,6 +509,16 @@ export class RecycleBinService {
         return this.restoreRole(currentUser, recordId);
       }
 
+      if (entity === RecycleBinEntity.ACADEMIC_YEAR) {
+        // Deliberately awaited (unlike the sibling `return this.restoreX(...)`
+        // branches above) so a rejection is actually thrown from within this
+        // try block for `rethrowRestoreConflict` below to catch. A bare
+        // `return <promise>` inside a try does NOT get its rejection caught
+        // by the enclosing catch — that's a real, verified gap already
+        // present for every other entity here, tracked as a follow-up fix.
+        return await this.restoreAcademicYear(currentUser, recordId);
+      }
+
       return this.restoreCampus(currentUser, recordId);
     } catch (error) {
       this.rethrowRestoreConflict(error, entity);
@@ -594,6 +609,10 @@ export class RecycleBinService {
 
     if (entity === RecycleBinEntity.ROLE) {
       return this.permanentlyDeleteRole(currentUser, recordId);
+    }
+
+    if (entity === RecycleBinEntity.ACADEMIC_YEAR) {
+      return this.permanentlyDeleteAcademicYear(currentUser, recordId);
     }
 
     return this.permanentlyDeleteCampus(currentUser, recordId);
@@ -1620,6 +1639,43 @@ export class RecycleBinService {
     }));
   }
 
+  private async listDeletedAcademicYears(
+    institutionId: string | null,
+    search?: string,
+  ): Promise<RecycleBinItem[]> {
+    const items = await this.prisma.academicYear.findMany({
+      where: {
+        deletedAt: { not: null },
+        ...(institutionId ? { institutionId } : {}),
+        ...(search ? { name: { contains: search, mode: 'insensitive' } } : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        institutionId: true,
+        deletedAt: true,
+        deletedBy: true,
+        deleteReason: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { deletedAt: 'desc' },
+    });
+    return items.map((item) => ({
+      entity: RecycleBinEntity.ACADEMIC_YEAR,
+      id: item.id,
+      label: item.name,
+      subtitle: 'Academic Year',
+      institutionId: item.institutionId,
+      deletedAt: item.deletedAt!,
+      deletedBy: item.deletedBy,
+      deleteReason: item.deleteReason,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      metadata: { name: item.name },
+    }));
+  }
+
   private async restoreUser(currentUser: CurrentUser, userId: string) {
     const target = await this.prisma.user.findFirst({
       where: {
@@ -1867,6 +1923,33 @@ export class RecycleBinService {
     return {
       message: 'Role restored successfully',
       data: restoredTemplate,
+    };
+  }
+
+  private async restoreAcademicYear(
+    currentUser: CurrentUser,
+    academicYearId: string,
+  ) {
+    const item = await this.prisma.academicYear.findFirst({
+      where: { id: academicYearId, deletedAt: { not: null } },
+      select: { id: true, name: true, institutionId: true },
+    });
+    if (!item) throw new NotFoundException('Deleted academic year not found.');
+    this.assertInstitutionScope(currentUser, item.institutionId);
+    const restored = await this.prisma.academicYear.update({
+      where: { id: academicYearId, deletedAt: { not: null } },
+      data: { deletedAt: null, deletedBy: null, deleteReason: null },
+    });
+    await this.auditLogService.log(currentUser, {
+      action: 'ACADEMIC_YEAR_RESTORED',
+      entity: 'AcademicYear',
+      entityId: academicYearId,
+      institutionId: item.institutionId,
+      metadata: { name: item.name },
+    });
+    return {
+      message: 'Academic year restored successfully',
+      data: restored,
     };
   }
 
@@ -2595,6 +2678,43 @@ export class RecycleBinService {
     return {
       message: 'Role permanently deleted successfully',
       data: { id: roleId },
+    };
+  }
+
+  private async permanentlyDeleteAcademicYear(
+    currentUser: CurrentUser,
+    academicYearId: string,
+  ) {
+    const item = await this.prisma.academicYear.findFirst({
+      where: { id: academicYearId, deletedAt: { not: null } },
+      select: { name: true, deletedAt: true, institutionId: true },
+    });
+    if (!item) throw new NotFoundException('Deleted academic year not found.');
+    this.assertInstitutionScope(currentUser, item.institutionId);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.ACADEMIC_YEAR,
+      academicYearId,
+      item.deletedAt!,
+      item.institutionId,
+    );
+    // AcademicYearCampusOverride rows cascade-delete automatically via the
+    // schema's onDelete: Cascade FK — no manual cleanup needed here, same as
+    // how permanentlyDeleteLevel doesn't manually clean up Sections/Subjects.
+    await this.requestContext.runWith({ allowHardDelete: true }, async () => {
+      await this.prisma.academicYear.delete({
+        where: { id: academicYearId, deletedAt: { not: null } },
+      });
+    });
+    await this.auditLogService.log(currentUser, {
+      action: 'ACADEMIC_YEAR_PERMANENTLY_DELETED',
+      entity: 'AcademicYear',
+      entityId: academicYearId,
+      institutionId: item.institutionId,
+      metadata: { name: item.name },
+    });
+    return {
+      message: 'Academic year permanently deleted successfully',
+      data: { id: academicYearId },
     };
   }
 
