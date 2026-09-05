@@ -63,6 +63,12 @@ export const PERMISSION_CATALOG: readonly PermissionFeatureDef[] = [
     module: ModuleKey.ACADEMICS,
     actions: ALL_ACTIONS,
   },
+  {
+    key: 'academic_years',
+    label: 'Academic Years',
+    module: ModuleKey.ACADEMICS,
+    actions: ALL_ACTIONS,
+  },
 
   // People
   {
