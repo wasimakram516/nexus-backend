@@ -339,11 +339,13 @@ describe('FinanceService', () => {
 
     expect(prismaMock.staffSalary.update).toHaveBeenCalledWith({
       where: { id: 'salary-1' },
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment -- expect.objectContaining()/expect.any() are intentionally typed `any` by @types/jest */
       data: expect.objectContaining({
         deletedAt: expect.any(Date),
         deletedBy: accountantUser.sub,
         deleteReason: 'archived duplicate',
       }),
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
     });
     expect(result).toMatchObject({
       message: 'Salary moved to recycle bin successfully',

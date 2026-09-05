@@ -83,7 +83,9 @@ export class UploadService {
             publicId: result.public_id,
             resourceType: result.resource_type,
             format: result.format,
-            folder: result.folder,
+            // `folder` is typed `any` in the cloudinary package's own
+            // UploadApiResponse type, unlike its sibling fields here.
+            folder: result.folder as string,
             bytes: result.bytes,
           });
         },

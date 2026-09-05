@@ -660,6 +660,7 @@ describe('PeopleService', () => {
     expect(prismaMock.staffProfile.update).toHaveBeenCalledWith({
       where: { id: 'staff-profile-1' },
       data: {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() is intentionally typed `any` by @types/jest
         deletedAt: expect.any(Date),
         deletedBy: currentUser.sub,
         deleteReason: 'No longer employed',
