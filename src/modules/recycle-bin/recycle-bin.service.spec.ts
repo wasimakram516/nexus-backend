@@ -183,6 +183,13 @@ describe('RecycleBinService', () => {
       delete: jest.fn(),
       count: jest.fn().mockResolvedValue(0),
     },
+    studentEnrollment: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
+    },
   };
 
   const auditLogServiceMock = {
@@ -838,6 +845,170 @@ describe('RecycleBinService', () => {
           'missing-year',
         ),
       ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prismaMock.academicYear.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  // M2 Phase 3: StudentEnrollment's FKs are onDelete: Cascade (unlike the
+  // old Student.classId/sectionId, which were SetNull), so it's both a new
+  // recycle-bin-visible entity in its own right AND a new cascade child
+  // registered under CAMPUS/CLASS/SECTION/ACADEMIC_YEAR/STUDENT.
+  describe('StudentEnrollment recycle bin wiring', () => {
+    const baseEnrollment = {
+      id: 'enrollment-1',
+      studentId: 'student-1',
+      academicYearId: 'year-1',
+      classId: 'class-1',
+      sectionId: 'section-1',
+      status: 'ACTIVE',
+      student: { regNo: 'NEX-001' },
+      class: { name: 'Grade 5' },
+      section: { name: 'A' },
+      campus: { institutionId: 'institution-1' },
+    };
+
+    it('lists deleted student enrollments filtered by institution and search', async () => {
+      prismaMock.studentEnrollment.findMany.mockResolvedValue([
+        {
+          ...baseEnrollment,
+          deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+          deletedBy: 'admin-1',
+          deleteReason: null,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-05-06T09:00:00.000Z'),
+        },
+      ]);
+      prismaMock.user.findMany.mockResolvedValueOnce([
+        {
+          id: 'admin-1',
+          name: 'Admin User',
+          email: 'admin@nexus.test',
+          role: UserRole.ADMIN,
+        },
+      ]);
+
+      const result = await service.listDeletedItems(adminUser, {
+        page: 1,
+        limit: 10,
+        entity: RecycleBinEntity.STUDENT_ENROLLMENT,
+        search: 'NEX',
+      });
+
+      expect(prismaMock.studentEnrollment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            deletedAt: { not: null },
+            campus: { institutionId: 'institution-1' },
+            student: { regNo: { contains: 'NEX', mode: 'insensitive' } },
+          },
+        }),
+      );
+      expect(result).toMatchObject({
+        data: {
+          total: 1,
+          items: [
+            {
+              entity: RecycleBinEntity.STUDENT_ENROLLMENT,
+              id: 'enrollment-1',
+              label: 'NEX-001',
+              subtitle: 'Grade 5 - A',
+            },
+          ],
+        },
+      });
+    });
+
+    it('restores a soft-deleted student enrollment and records an audit log', async () => {
+      prismaMock.studentEnrollment.findFirst.mockResolvedValue({
+        id: 'enrollment-1',
+        student: { regNo: 'NEX-001' },
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.studentEnrollment.update.mockResolvedValue({
+        id: 'enrollment-1',
+        deletedAt: null,
+      });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.STUDENT_ENROLLMENT,
+        'enrollment-1',
+      );
+
+      expect(prismaMock.studentEnrollment.update).toHaveBeenCalledWith({
+        where: { id: 'enrollment-1', deletedAt: { not: null } },
+        data: { deletedAt: null, deletedBy: null, deleteReason: null },
+      });
+      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
+        adminUser,
+        expect.objectContaining({
+          action: 'STUDENT_ENROLLMENT_RESTORED',
+          entity: 'StudentEnrollment',
+          entityId: 'enrollment-1',
+        }),
+      );
+      expect(result).toMatchObject({
+        message: 'Student enrollment restored successfully',
+      });
+    });
+
+    it('returns 404 restoring a student enrollment that is not in the recycle bin', async () => {
+      prismaMock.studentEnrollment.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.STUDENT_ENROLLMENT,
+          'missing-enrollment',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prismaMock.studentEnrollment.update).not.toHaveBeenCalled();
+    });
+
+    it('permanently deletes a student enrollment once the retention period has elapsed', async () => {
+      const longAgo = new Date();
+      longAgo.setUTCDate(longAgo.getUTCDate() - 31);
+      prismaMock.studentEnrollment.findFirst.mockResolvedValue({
+        deletedAt: longAgo,
+        student: { regNo: 'NEX-001' },
+        campus: { institutionId: 'institution-1' },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.STUDENT_ENROLLMENT,
+        'enrollment-1',
+      );
+
+      expect(prismaMock.studentEnrollment.delete).toHaveBeenCalledWith({
+        where: { id: 'enrollment-1', deletedAt: { not: null } },
+      });
+      expect(result).toMatchObject({
+        message: 'Student enrollment permanently deleted successfully',
+      });
+    });
+
+    it('blocks a permanent delete of an academic year, class, campus, section, or student while an ACTIVE enrollment still points at it', async () => {
+      const longAgo = new Date();
+      longAgo.setUTCDate(longAgo.getUTCDate() - 31);
+
+      // Academic year case, mirroring the existing cascade-guard suite's
+      // shape (an active child under a leaf link blocks the purge).
+      prismaMock.academicYear.findFirst.mockResolvedValue({
+        id: 'year-1',
+        name: '2025-26',
+        institutionId: 'institution-1',
+        deletedAt: longAgo,
+      });
+      prismaMock.studentEnrollment.count.mockResolvedValueOnce(1);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.ACADEMIC_YEAR,
+          'year-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
       expect(prismaMock.academicYear.delete).not.toHaveBeenCalled();
     });
   });

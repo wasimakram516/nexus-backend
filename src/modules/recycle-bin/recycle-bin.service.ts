@@ -51,7 +51,8 @@ type ChildModelKey =
   | 'studentFineRule'
   | 'studentFine'
   | 'feeVoucher'
-  | 'feePayment';
+  | 'feePayment'
+  | 'studentEnrollment';
 
 interface CountableDelegate {
   count(args: { where: Record<string, unknown> }): Promise<number>;
@@ -68,16 +69,22 @@ type CascadeChildLink = {
 };
 
 /**
- * Direct onDelete: Cascade edges between the 20 recycle-bin-tracked entity
+ * Direct onDelete: Cascade edges between the recycle-bin-tracked entity
  * types, derived from schema.prisma. Deliberately excludes cascades whose
  * target isn't independently recycle-bin-visible (join tables like
  * UserCampus/TeacherSubject, log-like rows like Attendance/AuditLog,
  * SalaryDeductionSummary) — those aren't "active records a user would
  * notice disappearing," they're incidental cascade debris that's fine to
  * lose along with an already-30-days-dead parent. Also excludes SetNull
- * relations (e.g. Student.classId, User.roleId) since those don't delete
- * anything. Used by assertNoActiveDescendants() to walk the full transitive
- * blast radius of a hard delete and refuse it if any ACTIVE row is in it.
+ * relations (e.g. User.roleId, StudentHistory.academicYearId) since those
+ * don't delete anything. M2 Phase 3: StudentEnrollment's FKs are
+ * deliberately onDelete: Cascade (unlike the old Student.classId/sectionId,
+ * which were SetNull and so never appeared here) — this is exactly why it's
+ * registered under CAMPUS/CLASS/SECTION/ACADEMIC_YEAR/STUDENT below, so a
+ * permanent delete of any of those is blocked while an ACTIVE enrollment
+ * still points at it. Used by assertNoActiveDescendants() to walk the full
+ * transitive blast radius of a hard delete and refuse it if any ACTIVE row
+ * is in it.
  */
 const ENTITY_CASCADE_CHILDREN: Partial<
   Record<RecycleBinEntity, CascadeChildLink[]>
@@ -139,6 +146,11 @@ const ENTITY_CASCADE_CHILDREN: Partial<
       model: 'studentFine',
       fkField: 'campusId',
     },
+    {
+      entity: RecycleBinEntity.STUDENT_ENROLLMENT,
+      model: 'studentEnrollment',
+      fkField: 'campusId',
+    },
   ],
   [RecycleBinEntity.LEVEL]: [
     {
@@ -159,6 +171,21 @@ const ENTITY_CASCADE_CHILDREN: Partial<
       entity: RecycleBinEntity.STUDENT_FINE_RULE,
       model: 'studentFineRule',
       fkField: 'classId',
+    },
+    {
+      entity: RecycleBinEntity.STUDENT_ENROLLMENT,
+      model: 'studentEnrollment',
+      fkField: 'classId',
+    },
+  ],
+  // M2 Phase 3: StudentEnrollment.sectionId is onDelete: Cascade (unlike the
+  // old Student.sectionId, which was SetNull) — Section had no cascade
+  // children at all before this.
+  [RecycleBinEntity.SECTION]: [
+    {
+      entity: RecycleBinEntity.STUDENT_ENROLLMENT,
+      model: 'studentEnrollment',
+      fkField: 'sectionId',
     },
   ],
   [RecycleBinEntity.USER]: [
@@ -199,6 +226,21 @@ const ENTITY_CASCADE_CHILDREN: Partial<
       entity: RecycleBinEntity.FEE_VOUCHER,
       model: 'feeVoucher',
       fkField: 'studentId',
+    },
+    {
+      entity: RecycleBinEntity.STUDENT_ENROLLMENT,
+      model: 'studentEnrollment',
+      fkField: 'studentId',
+    },
+  ],
+  // M2 Phase 3: Academic Year is institution-scoped, not a child of CAMPUS,
+  // so this is its own top-level cascade-parent entry (mirrors how CAMPUS
+  // lists its own children above).
+  [RecycleBinEntity.ACADEMIC_YEAR]: [
+    {
+      entity: RecycleBinEntity.STUDENT_ENROLLMENT,
+      model: 'studentEnrollment',
+      fkField: 'academicYearId',
     },
   ],
   [RecycleBinEntity.SALARY]: [
@@ -265,6 +307,7 @@ export class RecycleBinService {
       feeVoucherItems,
       feePaymentItems,
       academicYearItems,
+      studentEnrollmentItems,
     ] = await Promise.all([
       query.entity && query.entity !== RecycleBinEntity.USER
         ? Promise.resolve<RecycleBinItem[]>([])
@@ -332,6 +375,9 @@ export class RecycleBinService {
       query.entity && query.entity !== RecycleBinEntity.ACADEMIC_YEAR
         ? Promise.resolve<RecycleBinItem[]>([])
         : this.listDeletedAcademicYears(institutionId, query.search),
+      query.entity && query.entity !== RecycleBinEntity.STUDENT_ENROLLMENT
+        ? Promise.resolve<RecycleBinItem[]>([])
+        : this.listDeletedStudentEnrollments(institutionId, query.search),
     ]);
 
     const combinedItems = [
@@ -357,6 +403,7 @@ export class RecycleBinService {
       ...feeVoucherItems,
       ...feePaymentItems,
       ...academicYearItems,
+      ...studentEnrollmentItems,
     ].sort(
       (left, right) => right.deletedAt.getTime() - left.deletedAt.getTime(),
     );
@@ -524,6 +571,10 @@ export class RecycleBinService {
         return await this.restoreAcademicYear(currentUser, recordId);
       }
 
+      if (entity === RecycleBinEntity.STUDENT_ENROLLMENT) {
+        return await this.restoreStudentEnrollment(currentUser, recordId);
+      }
+
       return await this.restoreCampus(currentUser, recordId);
     } catch (error) {
       this.rethrowRestoreConflict(error, entity);
@@ -618,6 +669,10 @@ export class RecycleBinService {
 
     if (entity === RecycleBinEntity.ACADEMIC_YEAR) {
       return this.permanentlyDeleteAcademicYear(currentUser, recordId);
+    }
+
+    if (entity === RecycleBinEntity.STUDENT_ENROLLMENT) {
+      return this.permanentlyDeleteStudentEnrollment(currentUser, recordId);
     }
 
     return this.permanentlyDeleteCampus(currentUser, recordId);
@@ -1684,6 +1739,60 @@ export class RecycleBinService {
     }));
   }
 
+  private async listDeletedStudentEnrollments(
+    institutionId: string | null,
+    search?: string,
+  ): Promise<RecycleBinItem[]> {
+    const items = await this.prisma.studentEnrollment.findMany({
+      where: {
+        deletedAt: { not: null },
+        ...(institutionId ? { campus: { institutionId } } : {}),
+        ...(search
+          ? { student: { regNo: { contains: search, mode: 'insensitive' } } }
+          : {}),
+      },
+      select: {
+        id: true,
+        studentId: true,
+        academicYearId: true,
+        classId: true,
+        sectionId: true,
+        status: true,
+        student: { select: { regNo: true } },
+        class: { select: { name: true } },
+        section: { select: { name: true } },
+        campus: { select: { institutionId: true } },
+        deletedAt: true,
+        deletedBy: true,
+        deleteReason: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { deletedAt: 'desc' },
+    });
+    return items.map((item) => ({
+      entity: RecycleBinEntity.STUDENT_ENROLLMENT,
+      id: item.id,
+      label: item.student.regNo,
+      subtitle: item.section
+        ? `${item.class.name} - ${item.section.name}`
+        : item.class.name,
+      institutionId: item.campus.institutionId,
+      deletedAt: item.deletedAt!,
+      deletedBy: item.deletedBy,
+      deleteReason: item.deleteReason,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      metadata: {
+        studentId: item.studentId,
+        academicYearId: item.academicYearId,
+        classId: item.classId,
+        sectionId: item.sectionId,
+        status: item.status,
+      },
+    }));
+  }
+
   private async restoreUser(currentUser: CurrentUser, userId: string) {
     const target = await this.prisma.user.findFirst({
       where: {
@@ -1957,6 +2066,39 @@ export class RecycleBinService {
     });
     return {
       message: 'Academic year restored successfully',
+      data: restored,
+    };
+  }
+
+  private async restoreStudentEnrollment(
+    currentUser: CurrentUser,
+    enrollmentId: string,
+  ) {
+    const item = await this.prisma.studentEnrollment.findFirst({
+      where: { id: enrollmentId, deletedAt: { not: null } },
+      select: {
+        id: true,
+        student: { select: { regNo: true } },
+        campus: { select: { institutionId: true } },
+      },
+    });
+    if (!item) {
+      throw new NotFoundException('Deleted student enrollment not found.');
+    }
+    this.assertInstitutionScope(currentUser, item.campus.institutionId!);
+    const restored = await this.prisma.studentEnrollment.update({
+      where: { id: enrollmentId, deletedAt: { not: null } },
+      data: { deletedAt: null, deletedBy: null, deleteReason: null },
+    });
+    await this.auditLogService.log(currentUser, {
+      action: 'STUDENT_ENROLLMENT_RESTORED',
+      entity: 'StudentEnrollment',
+      entityId: enrollmentId,
+      institutionId: item.campus.institutionId,
+      metadata: { studentRegNo: item.student.regNo },
+    });
+    return {
+      message: 'Student enrollment restored successfully',
       data: restored,
     };
   }
@@ -2728,6 +2870,46 @@ export class RecycleBinService {
     return {
       message: 'Academic year permanently deleted successfully',
       data: { id: academicYearId },
+    };
+  }
+
+  private async permanentlyDeleteStudentEnrollment(
+    currentUser: CurrentUser,
+    enrollmentId: string,
+  ) {
+    const item = await this.prisma.studentEnrollment.findFirst({
+      where: { id: enrollmentId, deletedAt: { not: null } },
+      select: {
+        deletedAt: true,
+        student: { select: { regNo: true } },
+        campus: { select: { institutionId: true } },
+      },
+    });
+    if (!item) {
+      throw new NotFoundException('Deleted student enrollment not found.');
+    }
+    this.assertInstitutionScope(currentUser, item.campus.institutionId!);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.STUDENT_ENROLLMENT,
+      enrollmentId,
+      item.deletedAt!,
+      item.campus.institutionId,
+    );
+    await this.requestContext.runWith({ allowHardDelete: true }, async () => {
+      await this.prisma.studentEnrollment.delete({
+        where: { id: enrollmentId, deletedAt: { not: null } },
+      });
+    });
+    await this.auditLogService.log(currentUser, {
+      action: 'STUDENT_ENROLLMENT_PERMANENTLY_DELETED',
+      entity: 'StudentEnrollment',
+      entityId: enrollmentId,
+      institutionId: item.campus.institutionId,
+      metadata: { studentRegNo: item.student.regNo },
+    });
+    return {
+      message: 'Student enrollment permanently deleted successfully',
+      data: { id: enrollmentId },
     };
   }
 
