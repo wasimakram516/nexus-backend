@@ -1,6 +1,7 @@
 import {
   ArgumentsHost,
   BadRequestException,
+  ConflictException,
   InternalServerErrorException,
 } from '@nestjs/common';
 import { AppExceptionFilter } from './app-exception.filter';
@@ -47,6 +48,37 @@ describe('AppExceptionFilter', () => {
             'email must be an email',
             'password must be a string',
           ],
+        },
+      },
+    });
+  });
+
+  it('surfaces structured object-body fields (e.g. outstandingAmount) under error.details', () => {
+    const json = jest.fn();
+    const status = jest.fn().mockReturnValue({ json });
+    const host = createHost(status);
+
+    filter.catch(
+      new ConflictException({
+        message: 'Outstanding dues must be cleared or acknowledged first.',
+        outstandingAmount: 4500,
+      }),
+      host,
+    );
+
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json).toHaveBeenCalledWith({
+      success: false,
+      message: 'Outstanding dues must be cleared or acknowledged first.',
+      data: null,
+      error: {
+        code: 'HTTP_ERROR',
+        details: {
+          requestId: 'request-1',
+          statusCode: 409,
+          method: 'POST',
+          path: '/api/v1/auth/login',
+          outstandingAmount: 4500,
         },
       },
     });

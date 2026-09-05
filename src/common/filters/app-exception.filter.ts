@@ -42,6 +42,22 @@ export class AppExceptionFilter implements ExceptionFilter {
         : normalizedMessage;
     const validationErrors = Array.isArray(bodyMessage) ? bodyMessage : null;
     const stack = exception instanceof Error ? exception.stack : undefined;
+    // M2 Phase 3: lets a handler attach structured context to an error
+    // response (e.g. `new ConflictException({ message: '...', outstandingAmount })`
+    // for the withdrawal dues-clearance gate, § 7.4) without inventing a
+    // second error-shape convention — `message`/`statusCode`/`error` are
+    // still pulled out separately above, everything else on an object body
+    // rides along under `error.details`. Arrays are excluded so a validation
+    // body's normalized shape (`{ message: string[] }`) never leaks numeric
+    // index keys into `details`.
+    const extraDetails =
+      typeof body === 'object' && body !== null && !Array.isArray(body)
+        ? Object.fromEntries(
+            Object.entries(body as Record<string, unknown>).filter(
+              ([key]) => !['message', 'statusCode', 'error'].includes(key),
+            ),
+          )
+        : {};
 
     this.logger.logRequestError({
       requestId: request.requestId,
@@ -87,6 +103,7 @@ export class AppExceptionFilter implements ExceptionFilter {
           method: request.method,
           path: request.originalUrl,
           ...(validationErrors ? { validationErrors } : {}),
+          ...extraDetails,
         },
       },
     });
