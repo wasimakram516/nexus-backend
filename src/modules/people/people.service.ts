@@ -663,7 +663,11 @@ export class PeopleService {
         ...(dto.joiningDate && { joiningDate: new Date(dto.joiningDate) }),
       },
     });
-    await this.syncUserCampusAssignment(item.userId, targetCampusId);
+    await this.syncUserCampusAssignment(
+      item.userId,
+      targetCampusId,
+      existing.campusId,
+    );
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         targetCampusId,
@@ -1148,13 +1152,35 @@ export class PeopleService {
    * campus must also be present there, or a staff member with no other
    * UserCampus assignment would end up with zero accessible campuses.
    * Idempotent — mirrors the upsert-on-unique-constraint pattern already
-   * used by linkGuardian() for StudentGuardian.
+   * used by linkGuardian() for StudentGuardian. When `previousCampusId` is
+   * given and differs from `campusId` (a staff profile transfer), the stale
+   * assignment for the old campus is permanently removed first — otherwise a
+   * transferred employee would keep scoped access to a campus they no
+   * longer belong to. This row is genuinely hard-deleted (allowHardDelete),
+   * not soft-deleted: it's a pure access grant with no business meaning of
+   * its own, UserCampus has no recycle-bin entry to ever surface or purge a
+   * soft-deleted row, and the actual transfer history (with a timestamp)
+   * already lives in StaffProfile's own audit-log snapshot on the campusId
+   * change — keeping an invisible, unpurgeable duplicate here would be pure
+   * dead weight (confirmed with Wasim, see M2-PEOPLE-ACADEMIC-DESIGN.md § 7.6).
    *
    * @param {string} userId - The staff member's user id.
-   * @param {string} campusId - The staff profile's home campus id.
+   * @param {string} campusId - The staff profile's (new) home campus id.
+   * @param {string} [previousCampusId] - The profile's campus id before this update, if it changed.
    * @returns {Promise<void>}
    */
-  private async syncUserCampusAssignment(userId: string, campusId: string) {
+  private async syncUserCampusAssignment(
+    userId: string,
+    campusId: string,
+    previousCampusId?: string,
+  ) {
+    if (previousCampusId && previousCampusId !== campusId) {
+      await this.requestContext.runWith({ allowHardDelete: true }, () =>
+        this.prisma.userCampus.deleteMany({
+          where: { userId, campusId: previousCampusId },
+        }),
+      );
+    }
     await this.prisma.userCampus.upsert({
       where: {
         userId_campusId_activeScopeKey: {

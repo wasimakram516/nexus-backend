@@ -58,6 +58,7 @@ describe('PeopleService', () => {
     },
     userCampus: {
       upsert: jest.fn(),
+      deleteMany: jest.fn(),
     },
   };
 
@@ -480,7 +481,7 @@ describe('PeopleService', () => {
       });
     });
 
-    it('syncs a matching UserCampus row when a staff profile is moved to a new campus', async () => {
+    it('syncs a matching UserCampus row and removes the stale one when a staff profile transfers campuses', async () => {
       campusAccessServiceMock.assertStaffProfileAccess.mockResolvedValue(
         'campus-1',
       );
@@ -511,6 +512,13 @@ describe('PeopleService', () => {
         campusId: 'campus-2',
       });
 
+      // The old campus's assignment must be gone — otherwise the transferred
+      // employee keeps scoped access to a campus they no longer belong to,
+      // since CampusAccessService resolves STAFF access purely from
+      // UserCampus (§ 7.6).
+      expect(prismaMock.userCampus.deleteMany).toHaveBeenCalledWith({
+        where: { userId: 'user-1', campusId: 'campus-1' },
+      });
       expect(prismaMock.userCampus.upsert).toHaveBeenCalledWith({
         where: {
           userId_campusId_activeScopeKey: {
@@ -520,6 +528,51 @@ describe('PeopleService', () => {
           },
         },
         create: { userId: 'user-1', campusId: 'campus-2' },
+        update: {},
+      });
+    });
+
+    it('does not touch UserCampus removal when a staff profile update keeps the same campus', async () => {
+      campusAccessServiceMock.assertStaffProfileAccess.mockResolvedValue(
+        'campus-1',
+      );
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+      prismaMock.staffProfile.findUnique.mockResolvedValue({
+        id: 'staff-profile-1',
+        userId: 'user-1',
+        campusId: 'campus-1',
+      });
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        institutionId: 'institution-1',
+        role: UserRole.STAFF,
+      });
+      prismaMock.staffProfile.update.mockResolvedValue({
+        id: 'staff-profile-1',
+        userId: 'user-1',
+        campusId: 'campus-1',
+      });
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+        (item: Record<string, unknown>) => ({ ...item, customFields: {} }),
+      );
+
+      await service.updateStaffProfile(currentUser, 'staff-profile-1', {
+        designation: 'Senior Teacher',
+      });
+
+      expect(prismaMock.userCampus.deleteMany).not.toHaveBeenCalled();
+      expect(prismaMock.userCampus.upsert).toHaveBeenCalledWith({
+        where: {
+          userId_campusId_activeScopeKey: {
+            userId: 'user-1',
+            campusId: 'campus-1',
+            activeScopeKey: 'ACTIVE',
+          },
+        },
+        create: { userId: 'user-1', campusId: 'campus-1' },
         update: {},
       });
     });
