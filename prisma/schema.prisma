@@ -55,6 +55,15 @@ enum EmploymentType {
   NON_TEACHING
 }
 
+// M2 Phase 3 (decision #21): exactly 3 values, no REPEATED value — a
+// repeater's old-year row is marked PROMOTED like anyone else, the fact that
+// newClassId == previousClassId lives in the paired StudentHistory row.
+enum EnrollmentStatus {
+  ACTIVE
+  PROMOTED
+  LEFT
+}
+
 enum AttendanceStatus {
   PRESENT
   ABSENT
@@ -234,6 +243,10 @@ model Institution {
   // active association" pattern rather than a boolean-flag-plus-index.
   currentAcademicYearId  String?                   @map("current_academic_year_id") @db.Uuid
   currentAcademicYear    AcademicYear?             @relation("InstitutionCurrentAcademicYear", fields: [currentAcademicYearId], references: [id], onDelete: SetNull)
+  // M2 Phase 3 (decision #25): Student.institutionId is now denormalized
+  // directly onto Student (see below) so regNo uniqueness can be scoped per
+  // institution at the DB level.
+  students               Student[]
 
   @@unique([slug, activeScopeKey], map: "institution_slug_active_scope_unique")
   @@index([status])
@@ -332,6 +345,8 @@ model Campus {
   // code used as the {CAMPUS} token in regNo patterns. Nullable, no backfill
   // required — falls back to the first 3 letters of the campus name.
   code                  String?                      @map("code")
+  // M2 Phase 3: denormalized campusId on StudentEnrollment (see model doc).
+  studentEnrollments    StudentEnrollment[]
 
   @@index([institutionId])
   @@map("campuses")
@@ -556,22 +571,23 @@ model Level {
 }
 
 model AcademicClass {
-  id              String            @id @default(uuid()) @db.Uuid
+  id              String              @id @default(uuid()) @db.Uuid
   name            String
-  levelId         String            @map("level_id") @db.Uuid
-  createdBy       String?           @map("created_by") @db.Uuid
-  updatedBy       String?           @map("updated_by") @db.Uuid
-  deletedAt       DateTime?         @map("deleted_at") @db.Timestamptz(3)
-  deletedBy       String?           @map("deleted_by") @db.Uuid
-  deleteReason    String?           @map("delete_reason")
-  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
-  level           Level             @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  levelId         String              @map("level_id") @db.Uuid
+  createdBy       String?             @map("created_by") @db.Uuid
+  updatedBy       String?             @map("updated_by") @db.Uuid
+  deletedAt       DateTime?           @map("deleted_at") @db.Timestamptz(3)
+  deletedBy       String?             @map("deleted_by") @db.Uuid
+  deleteReason    String?             @map("delete_reason")
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  level           Level               @relation(fields: [levelId], references: [id], onDelete: Cascade)
   sections        Section[]
   subjects        Subject[]
-  students        Student[]
-  historyPrevious StudentHistory[]  @relation("StudentHistoryPreviousClass")
-  historyNew      StudentHistory[]  @relation("StudentHistoryNewClass")
+  // M2 Phase 3 (decision #21): replaces the direct Student.classId pointer.
+  enrollments     StudentEnrollment[]
+  historyPrevious StudentHistory[]    @relation("StudentHistoryPreviousClass")
+  historyNew      StudentHistory[]    @relation("StudentHistoryNewClass")
   teacherSubjects TeacherSubject[]
   feeStructures   FeeStructure[]
   fineRules       StudentFineRule[]
@@ -582,21 +598,22 @@ model AcademicClass {
 }
 
 model Section {
-  id              String           @id @default(uuid()) @db.Uuid
+  id              String              @id @default(uuid()) @db.Uuid
   name            String
-  classId         String           @map("class_id") @db.Uuid
-  createdBy       String?          @map("created_by") @db.Uuid
-  updatedBy       String?          @map("updated_by") @db.Uuid
-  deletedAt       DateTime?        @map("deleted_at") @db.Timestamptz(3)
-  deletedBy       String?          @map("deleted_by") @db.Uuid
-  deleteReason    String?          @map("delete_reason")
-  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
-  class           AcademicClass    @relation(fields: [classId], references: [id], onDelete: Cascade)
-  students        Student[]
+  classId         String              @map("class_id") @db.Uuid
+  createdBy       String?             @map("created_by") @db.Uuid
+  updatedBy       String?             @map("updated_by") @db.Uuid
+  deletedAt       DateTime?           @map("deleted_at") @db.Timestamptz(3)
+  deletedBy       String?             @map("deleted_by") @db.Uuid
+  deleteReason    String?             @map("delete_reason")
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  class           AcademicClass       @relation(fields: [classId], references: [id], onDelete: Cascade)
+  // M2 Phase 3 (decision #21): replaces the direct Student.sectionId pointer.
+  enrollments     StudentEnrollment[]
   teacherSubjects TeacherSubject[]
-  historyPrevious StudentHistory[] @relation("StudentHistoryPreviousSection")
-  historyNew      StudentHistory[] @relation("StudentHistoryNewSection")
+  historyPrevious StudentHistory[]    @relation("StudentHistoryPreviousSection")
+  historyNew      StudentHistory[]    @relation("StudentHistoryNewSection")
 
   @@index([classId])
   @@index([createdAt])
@@ -625,8 +642,7 @@ model Subject {
 // M2 Phase 1: one row per institution per session, with a separate child
 // table for per-campus date overrides (decision #9: institution-wide with
 // optional per-campus override). See project-tracking/M2-PEOPLE-ACADEMIC-DESIGN.md
-// § 4.2. StudentEnrollment/StudentHistory relations are intentionally NOT
-// added here yet — those land with the Phase 3 StudentEnrollment work.
+// § 4.2. StudentEnrollment/StudentHistory relations land with Phase 3 below.
 model AcademicYear {
   id             String    @id @default(uuid()) @db.Uuid
   institutionId  String    @map("institution_id") @db.Uuid
@@ -645,6 +661,10 @@ model AcademicYear {
   institution            Institution                  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   campusOverrides        AcademicYearCampusOverride[]
   currentForInstitutions Institution[]                @relation("InstitutionCurrentAcademicYear")
+  // M2 Phase 3 (decision #21): every StudentEnrollment/StudentHistory row
+  // scoped to this session.
+  enrollments            StudentEnrollment[]
+  studentHistory         StudentHistory[]
 
   @@unique([institutionId, name, activeScopeKey], map: "academic_year_name_unique")
   @@index([institutionId])
@@ -674,44 +694,102 @@ model AcademicYearCampusOverride {
   @@map("academic_year_campus_overrides")
 }
 
+// M2 Phase 3 (decision #21): per-year placement record, source of truth for
+// "what class/section is this student in this year," replacing the direct
+// Student.classId/sectionId pointer. Coexists with StudentHistory rather
+// than absorbing it: this is the queryable one-row-per-year placement that
+// exams/fees/attendance reports join through so historical report cards
+// keep rendering correctly forever; StudentHistory stays the append-only
+// transition log (can carry multiple rows within one academic year, e.g. a
+// mid-year section transfer). See
+// project-tracking/M2-PEOPLE-ACADEMIC-DESIGN.md § 4.3/§ 4.4.
+//
+// classId/sectionId/academicYearId/campusId (and studentId) are all
+// onDelete: Cascade rather than SetNull — deliberate, so the recycle bin's
+// cascade-safety guard (ENTITY_CASCADE_CHILDREN) blocks a permanent delete
+// of any class/section/campus/academic year/student that still has an
+// ACTIVE enrollment pointing at it.
+model StudentEnrollment {
+  id             String           @id @default(uuid()) @db.Uuid
+  studentId      String           @map("student_id") @db.Uuid
+  academicYearId String           @map("academic_year_id") @db.Uuid
+  // Denormalized from Student at creation — same convention as
+  // TeacherSubject.campusId, avoids a class -> level -> campus join on every
+  // scoped list query.
+  campusId       String           @map("campus_id") @db.Uuid
+  classId        String           @map("class_id") @db.Uuid
+  // Nullable only for un-sectioned intake, mirrors TeacherSubject.sectionId's
+  // existing precedent.
+  sectionId      String?          @map("section_id") @db.Uuid
+  status         EnrollmentStatus @default(ACTIVE)
+  leftDate       DateTime?        @map("left_date") @db.Timestamptz(3)
+  leftReason     String?          @map("left_reason")
+  createdBy      String?          @map("created_by") @db.Uuid
+  updatedBy      String?          @map("updated_by") @db.Uuid
+  deletedAt      DateTime?        @map("deleted_at") @db.Timestamptz(3)
+  deletedBy      String?          @map("deleted_by") @db.Uuid
+  deleteReason   String?          @map("delete_reason")
+  activeScopeKey String           @default("ACTIVE") @map("active_scope_key")
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  student      Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear  @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  campus       Campus        @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  class        AcademicClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  section      Section?      @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, academicYearId, activeScopeKey], map: "student_enrollment_unique")
+  @@index([campusId, academicYearId])
+  @@index([classId])
+  @@index([sectionId])
+  @@index([studentId])
+  @@map("student_enrollments")
+}
+
 model Student {
-  id             String            @id @default(uuid()) @db.Uuid
-  userId         String            @unique @map("user_id") @db.Uuid
-  regNo          String            @map("reg_no")
-  dob            DateTime          @db.Timestamptz(3)
+  id             String              @id @default(uuid()) @db.Uuid
+  userId         String              @unique @map("user_id") @db.Uuid
+  // M2 Phase 3 (decision #25): denormalized from campus.institutionId at
+  // creation so regNo uniqueness can be scoped per institution at the DB
+  // level (a unique index can't walk campusId -> Campus.institutionId at
+  // query time). Fixes the latent cross-tenant regNo collision — this
+  // column didn't exist before, so the old unique constraint was only
+  // [regNo, activeScopeKey], unique across the entire shared database.
+  institutionId  String              @map("institution_id") @db.Uuid
+  regNo          String              @map("reg_no")
+  dob            DateTime            @db.Timestamptz(3)
   gender         Gender
   cnic           String?
-  classId        String?           @map("class_id") @db.Uuid
-  sectionId      String?           @map("section_id") @db.Uuid
-  campusId       String            @map("campus_id") @db.Uuid
+  campusId       String              @map("campus_id") @db.Uuid
   picture        String?
   religion       Religion?
-  admissionDate  DateTime          @map("admission_date") @db.Timestamptz(3)
-  prevSchool     String?           @map("prev_school")
+  admissionDate  DateTime            @map("admission_date") @db.Timestamptz(3)
+  prevSchool     String?             @map("prev_school")
   reference      String?
-  createdBy      String?           @map("created_by") @db.Uuid
-  updatedBy      String?           @map("updated_by") @db.Uuid
-  deletedAt      DateTime?         @map("deleted_at") @db.Timestamptz(3)
-  deletedBy      String?           @map("deleted_by") @db.Uuid
-  deleteReason   String?           @map("delete_reason")
-  activeScopeKey String            @default("ACTIVE") @map("active_scope_key")
-  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
-  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  class          AcademicClass?    @relation(fields: [classId], references: [id], onDelete: SetNull)
-  section        Section?          @relation(fields: [sectionId], references: [id], onDelete: SetNull)
-  campus         Campus            @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  createdBy      String?             @map("created_by") @db.Uuid
+  updatedBy      String?             @map("updated_by") @db.Uuid
+  deletedAt      DateTime?           @map("deleted_at") @db.Timestamptz(3)
+  deletedBy      String?             @map("deleted_by") @db.Uuid
+  deleteReason   String?             @map("delete_reason")
+  activeScopeKey String              @default("ACTIVE") @map("active_scope_key")
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institution    Institution         @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  campus         Campus              @relation(fields: [campusId], references: [id], onDelete: Cascade)
   guardians      StudentGuardian[]
   history        StudentHistory[]
   fines          StudentFine[]
   discounts      StudentDiscount[]
   vouchers       FeeVoucher[]
-  contacts       Contact[]         @relation("StudentContacts")
+  contacts       Contact[]           @relation("StudentContacts")
+  // M2 Phase 3 (decision #21): source of truth for class/section placement,
+  // replacing the removed classId/sectionId columns above.
+  enrollments    StudentEnrollment[]
 
-  @@unique([regNo, activeScopeKey], map: "student_reg_no_unique")
+  @@unique([institutionId, regNo, activeScopeKey], map: "student_reg_no_institution_unique")
   @@index([campusId])
-  @@index([classId])
-  @@index([sectionId])
   @@map("students")
 }
 
@@ -765,6 +843,11 @@ model StudentHistory {
   previousSectionId String?        @map("previous_section_id") @db.Uuid
   newClassId        String?        @map("new_class_id") @db.Uuid
   newSectionId      String?        @map("new_section_id") @db.Uuid
+  // M2 Phase 3: nullable — history rows predate year-scoping and stay NULL
+  // (no backfill). onDelete: SetNull matches the previousClass/newClass
+  // relations on this same model — history survives even if the academic
+  // year config is later deleted.
+  academicYearId    String?        @map("academic_year_id") @db.Uuid
   promotionDate     DateTime       @map("promotion_date") @db.Timestamptz(3)
   promotionReason   String?        @map("promotion_reason")
   remarks           String?
@@ -780,10 +863,12 @@ model StudentHistory {
   previousSection   Section?       @relation("StudentHistoryPreviousSection", fields: [previousSectionId], references: [id], onDelete: SetNull)
   newClass          AcademicClass? @relation("StudentHistoryNewClass", fields: [newClassId], references: [id], onDelete: SetNull)
   newSection        Section?       @relation("StudentHistoryNewSection", fields: [newSectionId], references: [id], onDelete: SetNull)
+  academicYear      AcademicYear?  @relation(fields: [academicYearId], references: [id], onDelete: SetNull)
 
   @@index([studentId])
   @@index([newClassId])
   @@index([newSectionId])
+  @@index([academicYearId])
   @@map("student_history")
 }
 
