@@ -7,6 +7,7 @@ import {
 import {
   AdjustmentType as PrismaAdjustmentType,
   AttendanceStatus as PrismaAttendanceStatus,
+  EnrollmentStatus,
   UserRole,
 } from '../../prisma/client';
 import { CustomFieldEntity } from '../../common/constants/custom-field-entities.constants';
@@ -1623,6 +1624,33 @@ export class FinanceService {
       throw new ForbiddenException(
         'Student and fee structure must belong to the same institution.',
       );
+    }
+    // M2 Phase 3 § 7.4 item 5: stop new voucher generation for a withdrawn
+    // student — enforced here since this is the only voucher-creation path
+    // that exists today (bulk generation is a P1-3 fast-follow). Looks up
+    // the student's *current-year* enrollment specifically (not "any
+    // enrollment ever"), so a student who withdrew in a past year but has
+    // since re-enrolled is unaffected.
+    const institution = await this.prisma.institution.findUnique({
+      where: { id: studentInstitutionId },
+      select: { currentAcademicYearId: true },
+    });
+    if (institution?.currentAcademicYearId) {
+      const currentEnrollment = await this.prisma.studentEnrollment.findUnique({
+        where: {
+          studentId_academicYearId_activeScopeKey: {
+            studentId: dto.studentId,
+            academicYearId: institution.currentAcademicYearId,
+            activeScopeKey: 'ACTIVE',
+          },
+        },
+        select: { status: true },
+      });
+      if (currentEnrollment?.status === EnrollmentStatus.LEFT) {
+        throw new ConflictException(
+          'Cannot create a fee voucher for a student who has withdrawn.',
+        );
+      }
     }
     this.assertSameCampus(
       student.campusId,

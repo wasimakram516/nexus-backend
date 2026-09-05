@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import {
   AdjustmentType,
   AttendanceStatus,
+  EnrollmentStatus,
   ModuleKey,
   UserRole,
 } from '../../prisma/client';
@@ -49,6 +50,7 @@ describe('FinanceService', () => {
       findMany: jest.fn(),
       findFirst: jest.fn(),
       findUnique: jest.fn(),
+      create: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
     },
@@ -95,6 +97,12 @@ describe('FinanceService', () => {
       findMany: jest.fn(),
       findUnique: jest.fn(),
     },
+    institution: {
+      findUnique: jest.fn(),
+    },
+    studentEnrollment: {
+      findUnique: jest.fn(),
+    },
   };
 
   const campusAccessServiceMock = {
@@ -115,6 +123,11 @@ describe('FinanceService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    // M2 Phase 3: default the withdrawal guard's institution lookup to "no
+    // current academic year set" so it's a no-op unless a test explicitly
+    // configures it — otherwise every pre-existing createFeeVoucher test
+    // below would need to know about StudentEnrollment.
+    prismaMock.institution.findUnique.mockResolvedValue(null);
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -243,6 +256,100 @@ describe('FinanceService', () => {
         dueDate: '2026-05-30',
       }),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  describe('createFeeVoucher — M2 Phase 3 withdrawal guard (§ 7.4 item 5)', () => {
+    beforeEach(() => {
+      prismaMock.student.findUnique.mockResolvedValue({
+        id: 'student-1',
+        campusId: 'campus-1',
+      });
+      prismaMock.feeStructure.findUnique.mockResolvedValue({
+        id: 'structure-1',
+        campusId: 'campus-1',
+        feeBreakdown: { tuition: 1000 },
+      });
+      prismaMock.feeVoucher.findFirst.mockResolvedValue(null);
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+      campusAccessServiceMock.assertStudentAccess.mockResolvedValue('campus-1');
+      entityCustomFieldsServiceMock.resolveInstitutionIdByFeeStructure.mockResolvedValue(
+        'institution-1',
+      );
+      entityCustomFieldsServiceMock.resolveInstitutionIdByStudent.mockResolvedValue(
+        'institution-1',
+      );
+    });
+
+    it('rejects voucher creation for a student whose current-year enrollment is LEFT', async () => {
+      prismaMock.institution.findUnique.mockResolvedValue({
+        currentAcademicYearId: 'year-1',
+      });
+      prismaMock.studentEnrollment.findUnique.mockResolvedValue({
+        status: EnrollmentStatus.LEFT,
+      });
+
+      await expect(
+        service.createFeeVoucher(accountantUser, {
+          studentId: 'student-1',
+          feeStructureId: 'structure-1',
+          month: 5,
+          year: 2026,
+          dueDate: '2026-05-30',
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('allows voucher creation when the current-year enrollment is ACTIVE', async () => {
+      prismaMock.institution.findUnique.mockResolvedValue({
+        currentAcademicYearId: 'year-1',
+      });
+      prismaMock.studentEnrollment.findUnique.mockResolvedValue({
+        status: EnrollmentStatus.ACTIVE,
+      });
+      prismaMock.feeVoucher.create.mockResolvedValue({
+        id: 'voucher-1',
+        studentId: 'student-1',
+        feeStructureId: 'structure-1',
+      });
+      entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+        (item: Record<string, unknown>) => ({ ...item, customFields: {} }),
+      );
+
+      await expect(
+        service.createFeeVoucher(accountantUser, {
+          studentId: 'student-1',
+          feeStructureId: 'structure-1',
+          month: 5,
+          year: 2026,
+          dueDate: '2026-05-30',
+        }),
+      ).resolves.toMatchObject({ message: 'Fee voucher created successfully' });
+    });
+
+    it('allows voucher creation when the institution has no current academic year set yet (guard is a no-op)', async () => {
+      prismaMock.institution.findUnique.mockResolvedValue({
+        currentAcademicYearId: null,
+      });
+      prismaMock.feeVoucher.create.mockResolvedValue({
+        id: 'voucher-1',
+        studentId: 'student-1',
+        feeStructureId: 'structure-1',
+      });
+      entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+        (item: Record<string, unknown>) => ({ ...item, customFields: {} }),
+      );
+
+      await expect(
+        service.createFeeVoucher(accountantUser, {
+          studentId: 'student-1',
+          feeStructureId: 'structure-1',
+          month: 5,
+          year: 2026,
+          dueDate: '2026-05-30',
+        }),
+      ).resolves.toMatchObject({ message: 'Fee voucher created successfully' });
+      expect(prismaMock.studentEnrollment.findUnique).not.toHaveBeenCalled();
+    });
   });
 
   it('retrieves a salary with attached custom fields', async () => {
