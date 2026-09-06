@@ -148,6 +148,11 @@ enum ModuleKey {
   EXAMINATIONS
   DOCUMENTS
   REALTIME
+  // M3 (Notices track, decision #24).
+  NOTICES
+  // M3 (Timetable M1 track, decision #26). See
+  // M3-SCHEDULING-COMMUNICATION-DESIGN.md § 5.1.
+  TIMETABLE
 }
 
 enum CustomFieldInputType {
@@ -247,6 +252,8 @@ model Institution {
   // directly onto Student (see below) so regNo uniqueness can be scoped per
   // institution at the DB level.
   students               Student[]
+  // M3 (Notices track, decision #24).
+  notices                Notice[]
 
   @@unique([slug, activeScopeKey], map: "institution_slug_active_scope_unique")
   @@index([status])
@@ -347,6 +354,10 @@ model Campus {
   code                  String?                      @map("code")
   // M2 Phase 3: denormalized campusId on StudentEnrollment (see model doc).
   studentEnrollments    StudentEnrollment[]
+  // M3 (Notices track, decision #24).
+  notices               Notice[]
+  // M3 (Timetable M1 track, decision #26).
+  periodSlots           PeriodSlot[]
 
   @@index([institutionId])
   @@map("campuses")
@@ -591,6 +602,10 @@ model AcademicClass {
   teacherSubjects TeacherSubject[]
   feeStructures   FeeStructure[]
   fineRules       StudentFineRule[]
+  // M3 (Notices track, decision #24).
+  notices         Notice[]
+  // M3 (Timetable M1 track, decision #26).
+  periodSlots     PeriodSlot[]
 
   @@index([levelId])
   @@index([createdAt])
@@ -614,6 +629,10 @@ model Section {
   teacherSubjects TeacherSubject[]
   historyPrevious StudentHistory[]    @relation("StudentHistoryPreviousSection")
   historyNew      StudentHistory[]    @relation("StudentHistoryNewSection")
+  // M3 (Notices track, decision #24).
+  notices         Notice[]
+  // M3 (Timetable M1 track, decision #26).
+  periodSlots     PeriodSlot[]
 
   @@index([classId])
   @@index([createdAt])
@@ -633,6 +652,8 @@ model Subject {
   updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
   class           AcademicClass    @relation(fields: [classId], references: [id], onDelete: Cascade)
   teacherSubjects TeacherSubject[]
+  // M3 (Timetable M1 track, decision #26).
+  periodSlots     PeriodSlot[]
 
   @@index([classId])
   @@index([createdAt])
@@ -933,6 +954,8 @@ model StaffProfile {
   // column renames. Non-teaching staff simply never get rows here.
   subjects       TeacherSubject[]
   contacts       Contact[]        @relation("StaffProfileContacts")
+  // M3 (Timetable M1 track, decision #26).
+  periodSlots    PeriodSlot[]
 
   @@index([campusId])
   @@index([employmentType])
@@ -968,6 +991,91 @@ model TeacherSubject {
   @@map("teacher_subjects")
 }
 
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+// M3 (Timetable M1 track, decision #26, M1 slice only). Section-scoped,
+// weekly-recurring schedule TEMPLATE — this is not a per-date calendar
+// entry, it's "what happens every Monday, Period 3, for Section 5-A" until
+// someone edits it. Deliberately NOT scoped to an AcademicYear (see
+// M3-SCHEDULING-COMMUNICATION-DESIGN.md § 9's design-call list): like
+// TeacherSubject, it's a "current live schedule" concept, not a
+// year-versioned one — a mid-year schedule change is a normal edit, not a
+// new year's row.
+//
+// The `attendanceRecords Attendance[]` back-relation (added by the
+// sequential Attendance dual-mode task, § 5.3 of the design doc) lands
+// below, alongside Attendance.periodId's forward relation.
+model PeriodSlot {
+  id             String    @id @default(uuid()) @db.Uuid
+  // Denormalized from section -> class -> level -> campus, same convention
+  // as TeacherSubject.campusId / StudentEnrollment.campusId — avoids a
+  // 3-hop join on every campus-scoped list query.
+  campusId       String    @map("campus_id") @db.Uuid
+  classId        String    @map("class_id") @db.Uuid
+  // Required (see § 4 of the design doc) — every M3-created slot is
+  // scheduled for an actual physical group of students, unlike
+  // TeacherSubject's legacy-only nullable section.
+  sectionId      String    @map("section_id") @db.Uuid
+  // Nullable — recess/assembly/study-hall slots have no subject.
+  subjectId      String?   @map("subject_id") @db.Uuid
+  // References StaffProfile directly, NOT TeacherSubject (see § 9 design
+  // call) — nullable for the same reason as subjectId, plus "subject
+  // assigned, teacher TBD" is a real setup-in-progress state.
+  staffProfileId String?   @map("staff_profile_id") @db.Uuid
+  name           String // e.g. "Period 1", "Recess", "Assembly" — the "named" in "named periods"
+  periodNumber   Int       @map("period_number") // sequence position within the day; also the natural sort key
+  dayOfWeek      DayOfWeek @map("day_of_week")
+  startTime      String    @map("start_time") // "HH:mm" — same convention as Campus.studentStartTime, not a DateTime
+  endTime        String    @map("end_time")
+  createdBy      String?   @map("created_by") @db.Uuid
+  updatedBy      String?   @map("updated_by") @db.Uuid
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedBy      String?   @map("deleted_by") @db.Uuid
+  deleteReason   String?   @map("delete_reason")
+  activeScopeKey String    @default("ACTIVE") @map("active_scope_key")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  campus            Campus        @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  class             AcademicClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  section           Section       @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  subject           Subject?      @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  staffProfile      StaffProfile? @relation(fields: [staffProfileId], references: [id], onDelete: SetNull)
+  // M3 (Attendance dual-mode track, § 5.3): SetNull on Attendance.periodId
+  // means this relation is excluded from the recycle-bin cascade-guard map
+  // by that map's own documented convention — editing/removing a PeriodSlot
+  // must never delete historical attendance facts.
+  attendanceRecords Attendance[]
+
+  @@unique([sectionId, dayOfWeek, periodNumber, activeScopeKey], map: "period_slot_section_day_number_unique")
+  @@index([campusId])
+  @@index([classId])
+  @@index([subjectId])
+  @@index([staffProfileId])
+  @@map("period_slots")
+}
+
+// M3 (Attendance dual-mode track, § 5.3 of M3-SCHEDULING-COMMUNICATION-DESIGN.md).
+// periodId/periodKey together implement institution-level DAILY|PERIOD
+// attendance capture. periodId is the real, nullable FK used for
+// joins/filters/reporting; periodKey is its non-nullable uniqueness
+// companion, because Postgres unique indexes treat every NULL as distinct
+// from every other NULL — a nullable periodId inside the unique constraint
+// would silently let two DAILY-mode rows for the same user/day both exist
+// (both periodId = NULL, no collision). periodKey is always "DAILY" for
+// DAILY-mode rows (check-in/out, leave, and DAILY-mode bulk marking all
+// leave periodId null) and always the literal periodId string once a row is
+// period-scoped — never null, so it behaves correctly under Postgres
+// unique-index semantics. Do not rely on periodId alone in the unique
+// constraint; periodKey is what must stay there.
 model Attendance {
   id             String           @id @default(uuid()) @db.Uuid
   userId         String           @map("user_id") @db.Uuid
@@ -979,6 +1087,16 @@ model Attendance {
   checkIn        DateTime?        @map("check_in") @db.Timestamptz(3)
   checkOut       DateTime?        @map("check_out") @db.Timestamptz(3)
   remarks        String?
+  // M3 (Attendance dual-mode track, § 5.3): nullable real FK, used for
+  // joins/filters/reporting. Never set for STAFF rows — staff attendance
+  // stays DAILY-only regardless of the institution's mode setting (§ 9's
+  // design call); only STUDENT bulk-marking and the auto-absent job branch
+  // on mode.
+  periodId       String?          @map("period_id") @db.Uuid
+  // M3 (Attendance dual-mode track, § 5.3): non-nullable uniqueness
+  // companion to periodId (see model doc above) — this, not periodId, goes
+  // in the unique constraint.
+  periodKey      String           @default("DAILY") @map("period_key")
   createdBy      String?          @map("created_by") @db.Uuid
   updatedBy      String?          @map("updated_by") @db.Uuid
   deletedAt      DateTime?        @map("deleted_at") @db.Timestamptz(3)
@@ -988,10 +1106,17 @@ model Attendance {
   createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
   campus         Campus           @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  // onDelete: SetNull, not Cascade — editing or removing a PeriodSlot later
+  // must never delete historical attendance facts. This also means
+  // Attendance does not need registering under PERIOD_SLOT in the
+  // recycle-bin cascade-guard map (§ 10) — SetNull relations are already
+  // excluded from that map by its own documented convention.
+  period         PeriodSlot?      @relation(fields: [periodId], references: [id], onDelete: SetNull)
 
-  @@unique([userId, campusId, date, activeScopeKey], map: "attendance_unique")
+  @@unique([userId, campusId, date, periodKey, activeScopeKey], map: "attendance_unique")
   @@index([userId, campusId, date])
   @@index([campusId, date])
+  @@index([periodId])
   @@map("attendance")
 }
 
@@ -1368,4 +1493,52 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([action, createdAt])
   @@map("audit_logs")
+}
+
+// M3 (Notices track, decision #24). Self-contained: audience targeting via a
+// flat set of nullable, progressively-narrowing scope FKs (institution
+// always known, campus/class/section/role each independently optional —
+// null means unconstrained on that dimension), a publish window, and
+// Cloudinary attachments. See M3-SCHEDULING-COMMUNICATION-DESIGN.md § 5.4
+// for the full design rationale (join-table shape considered and rejected;
+// onDelete: SetNull on every scope FK so a notice outlives the
+// campus/class/section it once targeted, which is also why this model needs
+// no recycle-bin cascade-guard registration — § 10).
+model Notice {
+  id             String    @id @default(uuid()) @db.Uuid
+  // Direct, non-nullable — same convention as AcademicYear.institutionId.
+  // Makes an institution-wide notice (campusId null) a valid state while
+  // institution scoping stays always known, and lets
+  // PrismaService.resolveAuditInstitutionId() work with zero code changes.
+  institutionId  String    @map("institution_id") @db.Uuid
+  campusId       String?   @map("campus_id") @db.Uuid
+  classId        String?   @map("class_id") @db.Uuid
+  sectionId      String?   @map("section_id") @db.Uuid
+  targetRole     UserRole? @map("target_role")
+  title          String
+  body           String
+  // NoticeAttachmentDto[] — mirrors UploadService's UploadResult shape 1:1
+  // rather than inventing a parallel one (see notices.dto.ts).
+  attachments    Json?
+  publishAt      DateTime  @default(now()) @map("publish_at") @db.Timestamptz(3)
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz(3)
+  createdBy      String?   @map("created_by") @db.Uuid
+  updatedBy      String?   @map("updated_by") @db.Uuid
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedBy      String?   @map("deleted_by") @db.Uuid
+  deleteReason   String?   @map("delete_reason")
+  activeScopeKey String    @default("ACTIVE") @map("active_scope_key")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  institution Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  campus      Campus?        @relation(fields: [campusId], references: [id], onDelete: SetNull)
+  class       AcademicClass? @relation(fields: [classId], references: [id], onDelete: SetNull)
+  section     Section?       @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+
+  @@index([institutionId, publishAt])
+  @@index([campusId])
+  @@index([classId])
+  @@index([sectionId])
+  @@map("notices")
 }

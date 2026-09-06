@@ -190,6 +190,20 @@ describe('RecycleBinService', () => {
       delete: jest.fn(),
       count: jest.fn().mockResolvedValue(0),
     },
+    notice: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
+    },
+    periodSlot: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
+    },
   };
 
   const auditLogServiceMock = {
@@ -1232,6 +1246,465 @@ describe('RecycleBinService', () => {
         ),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(prismaMock.staffProfile.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  // M3 (Notices track, decision #24): every scope FK (campusId/classId/
+  // sectionId) is onDelete: SetNull, so unlike StudentEnrollment, Notice
+  // needs no ENTITY_CASCADE_CHILDREN registration anywhere — confirmed by
+  // this suite exercising only the entity's own list/restore/permanent-
+  // delete wiring, with no cascade-guard case to cover.
+  describe('Notice recycle bin wiring', () => {
+    const baseNotice = {
+      id: 'notice-1',
+      title: 'Sports Day Rescheduled',
+      institutionId: 'institution-1',
+    };
+
+    it('lists deleted notices filtered by institution and search', async () => {
+      prismaMock.notice.findMany.mockResolvedValue([
+        {
+          ...baseNotice,
+          deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+          deletedBy: 'admin-1',
+          deleteReason: null,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-05-06T09:00:00.000Z'),
+        },
+      ]);
+      prismaMock.user.findMany.mockResolvedValueOnce([
+        {
+          id: 'admin-1',
+          name: 'Admin User',
+          email: 'admin@nexus.test',
+          role: UserRole.ADMIN,
+        },
+      ]);
+
+      const result = await service.listDeletedItems(adminUser, {
+        page: 1,
+        limit: 10,
+        entity: RecycleBinEntity.NOTICE,
+        search: 'Sports',
+      });
+
+      expect(prismaMock.notice.findMany).toHaveBeenCalledWith({
+        where: {
+          deletedAt: { not: null },
+          institutionId: 'institution-1',
+          title: { contains: 'Sports', mode: 'insensitive' },
+        },
+        select: {
+          id: true,
+          title: true,
+          institutionId: true,
+          deletedAt: true,
+          deletedBy: true,
+          deleteReason: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: { deletedAt: 'desc' },
+      });
+      expect(result).toMatchObject({
+        message: 'Recycle bin items retrieved successfully',
+        data: {
+          total: 1,
+          items: [
+            {
+              entity: RecycleBinEntity.NOTICE,
+              id: 'notice-1',
+              label: 'Sports Day Rescheduled',
+              subtitle: 'Notice',
+            },
+          ],
+        },
+      });
+    });
+
+    it('restores a soft-deleted notice and records an audit log', async () => {
+      prismaMock.notice.findFirst.mockResolvedValue({
+        ...baseNotice,
+        deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+      });
+      prismaMock.notice.update.mockResolvedValue({
+        ...baseNotice,
+        deletedAt: null,
+        deletedBy: null,
+        deleteReason: null,
+      });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.NOTICE,
+        'notice-1',
+      );
+
+      expect(prismaMock.notice.update).toHaveBeenCalledWith({
+        where: { id: 'notice-1', deletedAt: { not: null } },
+        data: { deletedAt: null, deletedBy: null, deleteReason: null },
+      });
+      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
+        adminUser,
+        expect.objectContaining({
+          action: 'NOTICE_RESTORED',
+          entity: 'Notice',
+          entityId: 'notice-1',
+        }),
+      );
+      expect(result).toMatchObject({
+        message: 'Notice restored successfully',
+        data: { id: 'notice-1', title: 'Sports Day Rescheduled' },
+      });
+    });
+
+    it('returns 404 restoring a notice that is not in the recycle bin', async () => {
+      prismaMock.notice.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(adminUser, RecycleBinEntity.NOTICE, 'missing'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prismaMock.notice.update).not.toHaveBeenCalled();
+    });
+
+    it('blocks an admin from restoring a notice belonging to another institution', async () => {
+      prismaMock.notice.findFirst.mockResolvedValue({
+        ...baseNotice,
+        institutionId: 'institution-2',
+        deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+      });
+
+      await expect(
+        service.restoreRecord(adminUser, RecycleBinEntity.NOTICE, 'notice-1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.notice.update).not.toHaveBeenCalled();
+    });
+
+    it('permanently deletes a notice once the retention period has elapsed, with no cascade-guard check', async () => {
+      const longAgo = new Date();
+      longAgo.setUTCDate(longAgo.getUTCDate() - 31);
+      prismaMock.notice.findFirst.mockResolvedValue({
+        ...baseNotice,
+        deletedAt: longAgo,
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.NOTICE,
+        'notice-1',
+      );
+
+      expect(prismaMock.notice.delete).toHaveBeenCalledWith({
+        where: { id: 'notice-1', deletedAt: { not: null } },
+      });
+      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
+        adminUser,
+        expect.objectContaining({
+          action: 'NOTICE_PERMANENTLY_DELETED',
+          entity: 'Notice',
+          entityId: 'notice-1',
+        }),
+      );
+      expect(result).toMatchObject({
+        message: 'Notice permanently deleted successfully',
+        data: { id: 'notice-1' },
+      });
+    });
+
+    it('blocks a permanent delete of a notice before the retention period has elapsed', async () => {
+      prismaMock.notice.findFirst.mockResolvedValue({
+        ...baseNotice,
+        deletedAt: new Date(), // deleted moments ago, default retention 30 days
+      });
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.NOTICE,
+          'notice-1',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.notice.delete).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 permanently deleting a notice that is not in the recycle bin', async () => {
+      prismaMock.notice.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.NOTICE,
+          'missing',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prismaMock.notice.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  // M3 (Timetable M1 track, decision #26): unlike Notice, PeriodSlot's
+  // campusId/classId/sectionId are onDelete: Cascade, so it IS registered
+  // under ENTITY_CASCADE_CHILDREN[CAMPUS]/[CLASS]/[SECTION] (§ 10) — this
+  // suite covers both the entity's own list/restore/permanent-delete wiring
+  // and the cascade-guard case those three parent entities gained.
+  describe('PeriodSlot recycle bin wiring', () => {
+    const basePeriodSlot = {
+      id: 'period-slot-1',
+      name: 'Period 1',
+      dayOfWeek: 'MONDAY',
+      periodNumber: 1,
+      sectionId: 'section-1',
+      campus: { institutionId: 'institution-1' },
+    };
+
+    it('lists deleted period slots filtered by institution and search', async () => {
+      prismaMock.periodSlot.findMany.mockResolvedValue([
+        {
+          ...basePeriodSlot,
+          deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+          deletedBy: 'admin-1',
+          deleteReason: null,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-05-06T09:00:00.000Z'),
+        },
+      ]);
+      prismaMock.user.findMany.mockResolvedValueOnce([
+        {
+          id: 'admin-1',
+          name: 'Admin User',
+          email: 'admin@nexus.test',
+          role: UserRole.ADMIN,
+        },
+      ]);
+
+      const result = await service.listDeletedItems(adminUser, {
+        page: 1,
+        limit: 10,
+        entity: RecycleBinEntity.PERIOD_SLOT,
+        search: 'Period',
+      });
+
+      expect(prismaMock.periodSlot.findMany).toHaveBeenCalledWith({
+        where: {
+          deletedAt: { not: null },
+          campus: { institutionId: 'institution-1' },
+          name: { contains: 'Period', mode: 'insensitive' },
+        },
+        select: {
+          id: true,
+          name: true,
+          dayOfWeek: true,
+          periodNumber: true,
+          sectionId: true,
+          campus: { select: { institutionId: true } },
+          deletedAt: true,
+          deletedBy: true,
+          deleteReason: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: { deletedAt: 'desc' },
+      });
+      expect(result).toMatchObject({
+        message: 'Recycle bin items retrieved successfully',
+        data: {
+          total: 1,
+          items: [
+            {
+              entity: RecycleBinEntity.PERIOD_SLOT,
+              id: 'period-slot-1',
+              label: 'Period 1',
+              subtitle: 'MONDAY - Period 1',
+            },
+          ],
+        },
+      });
+    });
+
+    it('restores a soft-deleted period slot and records an audit log', async () => {
+      prismaMock.periodSlot.findFirst.mockResolvedValue({
+        name: 'Period 1',
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.periodSlot.update.mockResolvedValue({
+        id: 'period-slot-1',
+        name: 'Period 1',
+        deletedAt: null,
+        deletedBy: null,
+        deleteReason: null,
+      });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.PERIOD_SLOT,
+        'period-slot-1',
+      );
+
+      expect(prismaMock.periodSlot.update).toHaveBeenCalledWith({
+        where: { id: 'period-slot-1', deletedAt: { not: null } },
+        data: { deletedAt: null, deletedBy: null, deleteReason: null },
+      });
+      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
+        adminUser,
+        expect.objectContaining({
+          action: 'PERIOD_SLOT_RESTORED',
+          entity: 'PeriodSlot',
+          entityId: 'period-slot-1',
+        }),
+      );
+      expect(result).toMatchObject({
+        message: 'Period slot restored successfully',
+        data: { id: 'period-slot-1' },
+      });
+    });
+
+    it('returns 404 restoring a period slot that is not in the recycle bin', async () => {
+      prismaMock.periodSlot.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.PERIOD_SLOT,
+          'missing',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prismaMock.periodSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('blocks an admin from restoring a period slot belonging to another institution', async () => {
+      prismaMock.periodSlot.findFirst.mockResolvedValue({
+        name: 'Period 1',
+        campus: { institutionId: 'institution-2' },
+      });
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.PERIOD_SLOT,
+          'period-slot-1',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.periodSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('permanently deletes a period slot once the retention period has elapsed', async () => {
+      const longAgo = new Date();
+      longAgo.setUTCDate(longAgo.getUTCDate() - 31);
+      prismaMock.periodSlot.findFirst.mockResolvedValue({
+        name: 'Period 1',
+        deletedAt: longAgo,
+        campus: { institutionId: 'institution-1' },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.PERIOD_SLOT,
+        'period-slot-1',
+      );
+
+      expect(prismaMock.periodSlot.delete).toHaveBeenCalledWith({
+        where: { id: 'period-slot-1', deletedAt: { not: null } },
+      });
+      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
+        adminUser,
+        expect.objectContaining({
+          action: 'PERIOD_SLOT_PERMANENTLY_DELETED',
+          entity: 'PeriodSlot',
+          entityId: 'period-slot-1',
+        }),
+      );
+      expect(result).toMatchObject({
+        message: 'Period slot permanently deleted successfully',
+        data: { id: 'period-slot-1' },
+      });
+    });
+
+    it('blocks a permanent delete of a period slot before the retention period has elapsed', async () => {
+      prismaMock.periodSlot.findFirst.mockResolvedValue({
+        name: 'Period 1',
+        deletedAt: new Date(), // deleted moments ago, default retention 30 days
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.PERIOD_SLOT,
+          'period-slot-1',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.periodSlot.delete).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 permanently deleting a period slot that is not in the recycle bin', async () => {
+      prismaMock.periodSlot.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.PERIOD_SLOT,
+          'missing',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prismaMock.periodSlot.delete).not.toHaveBeenCalled();
+    });
+
+    it('refuses to purge a campus that still has an active period slot underneath it', async () => {
+      const longAgo = new Date();
+      longAgo.setUTCDate(longAgo.getUTCDate() - 31);
+      prismaMock.campus.findFirst.mockResolvedValue({
+        id: 'campus-1',
+        name: 'North Campus',
+        location: 'Lahore',
+        institutionId: 'institution-1',
+        deletedAt: longAgo,
+      });
+      prismaMock.periodSlot.count.mockResolvedValueOnce(1);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.CAMPUS,
+          'campus-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('refuses to purge a class that still has an active period slot underneath it', async () => {
+      const longAgo = new Date();
+      longAgo.setUTCDate(longAgo.getUTCDate() - 31);
+      prismaMock.academicClass.findFirst.mockResolvedValue({
+        name: 'Grade 5',
+        deletedAt: longAgo,
+        level: { campus: { institutionId: 'institution-1' } },
+      });
+      prismaMock.periodSlot.count.mockResolvedValueOnce(1);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.CLASS,
+          'class-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('refuses to purge a section that still has an active period slot underneath it', async () => {
+      const longAgo = new Date();
+      longAgo.setUTCDate(longAgo.getUTCDate() - 31);
+      prismaMock.section.findFirst.mockResolvedValue({
+        name: 'Section A',
+        deletedAt: longAgo,
+        class: { level: { campus: { institutionId: 'institution-1' } } },
+      });
+      prismaMock.periodSlot.count.mockResolvedValueOnce(1);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.SECTION,
+          'section-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
     });
   });
 });

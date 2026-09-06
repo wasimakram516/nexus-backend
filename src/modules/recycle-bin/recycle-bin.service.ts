@@ -52,7 +52,8 @@ type ChildModelKey =
   | 'studentFine'
   | 'feeVoucher'
   | 'feePayment'
-  | 'studentEnrollment';
+  | 'studentEnrollment'
+  | 'periodSlot';
 
 interface CountableDelegate {
   count(args: { where: Record<string, unknown> }): Promise<number>;
@@ -151,6 +152,14 @@ const ENTITY_CASCADE_CHILDREN: Partial<
       model: 'studentEnrollment',
       fkField: 'campusId',
     },
+    // M3 (Timetable M1 track, decision #26): PeriodSlot.campusId is
+    // onDelete: Cascade, unlike Notice's SetNull scope FKs — registered
+    // here per M3-SCHEDULING-COMMUNICATION-DESIGN.md § 10.
+    {
+      entity: RecycleBinEntity.PERIOD_SLOT,
+      model: 'periodSlot',
+      fkField: 'campusId',
+    },
   ],
   [RecycleBinEntity.LEVEL]: [
     {
@@ -177,6 +186,12 @@ const ENTITY_CASCADE_CHILDREN: Partial<
       model: 'studentEnrollment',
       fkField: 'classId',
     },
+    // M3 (Timetable M1 track, decision #26).
+    {
+      entity: RecycleBinEntity.PERIOD_SLOT,
+      model: 'periodSlot',
+      fkField: 'classId',
+    },
   ],
   // M2 Phase 3: StudentEnrollment.sectionId is onDelete: Cascade (unlike the
   // old Student.sectionId, which was SetNull) — Section had no cascade
@@ -185,6 +200,12 @@ const ENTITY_CASCADE_CHILDREN: Partial<
     {
       entity: RecycleBinEntity.STUDENT_ENROLLMENT,
       model: 'studentEnrollment',
+      fkField: 'sectionId',
+    },
+    // M3 (Timetable M1 track, decision #26).
+    {
+      entity: RecycleBinEntity.PERIOD_SLOT,
+      model: 'periodSlot',
       fkField: 'sectionId',
     },
   ],
@@ -308,6 +329,8 @@ export class RecycleBinService {
       feePaymentItems,
       academicYearItems,
       studentEnrollmentItems,
+      noticeItems,
+      periodSlotItems,
     ] = await Promise.all([
       query.entity && query.entity !== RecycleBinEntity.USER
         ? Promise.resolve<RecycleBinItem[]>([])
@@ -378,6 +401,12 @@ export class RecycleBinService {
       query.entity && query.entity !== RecycleBinEntity.STUDENT_ENROLLMENT
         ? Promise.resolve<RecycleBinItem[]>([])
         : this.listDeletedStudentEnrollments(institutionId, query.search),
+      query.entity && query.entity !== RecycleBinEntity.NOTICE
+        ? Promise.resolve<RecycleBinItem[]>([])
+        : this.listDeletedNotices(institutionId, query.search),
+      query.entity && query.entity !== RecycleBinEntity.PERIOD_SLOT
+        ? Promise.resolve<RecycleBinItem[]>([])
+        : this.listDeletedPeriodSlots(institutionId, query.search),
     ]);
 
     const combinedItems = [
@@ -404,6 +433,8 @@ export class RecycleBinService {
       ...feePaymentItems,
       ...academicYearItems,
       ...studentEnrollmentItems,
+      ...noticeItems,
+      ...periodSlotItems,
     ].sort(
       (left, right) => right.deletedAt.getTime() - left.deletedAt.getTime(),
     );
@@ -575,6 +606,14 @@ export class RecycleBinService {
         return await this.restoreStudentEnrollment(currentUser, recordId);
       }
 
+      if (entity === RecycleBinEntity.NOTICE) {
+        return await this.restoreNotice(currentUser, recordId);
+      }
+
+      if (entity === RecycleBinEntity.PERIOD_SLOT) {
+        return await this.restorePeriodSlot(currentUser, recordId);
+      }
+
       return await this.restoreCampus(currentUser, recordId);
     } catch (error) {
       this.rethrowRestoreConflict(error, entity);
@@ -673,6 +712,14 @@ export class RecycleBinService {
 
     if (entity === RecycleBinEntity.STUDENT_ENROLLMENT) {
       return this.permanentlyDeleteStudentEnrollment(currentUser, recordId);
+    }
+
+    if (entity === RecycleBinEntity.NOTICE) {
+      return this.permanentlyDeleteNotice(currentUser, recordId);
+    }
+
+    if (entity === RecycleBinEntity.PERIOD_SLOT) {
+      return this.permanentlyDeletePeriodSlot(currentUser, recordId);
     }
 
     return this.permanentlyDeleteCampus(currentUser, recordId);
@@ -1793,6 +1840,88 @@ export class RecycleBinService {
     }));
   }
 
+  private async listDeletedNotices(
+    institutionId: string | null,
+    search?: string,
+  ): Promise<RecycleBinItem[]> {
+    const items = await this.prisma.notice.findMany({
+      where: {
+        deletedAt: { not: null },
+        ...(institutionId ? { institutionId } : {}),
+        ...(search ? { title: { contains: search, mode: 'insensitive' } } : {}),
+      },
+      select: {
+        id: true,
+        title: true,
+        institutionId: true,
+        deletedAt: true,
+        deletedBy: true,
+        deleteReason: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { deletedAt: 'desc' },
+    });
+    return items.map((item) => ({
+      entity: RecycleBinEntity.NOTICE,
+      id: item.id,
+      label: item.title,
+      subtitle: 'Notice',
+      institutionId: item.institutionId,
+      deletedAt: item.deletedAt!,
+      deletedBy: item.deletedBy,
+      deleteReason: item.deleteReason,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      metadata: { title: item.title },
+    }));
+  }
+
+  private async listDeletedPeriodSlots(
+    institutionId: string | null,
+    search?: string,
+  ): Promise<RecycleBinItem[]> {
+    const items = await this.prisma.periodSlot.findMany({
+      where: {
+        deletedAt: { not: null },
+        ...(institutionId ? { campus: { institutionId } } : {}),
+        ...(search ? { name: { contains: search, mode: 'insensitive' } } : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        dayOfWeek: true,
+        periodNumber: true,
+        sectionId: true,
+        campus: { select: { institutionId: true } },
+        deletedAt: true,
+        deletedBy: true,
+        deleteReason: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { deletedAt: 'desc' },
+    });
+    return items.map((item) => ({
+      entity: RecycleBinEntity.PERIOD_SLOT,
+      id: item.id,
+      label: item.name,
+      subtitle: `${item.dayOfWeek} - Period ${item.periodNumber}`,
+      institutionId: item.campus.institutionId,
+      deletedAt: item.deletedAt!,
+      deletedBy: item.deletedBy,
+      deleteReason: item.deleteReason,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      metadata: {
+        name: item.name,
+        dayOfWeek: item.dayOfWeek,
+        periodNumber: item.periodNumber,
+        sectionId: item.sectionId,
+      },
+    }));
+  }
+
   private async restoreUser(currentUser: CurrentUser, userId: string) {
     const target = await this.prisma.user.findFirst({
       where: {
@@ -2099,6 +2228,60 @@ export class RecycleBinService {
     });
     return {
       message: 'Student enrollment restored successfully',
+      data: restored,
+    };
+  }
+
+  private async restoreNotice(currentUser: CurrentUser, noticeId: string) {
+    const item = await this.prisma.notice.findFirst({
+      where: { id: noticeId, deletedAt: { not: null } },
+      select: { id: true, title: true, institutionId: true },
+    });
+    if (!item) throw new NotFoundException('Deleted notice not found.');
+    this.assertInstitutionScope(currentUser, item.institutionId);
+    const restored = await this.prisma.notice.update({
+      where: { id: noticeId, deletedAt: { not: null } },
+      data: { deletedAt: null, deletedBy: null, deleteReason: null },
+    });
+    await this.auditLogService.log(currentUser, {
+      action: 'NOTICE_RESTORED',
+      entity: 'Notice',
+      entityId: noticeId,
+      institutionId: item.institutionId,
+      metadata: { title: item.title },
+    });
+    return {
+      message: 'Notice restored successfully',
+      data: restored,
+    };
+  }
+
+  private async restorePeriodSlot(
+    currentUser: CurrentUser,
+    periodSlotId: string,
+  ) {
+    const item = await this.prisma.periodSlot.findFirst({
+      where: { id: periodSlotId, deletedAt: { not: null } },
+      select: {
+        name: true,
+        campus: { select: { institutionId: true } },
+      },
+    });
+    if (!item) throw new NotFoundException('Deleted period slot not found.');
+    this.assertInstitutionScope(currentUser, item.campus.institutionId!);
+    const restored = await this.prisma.periodSlot.update({
+      where: { id: periodSlotId, deletedAt: { not: null } },
+      data: { deletedAt: null, deletedBy: null, deleteReason: null },
+    });
+    await this.auditLogService.log(currentUser, {
+      action: 'PERIOD_SLOT_RESTORED',
+      entity: 'PeriodSlot',
+      entityId: periodSlotId,
+      institutionId: item.campus.institutionId,
+      metadata: { name: item.name },
+    });
+    return {
+      message: 'Period slot restored successfully',
       data: restored,
     };
   }
@@ -2910,6 +3093,89 @@ export class RecycleBinService {
     return {
       message: 'Student enrollment permanently deleted successfully',
       data: { id: enrollmentId },
+    };
+  }
+
+  private async permanentlyDeleteNotice(
+    currentUser: CurrentUser,
+    noticeId: string,
+  ) {
+    const item = await this.prisma.notice.findFirst({
+      where: { id: noticeId, deletedAt: { not: null } },
+      select: { title: true, deletedAt: true, institutionId: true },
+    });
+    if (!item) throw new NotFoundException('Deleted notice not found.');
+    this.assertInstitutionScope(currentUser, item.institutionId);
+    // No ENTITY_CASCADE_CHILDREN entry needed for NOTICE: every scope FK
+    // (campusId/classId/sectionId) is onDelete: SetNull, and SetNull
+    // relations are outside this map's tracked blast radius by its own
+    // documented convention (§ 10 of M3-SCHEDULING-COMMUNICATION-DESIGN.md).
+    await this.assertPurgeSafe(
+      RecycleBinEntity.NOTICE,
+      noticeId,
+      item.deletedAt!,
+      item.institutionId,
+    );
+    await this.requestContext.runWith({ allowHardDelete: true }, async () => {
+      await this.prisma.notice.delete({
+        where: { id: noticeId, deletedAt: { not: null } },
+      });
+    });
+    await this.auditLogService.log(currentUser, {
+      action: 'NOTICE_PERMANENTLY_DELETED',
+      entity: 'Notice',
+      entityId: noticeId,
+      institutionId: item.institutionId,
+      metadata: { title: item.title },
+    });
+    return {
+      message: 'Notice permanently deleted successfully',
+      data: { id: noticeId },
+    };
+  }
+
+  private async permanentlyDeletePeriodSlot(
+    currentUser: CurrentUser,
+    periodSlotId: string,
+  ) {
+    const item = await this.prisma.periodSlot.findFirst({
+      where: { id: periodSlotId, deletedAt: { not: null } },
+      select: {
+        name: true,
+        deletedAt: true,
+        campus: { select: { institutionId: true } },
+      },
+    });
+    if (!item) throw new NotFoundException('Deleted period slot not found.');
+    this.assertInstitutionScope(currentUser, item.campus.institutionId!);
+    // PeriodSlot has no ENTITY_CASCADE_CHILDREN entries of its own (nothing
+    // FKs into it yet — Attendance.periodId lands with the later, sequential
+    // Attendance dual-mode task, and uses onDelete: SetNull there per § 5.3,
+    // so it will never need one either), so assertNoActiveDescendants below
+    // is a guaranteed no-op walk. It IS registered as a child under
+    // CAMPUS/CLASS/SECTION (§ 10) — permanently deleting one of those still
+    // refuses while an active PeriodSlot exists underneath it.
+    await this.assertPurgeSafe(
+      RecycleBinEntity.PERIOD_SLOT,
+      periodSlotId,
+      item.deletedAt!,
+      item.campus.institutionId,
+    );
+    await this.requestContext.runWith({ allowHardDelete: true }, async () => {
+      await this.prisma.periodSlot.delete({
+        where: { id: periodSlotId, deletedAt: { not: null } },
+      });
+    });
+    await this.auditLogService.log(currentUser, {
+      action: 'PERIOD_SLOT_PERMANENTLY_DELETED',
+      entity: 'PeriodSlot',
+      entityId: periodSlotId,
+      institutionId: item.campus.institutionId,
+      metadata: { name: item.name },
+    });
+    return {
+      message: 'Period slot permanently deleted successfully',
+      data: { id: periodSlotId },
     };
   }
 

@@ -37,6 +37,8 @@ export const PLAN_BLUEPRINTS: PlanBlueprint[] = [
       ModuleKey.FINANCE,
       ModuleKey.PEOPLE,
       ModuleKey.REALTIME,
+      ModuleKey.NOTICES,
+      ModuleKey.TIMETABLE,
     ],
     limits: {
       maxCampuses: 1,
@@ -62,6 +64,8 @@ export const PLAN_BLUEPRINTS: PlanBlueprint[] = [
       ModuleKey.PEOPLE,
       ModuleKey.REPORTING,
       ModuleKey.REALTIME,
+      ModuleKey.NOTICES,
+      ModuleKey.TIMETABLE,
     ],
     limits: {
       maxCampuses: 3,
@@ -89,6 +93,8 @@ export const PLAN_BLUEPRINTS: PlanBlueprint[] = [
       ModuleKey.EXAMINATIONS,
       ModuleKey.DOCUMENTS,
       ModuleKey.REALTIME,
+      ModuleKey.NOTICES,
+      ModuleKey.TIMETABLE,
     ],
     limits: {
       maxCampuses: 10,

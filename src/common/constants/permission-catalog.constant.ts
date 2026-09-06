@@ -200,6 +200,24 @@ export const PERMISSION_CATALOG: readonly PermissionFeatureDef[] = [
     actions: ['create', 'read', 'delete'],
   },
 
+  // Notices (M3, decision #24)
+  {
+    key: 'notices',
+    label: 'Notices',
+    module: ModuleKey.NOTICES,
+    actions: ALL_ACTIONS,
+  },
+
+  // Timetable M1 (M3, decision #26). Catalog key names the resource
+  // (PeriodSlot), not the module, matching this catalog's own dominant
+  // convention (see M3-SCHEDULING-COMMUNICATION-DESIGN.md § 6).
+  {
+    key: 'period_slots',
+    label: 'Period Slots',
+    module: ModuleKey.TIMETABLE,
+    actions: ALL_ACTIONS,
+  },
+
   // Administrative — not gated by a plan module
   { key: 'users', label: 'Users', module: null, actions: ALL_ACTIONS },
   {

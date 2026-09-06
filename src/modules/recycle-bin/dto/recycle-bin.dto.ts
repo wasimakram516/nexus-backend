@@ -26,6 +26,8 @@ export enum RecycleBinEntity {
   ROLE = 'role',
   ACADEMIC_YEAR = 'academic-year',
   STUDENT_ENROLLMENT = 'student-enrollment',
+  NOTICE = 'notice',
+  PERIOD_SLOT = 'period-slot',
 }
 
 export class ListRecycleBinQueryDto extends PaginationQueryDto {

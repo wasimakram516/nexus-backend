@@ -133,4 +133,8 @@ export enum ModuleKey {
   EXAMINATIONS = 'EXAMINATIONS',
   DOCUMENTS = 'DOCUMENTS',
   REALTIME = 'REALTIME',
+  // M3 (Notices track, decision #24).
+  NOTICES = 'NOTICES',
+  // M3 (Timetable M1 track, decision #26).
+  TIMETABLE = 'TIMETABLE',
 }
