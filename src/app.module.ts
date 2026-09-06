@@ -25,6 +25,8 @@ import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { RecycleBinModule } from './modules/recycle-bin/recycle-bin.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { SchedulerModule } from './modules/scheduler/scheduler.module';
+import { NoticesModule } from './modules/notices/notices.module';
+import { TimetableModule } from './modules/timetable/timetable.module';
 
 @Module({
   imports: [
@@ -56,6 +58,8 @@ import { SchedulerModule } from './modules/scheduler/scheduler.module';
     AuditLogsModule,
     RecycleBinModule,
     SchedulerModule,
+    NoticesModule,
+    TimetableModule,
   ],
   providers: [
     AppLoggerService,
