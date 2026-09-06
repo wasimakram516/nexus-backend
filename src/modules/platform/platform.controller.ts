@@ -24,6 +24,12 @@ import {
   CreateAcademicYearDto,
   UpdateAcademicYearDto,
 } from '../academics/dto/academics.dto';
+import {
+  CreateNoticeDto,
+  ListNoticesQueryDto,
+  UpdateNoticeDto,
+} from '../notices/dto/notices.dto';
+import { NoticesService } from '../notices/notices.service';
 import { CreateRoleDto, UpdateRoleDto } from '../roles/dto/roles.dto';
 import { RolesService } from '../roles/roles.service';
 import {
@@ -49,6 +55,7 @@ export class PlatformController {
     private readonly platformService: PlatformService,
     private readonly rolesService: RolesService,
     private readonly academicsService: AcademicsService,
+    private readonly noticesService: NoticesService,
   ) {}
 
   @Post('plans')
@@ -426,6 +433,92 @@ export class PlatformController {
       institutionId,
       academicYearId,
       currentUser,
+      dto.reason,
+    );
+  }
+
+  @Post('institutions/:institutionId/notices')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Create a notice',
+    description:
+      'Superadmin escape hatch to create a notice for any institution. Institution admins use POST /notices instead.',
+  })
+  createNoticeForInstitution(
+    @Param('institutionId') institutionId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: CreateNoticeDto,
+  ) {
+    return this.noticesService.createNotice(institutionId, currentUser, dto);
+  }
+
+  @Get('institutions/:institutionId/notices')
+  @Version('1')
+  @ApiOperation({
+    summary: 'List notices',
+    description:
+      'Returns the admin/staff management list of notices for an institution from the platform scope.',
+  })
+  listNoticesForInstitution(
+    @Param('institutionId') institutionId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: ListNoticesQueryDto,
+  ) {
+    return this.noticesService.listNotices(institutionId, currentUser, query);
+  }
+
+  @Get('institutions/:institutionId/notices/:noticeId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get a notice',
+    description: 'Returns one notice for inspection or editing.',
+  })
+  getNoticeForInstitution(
+    @Param('institutionId') institutionId: string,
+    @Param('noticeId') noticeId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.noticesService.getNotice(institutionId, currentUser, noticeId);
+  }
+
+  @Patch('institutions/:institutionId/notices/:noticeId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Update a notice',
+    description:
+      'Updates an existing notice while preserving the institution scope.',
+  })
+  updateNoticeForInstitution(
+    @Param('institutionId') institutionId: string,
+    @Param('noticeId') noticeId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: UpdateNoticeDto,
+  ) {
+    return this.noticesService.updateNotice(
+      institutionId,
+      currentUser,
+      noticeId,
+      dto,
+    );
+  }
+
+  @Delete('institutions/:institutionId/notices/:noticeId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Soft-delete a notice',
+    description:
+      'Moves a notice to the recycle bin instead of permanently removing it immediately.',
+  })
+  deleteNoticeForInstitution(
+    @Param('institutionId') institutionId: string,
+    @Param('noticeId') noticeId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: DeleteRecordDto,
+  ) {
+    return this.noticesService.deleteNotice(
+      institutionId,
+      currentUser,
+      noticeId,
       dto.reason,
     );
   }
