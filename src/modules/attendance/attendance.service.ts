@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -6,6 +7,7 @@ import {
 } from '@nestjs/common';
 import {
   AttendanceStatus as PrismaAttendanceStatus,
+  EnrollmentStatus,
   ModuleKey,
   UserRole,
   UserRole as PrismaUserRole,
@@ -23,8 +25,28 @@ import {
   CheckOutDto,
   ListAttendanceQueryDto,
   MarkLeaveDto,
+  PeriodRosterQueryDto,
   UpdateAttendanceRecordDto,
 } from './dto/attendance.dto';
+
+/** Institution-level attendance capture granularity (§ 5.3, § 9 of
+ *  M3-SCHEDULING-COMMUNICATION-DESIGN.md). Governs STUDENT bulk-marking and
+ *  the auto-absent job only — STAFF check-in/out/leave stays DAILY-only
+ *  regardless of this setting. */
+export type AttendanceMode = 'DAILY' | 'PERIOD';
+
+/** Sentinel periodKey value for every non-period-scoped Attendance row —
+ *  every DAILY-mode row, plus every STAFF/ADMIN row regardless of mode. */
+const DAILY_PERIOD_KEY = 'DAILY';
+
+/** Roster entry shape shared by getPeriodRoster(), bulkMark()'s
+ *  period-membership check, and markPeriodAbsentees(). */
+interface PeriodRosterStudent {
+  studentId: string;
+  userId: string;
+  name: string;
+  regNo: string;
+}
 
 @Injectable()
 export class AttendanceService {
@@ -189,6 +211,27 @@ export class AttendanceService {
       currentUser,
       ModuleKey.ATTENDANCE,
     );
+
+    if (dto.periodId) {
+      // Manual equivalent of the scheduler's PERIOD-mode branch (§ 7.2/§
+      // 7.4) — campusId is re-resolved from the period slot itself (never
+      // trusted from the client) so access is checked against where the
+      // period actually lives, not wherever the caller claims dto.campusId
+      // to be.
+      const periodSlot = await this.prisma.periodSlot.findFirst({
+        where: { id: dto.periodId, deletedAt: null },
+        select: { campusId: true },
+      });
+      if (!periodSlot) {
+        throw new NotFoundException('Period slot not found.');
+      }
+      await this.campusAccessService.assertCampusAccess(
+        currentUser,
+        periodSlot.campusId,
+      );
+      return this.markPeriodAbsentees(dto.periodId, dto.date);
+    }
+
     await this.campusAccessService.assertCampusAccess(
       currentUser,
       dto.campusId,
@@ -237,9 +280,95 @@ export class AttendanceService {
   }
 
   /**
+   * PERIOD-mode sibling to markCampusAbsentees(), scoped to one period
+   * slot's roster instead of a whole campus's day (§ 7.2, § 12 Track B Step
+   * 2). Kept guard-free for the same reason as its campus-wide counterpart
+   * — the scheduler calls it directly per due PeriodSlot without a
+   * synthetic actor. Idempotent: only creates rows for roster students who
+   * don't already have an attendance row for this exact (date, periodId).
+   * STUDENT-only by construction (the roster comes from StudentEnrollment)
+   * — staff attendance never runs through this path (§ 9's design call).
+   *
+   * @param {string} periodSlotId - PeriodSlot to sweep.
+   * @param {string} date - Date-only string ("YYYY-MM-DD").
+   * @returns {Promise<{message: string, data: {count: number}}>}
+   * @throws {NotFoundException} If the period slot doesn't exist.
+   */
+  async markPeriodAbsentees(periodSlotId: string, date: string) {
+    const periodSlot = await this.prisma.periodSlot.findFirst({
+      where: { id: periodSlotId, deletedAt: null },
+      select: { id: true, campusId: true, classId: true, sectionId: true },
+    });
+    if (!periodSlot) {
+      throw new NotFoundException('Period slot not found.');
+    }
+
+    const institutionId = await this.resolveInstitutionIdForCampus(
+      periodSlot.campusId,
+    );
+    const roster = await this.resolvePeriodRosterStudents(
+      periodSlot,
+      institutionId,
+    );
+    if (!roster.length) {
+      return {
+        message: 'Absent students marked successfully',
+        data: { count: 0 },
+      };
+    }
+
+    const day = this.toDateOnly(date);
+    const existing = await this.prisma.attendance.findMany({
+      where: {
+        campusId: periodSlot.campusId,
+        date: day,
+        periodId: periodSlot.id,
+        userId: { in: roster.map((entry) => entry.userId) },
+      },
+      select: { userId: true },
+    });
+    const existingIds = new Set(
+      existing.map((item: { userId: string }) => item.userId),
+    );
+
+    const data = roster
+      .filter((entry) => !existingIds.has(entry.userId))
+      .map((entry) => ({
+        userId: entry.userId,
+        role: PrismaUserRole.STUDENT,
+        campusId: periodSlot.campusId,
+        date: day,
+        status: AttendanceStatus.ABSENT,
+        periodId: periodSlot.id,
+        periodKey: periodSlot.id,
+      }));
+
+    if (data.length) {
+      await this.prisma.attendance.createMany({ data });
+    }
+
+    return {
+      message: 'Absent students marked successfully',
+      data: { count: data.length },
+    };
+  }
+
+  /**
    * Register-style marking: upserts one attendance row per valid entry for
    * the campus/date. Invalid entries are skipped and reported, never fatal.
-   * Punch times (checkIn/checkOut) are facts — bulk marking never touches them.
+   * Punch times (checkIn/checkOut) are facts — bulk marking never touches
+   * them.
+   *
+   * Attendance dual mode (§ 5.3, § 9): `dto.periodId` is rejected outright
+   * when the institution is DAILY-mode, and required whenever this batch
+   * includes STUDENT entries in a PERIOD-mode institution — there's no
+   * whole-day bypass once PERIOD mode is on. It applies to STUDENT entries
+   * only: STAFF/ADMIN entries in the same batch always stay DAILY-keyed,
+   * matching the design call that staff attendance is unaffected by this
+   * feature.
+   *
+   * @throws {BadRequestException} If periodId is supplied in DAILY mode, omitted for a STUDENT entry in PERIOD mode, or the period slot doesn't belong to this campus.
+   * @throws {NotFoundException} If periodId doesn't resolve to a period slot.
    */
   async bulkMark(currentUser: CurrentUser, dto: BulkMarkAttendanceDto) {
     await this.moduleAccessService.assertModuleEnabledForUser(
@@ -250,6 +379,38 @@ export class AttendanceService {
       currentUser,
       dto.campusId,
     );
+
+    const institutionId = await this.resolveInstitutionIdForCampus(
+      dto.campusId,
+    );
+    const mode = await this.resolveAttendanceMode(institutionId);
+
+    if (mode === 'DAILY' && dto.periodId) {
+      throw new BadRequestException(
+        'This institution is in DAILY attendance mode; periodId is not allowed on bulk marking.',
+      );
+    }
+
+    let periodRosterUserIds: Set<string> | null = null;
+    if (dto.periodId) {
+      const periodSlot = await this.prisma.periodSlot.findFirst({
+        where: { id: dto.periodId, deletedAt: null },
+        select: { id: true, campusId: true, classId: true, sectionId: true },
+      });
+      if (!periodSlot) {
+        throw new NotFoundException('Period slot not found.');
+      }
+      if (periodSlot.campusId !== dto.campusId) {
+        throw new BadRequestException(
+          'The selected period slot does not belong to this campus.',
+        );
+      }
+      const roster = await this.resolvePeriodRosterStudents(
+        periodSlot,
+        institutionId,
+      );
+      periodRosterUserIds = new Set(roster.map((entry) => entry.userId));
+    }
 
     const day = this.toDateOnly(dto.date);
     const skipped: Array<{ userId: string; reason: string }> = [];
@@ -274,6 +435,13 @@ export class AttendanceService {
     const studentIds = users
       .filter((user) => user.role === PrismaUserRole.STUDENT)
       .map((user) => user.id);
+
+    if (mode === 'PERIOD' && !dto.periodId && studentIds.length > 0) {
+      throw new BadRequestException(
+        'This institution is in PERIOD attendance mode; periodId is required when bulk-marking student attendance.',
+      );
+    }
+
     // STAFF covers both teaching and non-teaching employees; membership is
     // proven by EITHER a StaffProfile at this campus (teaching staff) OR
     // an explicit UserCampus assignment (non-teaching staff, campus admins).
@@ -317,6 +485,7 @@ export class AttendanceService {
       status: AttendanceStatus;
       halfDay?: boolean;
       remarks?: string;
+      periodKey: string;
     }> = [];
 
     for (const entry of entries) {
@@ -336,12 +505,26 @@ export class AttendanceService {
         skipped.push({ userId: entry.userId, reason: 'NOT_IN_CAMPUS' });
         continue;
       }
+
+      // periodId only ever scopes STUDENT entries — STAFF/ADMIN entries in
+      // the same batch stay DAILY-keyed regardless (§ 9's design call).
+      const isStudent = user.role === PrismaUserRole.STUDENT;
+      if (
+        isStudent &&
+        periodRosterUserIds &&
+        !periodRosterUserIds.has(entry.userId)
+      ) {
+        skipped.push({ userId: entry.userId, reason: 'NOT_IN_PERIOD_ROSTER' });
+        continue;
+      }
+
       valid.push({
         userId: entry.userId,
         role: user.role,
         status: entry.status,
         halfDay: entry.halfDay,
         remarks: entry.remarks,
+        periodKey: isStudent && dto.periodId ? dto.periodId : DAILY_PERIOD_KEY,
       });
     }
 
@@ -352,10 +535,11 @@ export class AttendanceService {
     for (const entry of valid) {
       await this.prisma.attendance.upsert({
         where: {
-          userId_campusId_date_activeScopeKey: {
+          userId_campusId_date_periodKey_activeScopeKey: {
             userId: entry.userId,
             campusId: dto.campusId,
             date: day,
+            periodKey: entry.periodKey,
             activeScopeKey: 'ACTIVE',
           },
         },
@@ -365,6 +549,10 @@ export class AttendanceService {
           campusId: dto.campusId,
           date: day,
           status: entry.status,
+          periodKey: entry.periodKey,
+          ...(entry.periodKey !== DAILY_PERIOD_KEY
+            ? { periodId: entry.periodKey }
+            : {}),
           ...(entry.halfDay !== undefined ? { halfDay: entry.halfDay } : {}),
           ...(entry.remarks !== undefined ? { remarks: entry.remarks } : {}),
         },
@@ -380,6 +568,81 @@ export class AttendanceService {
       message: 'Attendance marked successfully',
       data: { marked: valid.length, skipped },
     };
+  }
+
+  /**
+   * Backs the PERIOD-mode marking grid (§ 7.2): the enrolled ACTIVE
+   * students for a period slot's (classId, sectionId) at the institution's
+   * current academic year, each annotated with any existing attendance
+   * status for that exact (date, periodId). Returns an empty roster (not an
+   * error) when there's no current academic year set — the same
+   * "no current context = empty result" convention as
+   * PeopleService.attachCurrentEnrollment.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {PeriodRosterQueryDto} query - periodId + date to resolve the roster/attendance snapshot for.
+   * @returns {Promise<{message: string, data: object[]}>}
+   * @throws {NotFoundException} If the period slot doesn't exist.
+   * @throws {ForbiddenException} If the caller lacks access to the period slot's campus.
+   */
+  async getPeriodRoster(currentUser: CurrentUser, query: PeriodRosterQueryDto) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.ATTENDANCE,
+    );
+
+    const periodSlot = await this.prisma.periodSlot.findFirst({
+      where: { id: query.periodId, deletedAt: null },
+      select: { id: true, campusId: true, classId: true, sectionId: true },
+    });
+    if (!periodSlot) {
+      throw new NotFoundException('Period slot not found.');
+    }
+    await this.campusAccessService.assertCampusAccess(
+      currentUser,
+      periodSlot.campusId,
+    );
+
+    const institutionId = await this.resolveInstitutionIdForCampus(
+      periodSlot.campusId,
+    );
+    const roster = await this.resolvePeriodRosterStudents(
+      periodSlot,
+      institutionId,
+    );
+
+    if (!roster.length) {
+      return { message: 'Period roster retrieved successfully', data: [] };
+    }
+
+    const day = this.toDateOnly(query.date);
+    const existing = await this.prisma.attendance.findMany({
+      where: {
+        campusId: periodSlot.campusId,
+        date: day,
+        periodId: periodSlot.id,
+        userId: { in: roster.map((entry) => entry.userId) },
+      },
+      select: { userId: true, status: true, halfDay: true, remarks: true },
+    });
+    const attendanceByUserId = new Map(
+      existing.map((item) => [item.userId, item] as const),
+    );
+
+    const data = roster.map((entry) => {
+      const attendance = attendanceByUserId.get(entry.userId);
+      return {
+        userId: entry.userId,
+        studentId: entry.studentId,
+        name: entry.name,
+        regNo: entry.regNo,
+        status: attendance?.status ?? null,
+        halfDay: attendance?.halfDay ?? false,
+        remarks: attendance?.remarks ?? null,
+      };
+    });
+
+    return { message: 'Period roster retrieved successfully', data };
   }
 
   async listAttendance(
@@ -633,6 +896,7 @@ export class AttendanceService {
       ...(effectiveUserId ? { userId: effectiveUserId } : {}),
       ...(query.role ? { role: query.role } : {}),
       ...(query.status ? { status: query.status } : {}),
+      ...(query.periodId ? { periodId: query.periodId } : {}),
       ...(dateFilter
         ? { date: dateFilter }
         : dateFrom || dateTo
@@ -706,5 +970,114 @@ export class AttendanceService {
   private toDateOnly(value: string | Date) {
     const date = value instanceof Date ? value : new Date(value);
     return new Date(date.toISOString().slice(0, 10));
+  }
+
+  /**
+   * Reads the `attendance` InstitutionSetting (§ 5.3, § 7.2), following the
+   * exact existing convention of `payroll.perDayBasis`
+   * (FinanceService.resolvePerDayBasis) / `student_admission`
+   * (PeopleService.resolveRegNoSettings): same generic settings table,
+   * defaulting to DAILY when unset or malformed. Public — the scheduler
+   * calls this directly to branch its auto-absent sweep per institution.
+   *
+   * @param {string | null} institutionId - Target institution id. Null (a campus not yet linked to an institution) fails safe to DAILY.
+   * @returns {Promise<AttendanceMode>}
+   */
+  async resolveAttendanceMode(
+    institutionId: string | null,
+  ): Promise<AttendanceMode> {
+    if (!institutionId) {
+      return 'DAILY';
+    }
+
+    const setting = await this.prisma.institutionSetting.findUnique({
+      where: {
+        institutionId_key_activeScopeKey: {
+          institutionId,
+          key: 'attendance',
+          activeScopeKey: 'ACTIVE',
+        },
+      },
+      select: { value: true },
+    });
+
+    const value = setting?.value as { mode?: unknown } | undefined;
+    return value?.mode === 'PERIOD' ? 'PERIOD' : 'DAILY';
+  }
+
+  /**
+   * Resolves a campus's institutionId — the FK hop attendance mode
+   * resolution needs but bulk/period marking doesn't otherwise look up.
+   * Never trusted from the client, matching this codebase's "resolve scope
+   * server-side" convention (see TimetableService.resolveSectionScope).
+   *
+   * @param {string} campusId
+   * @returns {Promise<string | null>} Null for the rare not-yet-linked campus (see resolveAttendanceMode's fail-safe default).
+   */
+  private async resolveInstitutionIdForCampus(
+    campusId: string,
+  ): Promise<string | null> {
+    const campus = await this.prisma.campus.findUniqueOrThrow({
+      where: { id: campusId },
+      select: { institutionId: true },
+    });
+    return campus.institutionId;
+  }
+
+  /**
+   * Resolves a period slot's roster: the enrolled ACTIVE students for its
+   * (classId, sectionId) at the institution's current academic year.
+   * Mirrors PeopleService.attachCurrentEnrollment's resolution shape
+   * (institution.currentAcademicYearId, then a StudentEnrollment lookup at
+   * that year) rather than re-deriving it — same "no current academic year
+   * = empty result" convention, never a throw. Shared by getPeriodRoster(),
+   * bulkMark()'s period-membership check, and markPeriodAbsentees().
+   *
+   * @param {{classId: string, sectionId: string}} periodSlot
+   * @param {string | null} institutionId
+   * @returns {Promise<PeriodRosterStudent[]>}
+   */
+  private async resolvePeriodRosterStudents(
+    periodSlot: { classId: string; sectionId: string },
+    institutionId: string | null,
+  ): Promise<PeriodRosterStudent[]> {
+    if (!institutionId) {
+      return [];
+    }
+
+    const institution = await this.prisma.institution.findUnique({
+      where: { id: institutionId },
+      select: { currentAcademicYearId: true },
+    });
+    if (!institution?.currentAcademicYearId) {
+      return [];
+    }
+
+    const enrollments = await this.prisma.studentEnrollment.findMany({
+      where: {
+        classId: periodSlot.classId,
+        sectionId: periodSlot.sectionId,
+        academicYearId: institution.currentAcademicYearId,
+        status: EnrollmentStatus.ACTIVE,
+        deletedAt: null,
+      },
+      select: {
+        student: {
+          select: {
+            id: true,
+            userId: true,
+            regNo: true,
+            user: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    return enrollments.map((enrollment) => ({
+      studentId: enrollment.student.id,
+      userId: enrollment.student.userId,
+      name: enrollment.student.user.name,
+      regNo: enrollment.student.regNo,
+    }));
   }
 }

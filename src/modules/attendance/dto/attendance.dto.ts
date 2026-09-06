@@ -38,6 +38,14 @@ export class MarkLeaveDto {
 export class AutoAbsentDto {
   @ApiProperty() @IsUUID() campusId!: string;
   @ApiProperty() @IsDateString() date!: string;
+
+  @ApiPropertyOptional({
+    description:
+      "PERIOD-mode only: when given, sweeps this period slot's roster instead of the whole campus for the given date (see AttendanceService.markPeriodAbsentees).",
+  })
+  @IsOptional()
+  @IsUUID()
+  periodId?: string;
 }
 
 export class BulkMarkEntryDto {
@@ -63,6 +71,14 @@ export class BulkMarkAttendanceDto {
   @IsDateString()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   date!: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Attendance dual mode (§ 5.3): forbidden when the institution is in DAILY mode, required whenever this batch includes STUDENT entries in PERIOD mode. Applies only to the STUDENT entries in `entries` — STAFF/ADMIN entries always stay DAILY-keyed regardless of this value.',
+  })
+  @IsOptional()
+  @IsUUID()
+  periodId?: string;
 
   @ApiProperty({ type: [BulkMarkEntryDto] })
   @IsArray()
@@ -99,4 +115,23 @@ export class ListAttendanceQueryDto {
   @ApiPropertyOptional() @IsOptional() @IsDateString() date?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() dateFrom?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() dateTo?: string;
+  @ApiPropertyOptional({
+    description:
+      'Filters to attendance rows scoped to this period slot (§ 5.3).',
+  })
+  @IsOptional()
+  @IsUUID()
+  periodId?: string;
+}
+
+export class PeriodRosterQueryDto {
+  @ApiProperty() @IsUUID() periodId!: string;
+  @ApiProperty({
+    example: '2026-06-12',
+    description:
+      "Date-only string, matching BulkMarkAttendanceDto.date's convention.",
+  })
+  @IsDateString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  date!: string;
 }

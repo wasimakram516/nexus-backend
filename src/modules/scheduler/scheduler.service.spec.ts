@@ -11,12 +11,18 @@ describe('SchedulerService', () => {
 
   const prismaMock = {
     campus: { findMany: jest.fn() },
+    periodSlot: { findMany: jest.fn() },
     feeVoucher: { findMany: jest.fn(), updateMany: jest.fn() },
     institutionSubscription: { findMany: jest.fn(), updateMany: jest.fn() },
   };
 
   const attendanceServiceMock = {
     markCampusAbsentees: jest.fn(),
+    markPeriodAbsentees: jest.fn(),
+    // Attendance dual mode (§ 5.3): defaults to DAILY so every pre-existing
+    // test below (all written against the DAILY-mode job) keeps behaving
+    // exactly as before without needing to know this call exists.
+    resolveAttendanceMode: jest.fn().mockResolvedValue('DAILY'),
   };
 
   const moduleAccessServiceMock = {
@@ -184,6 +190,85 @@ describe('SchedulerService', () => {
 
       expect(attendanceServiceMock.markCampusAbsentees).toHaveBeenCalled();
       expect(auditLogServiceMock.log).not.toHaveBeenCalled();
+    });
+
+    it('branches to markPeriodAbsentees for due period slots in a PERIOD-mode institution, alongside (not instead of) the campus-wide staff sweep', async () => {
+      // System time is 2026-07-18T20:00:00.000Z (Saturday) per beforeEach.
+      prismaMock.campus.findMany.mockResolvedValue([
+        {
+          id: 'campus-1',
+          institutionId: 'institution-1',
+          staffEndTime: '17:00',
+          studentEndTime: '15:00',
+        },
+      ]);
+      moduleAccessServiceMock.getInstitutionRuntimeConfig.mockResolvedValue(
+        activeRuntimeConfig,
+      );
+      attendanceServiceMock.resolveAttendanceMode.mockResolvedValue('PERIOD');
+      attendanceServiceMock.markCampusAbsentees.mockResolvedValue({
+        message: 'Absent users marked successfully',
+        data: { count: 1 },
+      });
+      prismaMock.periodSlot.findMany.mockResolvedValue([
+        // Already ended (18:00 < 20:00 system time) — due.
+        { id: 'period-1', endTime: '18:00' },
+        // Not yet ended — not due this run.
+        { id: 'period-2', endTime: '23:00' },
+      ]);
+      attendanceServiceMock.markPeriodAbsentees.mockResolvedValue({
+        message: 'Absent students marked successfully',
+        data: { count: 2 },
+      });
+
+      await service.runAutoAbsentJob();
+
+      // Staff coverage (campus-wide sweep) is unaffected by PERIOD mode.
+      expect(attendanceServiceMock.markCampusAbsentees).toHaveBeenCalledWith(
+        'campus-1',
+        '2026-07-18',
+      );
+      // Only the due period slot is swept.
+      expect(attendanceServiceMock.markPeriodAbsentees).toHaveBeenCalledTimes(
+        1,
+      );
+      expect(attendanceServiceMock.markPeriodAbsentees).toHaveBeenCalledWith(
+        'period-1',
+        '2026-07-18',
+      );
+      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
+        null,
+        expect.objectContaining({
+          action: 'ATTENDANCE_AUTO_ABSENT_PERIOD',
+          institutionId: 'institution-1',
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() is intentionally typed `any` by @types/jest
+          metadata: expect.objectContaining({ periodSlotId: 'period-1' }),
+        }),
+      );
+    });
+
+    it('never queries period slots for a DAILY-mode institution', async () => {
+      prismaMock.campus.findMany.mockResolvedValue([
+        {
+          id: 'campus-1',
+          institutionId: 'institution-1',
+          staffEndTime: '17:00',
+          studentEndTime: '15:00',
+        },
+      ]);
+      moduleAccessServiceMock.getInstitutionRuntimeConfig.mockResolvedValue(
+        activeRuntimeConfig,
+      );
+      attendanceServiceMock.resolveAttendanceMode.mockResolvedValue('DAILY');
+      attendanceServiceMock.markCampusAbsentees.mockResolvedValue({
+        message: 'Absent users marked successfully',
+        data: { count: 0 },
+      });
+
+      await service.runAutoAbsentJob();
+
+      expect(prismaMock.periodSlot.findMany).not.toHaveBeenCalled();
+      expect(attendanceServiceMock.markPeriodAbsentees).not.toHaveBeenCalled();
     });
   });
 

@@ -26,6 +26,7 @@ import {
   CheckOutDto,
   ListAttendanceQueryDto,
   MarkLeaveDto,
+  PeriodRosterQueryDto,
   UpdateAttendanceRecordDto,
 } from './dto/attendance.dto';
 
@@ -137,6 +138,24 @@ export class AttendanceController {
     @Query() query: ListAttendanceQueryDto,
   ) {
     return this.attendanceService.getAttendanceSummary(currentUser, query);
+  }
+
+  // Registered before `:attendanceId` — same segment count ('period-roster'
+  // vs. ':attendanceId'), same Nest route-collision class flagged for
+  // `notices/for-me` vs. `:id` in § 7.3 of the design doc.
+  @Get('period-roster')
+  @Version('1')
+  @RequirePermission('attendance', 'update')
+  @ApiOperation({
+    summary: 'Get the PERIOD-mode marking roster',
+    description:
+      "Returns the enrolled ACTIVE students for a period slot's class/section at the institution's current academic year, each annotated with any existing attendance status for the given date and period — the shape a marking grid pre-populates from.",
+  })
+  getPeriodRoster(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: PeriodRosterQueryDto,
+  ) {
+    return this.attendanceService.getPeriodRoster(currentUser, query);
   }
 
   @Get(':attendanceId')
