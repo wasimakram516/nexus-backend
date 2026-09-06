@@ -14,6 +14,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { PERMISSION_CATALOG } from '../../common/constants/permission-catalog.constant';
+import { MODULE_CATALOG } from '../../common/constants/module-catalog.constant';
 import { DeleteRecordDto } from '../../common/dto/delete-record.dto';
 import { UserRole } from '../../common/enums/domain.enums';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -68,6 +69,21 @@ export class RolesController {
     return {
       message: 'Permission catalog retrieved successfully',
       data: PERMISSION_CATALOG,
+    };
+  }
+
+  @Get('module-catalog')
+  @Version('1')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Get the module catalog',
+    description:
+      'Returns the static list of every ModuleKey with its display label and description — the single source of truth the institution-creation wizard, entitlements editor, and plan blueprint editor all render from, so a new module never has to be hand-added to multiple hardcoded frontend lists again.',
+  })
+  getModuleCatalog() {
+    return {
+      message: 'Module catalog retrieved successfully',
+      data: MODULE_CATALOG,
     };
   }
 
