@@ -4,7 +4,9 @@ import { Global, Module } from '@nestjs/common';
 import { CampusAccessService } from '../common/services/campus-access.service';
 import { EntityCustomFieldsService } from '../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../common/services/module-access.service';
+import { TimezoneResolverService } from '../common/services/timezone-resolver.service';
 import { UserPermissionsService } from '../common/services/user-permissions.service';
+import { WorkingDayResolverService } from '../common/services/working-day-resolver.service';
 import { PrismaService } from './prisma.service';
 
 @Global()
@@ -17,6 +19,8 @@ import { PrismaService } from './prisma.service';
     EntityCustomFieldsService,
     ModuleAccessService,
     UserPermissionsService,
+    TimezoneResolverService,
+    WorkingDayResolverService,
   ],
   exports: [
     PrismaService,
@@ -26,6 +30,8 @@ import { PrismaService } from './prisma.service';
     EntityCustomFieldsService,
     ModuleAccessService,
     UserPermissionsService,
+    TimezoneResolverService,
+    WorkingDayResolverService,
   ],
 })
 export class PrismaModule {}

@@ -14,6 +14,7 @@ import { CustomFieldEntity } from '../../common/constants/custom-field-entities.
 import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
+import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
 import { ModuleKey } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CampusAccessService } from '../../common/services/campus-access.service';
@@ -35,6 +36,7 @@ export class CampusesService {
     private readonly entityCustomFieldsService: EntityCustomFieldsService,
     private readonly moduleAccessService: ModuleAccessService,
     private readonly requestContext: RequestContextService,
+    private readonly timezoneResolver: TimezoneResolverService,
   ) {}
 
   async createCampus(currentUser: CurrentUser, dto: CreateCampusDto) {
@@ -42,6 +44,9 @@ export class CampusesService {
       currentUser,
       ModuleKey.ACADEMICS,
     );
+    if (dto.timezone) {
+      this.timezoneResolver.assertValidTimezone(dto.timezone);
+    }
     const institutionId = this.resolveInstitutionId(
       currentUser,
       dto.institutionId,
@@ -49,33 +54,36 @@ export class CampusesService {
     await this.ensureInstitutionExists(institutionId);
     await this.assertCampusLimit(institutionId);
     const { customFields, ...campusData } = dto;
-    const campus = await this.prisma.campus.create({
-      data: {
-        ...campusData,
+    const campus = await this.entityCustomFieldsService.saveRecord(
+      {
         institutionId,
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.CAMPUS,
+        values: customFields,
+        create: true,
       },
-    });
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.ACADEMICS,
-      entityType: CustomFieldEntity.CAMPUS,
-      entityId: campus.id,
-      values: customFields,
-    });
+      async (transaction) => {
+        const record = await transaction.campus.create({
+          data: { ...campusData, institutionId },
+        });
+        await this.auditLogService.log(
+          currentUser,
+          {
+            action: 'CAMPUS_CREATED',
+            entity: 'Campus',
+            entityId: record.id,
+            institutionId,
+            metadata: { name: record.name },
+          },
+          transaction,
+        );
+        return record;
+      },
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       campus,
       CustomFieldEntity.CAMPUS,
     );
-
-    await this.auditLogService.log(currentUser, {
-      action: 'CAMPUS_CREATED',
-      entity: 'Campus',
-      entityId: campus.id,
-      institutionId,
-      metadata: {
-        name: campus.name,
-      },
-    });
 
     return { message: 'Campus created successfully', data };
   }
@@ -131,39 +139,54 @@ export class CampusesService {
       currentUser,
       ModuleKey.ACADEMICS,
     );
+    if (dto.timezone) {
+      this.timezoneResolver.assertValidTimezone(dto.timezone);
+    }
     await this.campusAccessService.assertCampusAccess(currentUser, campusId);
+    const institutionId =
+      await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
+        campusId,
+      );
+    if (
+      dto.institutionId !== undefined &&
+      dto.institutionId !== institutionId
+    ) {
+      throw new ForbiddenException(
+        'A campus cannot be moved to another institution.',
+      );
+    }
     const { customFields, ...campusData } = dto;
-    const campus = await this.prisma.campus.update({
-      where: { id: campusId },
-      data: campusData,
-    });
-    if (customFields) {
-      const institutionId =
-        await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
-          campusId,
-        );
-      await this.entityCustomFieldsService.saveValues({
+    const campus = await this.entityCustomFieldsService.saveRecord(
+      {
         institutionId,
         moduleKey: ModuleKey.ACADEMICS,
         entityType: CustomFieldEntity.CAMPUS,
-        entityId: campusId,
         values: customFields,
-      });
-    }
+        create: false,
+      },
+      async (transaction) => {
+        const record = await transaction.campus.update({
+          where: { id: campusId },
+          data: campusData,
+        });
+        await this.auditLogService.log(
+          currentUser,
+          {
+            action: 'CAMPUS_UPDATED',
+            entity: 'Campus',
+            entityId: campusId,
+            institutionId,
+            metadata: { updatedFields: Object.keys(dto) },
+          },
+          transaction,
+        );
+        return record;
+      },
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       campus,
       CustomFieldEntity.CAMPUS,
     );
-
-    await this.auditLogService.log(currentUser, {
-      action: 'CAMPUS_UPDATED',
-      entity: 'Campus',
-      entityId: campusId,
-      institutionId: campus.institutionId,
-      metadata: {
-        updatedFields: Object.keys(dto),
-      },
-    });
 
     return { message: 'Campus updated successfully', data };
   }

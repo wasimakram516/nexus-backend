@@ -69,6 +69,15 @@ export class CreateInstitutionDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'IANA timezone identifier (e.g. "Asia/Karachi", "Asia/Dubai"). Defaults to "Asia/Karachi" when omitted. Validated against a real IANA zone by TimezoneResolverService.',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  timezone?: string;
 }
 
 export class UpdateInstitutionDto {
@@ -119,6 +128,15 @@ export class UpdateInstitutionDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'IANA timezone identifier (e.g. "Asia/Karachi", "Asia/Dubai"). Validated against a real IANA zone by TimezoneResolverService.',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  timezone?: string;
 }
 
 export class UpdateBrandingDto {

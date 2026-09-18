@@ -5,11 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { UserRole } from '../../prisma/client';
+import { Prisma, UserRole } from '../../prisma/client';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
+import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
+import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
+import { WorkingDayResolverService } from '../../common/services/working-day-resolver.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AttendanceService } from './attendance.service';
 
@@ -72,8 +75,53 @@ describe('AttendanceService', () => {
     assertCampusAccess: jest.fn(),
   };
 
+  // Reproduces the pre-P0-7 literal-UTC construction so every pre-existing
+  // test (none of which care about real timezone resolution — that's
+  // covered by timezone-resolver.service.spec.ts) keeps its exact expected
+  // Date values without a rewrite.
+  const timezoneResolverMock = {
+    resolveForCampus: jest.fn().mockResolvedValue('Asia/Karachi'),
+    localDateString: jest.fn(),
+    localDayOfWeek: jest.fn(),
+    zonedTimeToInstant: jest
+      .fn()
+      .mockImplementation(
+        (_tz: string, dateStr: string, time: string) =>
+          new Date(`${dateStr}T${time}.000Z`),
+      ),
+    assertValidTimezone: jest.fn(),
+  };
+
+  const workingDayResolverMock = {
+    isWorkingDay: jest.fn().mockResolvedValue(true),
+  };
+
+  const entityCustomFieldsServiceMock = {
+    resolveInstitutionIdByCampus: jest.fn().mockResolvedValue('institution-1'),
+    saveRecord: jest
+      .fn()
+      .mockImplementation(
+        (
+          _params: unknown,
+          mutation: (transaction: Prisma.TransactionClient) => Promise<unknown>,
+        ) => mutation(prismaMock as unknown as Prisma.TransactionClient),
+      ),
+    attachToItem: jest
+      .fn()
+      .mockImplementation((item: unknown) => Promise.resolve(item)),
+    attachToItems: jest
+      .fn()
+      .mockImplementation((items: unknown) => Promise.resolve(items)),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
+    timezoneResolverMock.resolveForCampus.mockResolvedValue('Asia/Karachi');
+    timezoneResolverMock.zonedTimeToInstant.mockImplementation(
+      (_tz: string, dateStr: string, time: string) =>
+        new Date(`${dateStr}T${time}.000Z`),
+    );
+    workingDayResolverMock.isWorkingDay.mockResolvedValue(true);
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -87,6 +135,10 @@ describe('AttendanceService', () => {
           useValue: campusAccessServiceMock,
         },
         {
+          provide: EntityCustomFieldsService,
+          useValue: entityCustomFieldsServiceMock,
+        },
+        {
           provide: ModuleAccessService,
           useValue: {
             assertModuleEnabledForUser: jest.fn().mockResolvedValue(undefined),
@@ -97,6 +149,11 @@ describe('AttendanceService', () => {
           useValue: {
             can: jest.fn().mockResolvedValue(false),
           },
+        },
+        { provide: TimezoneResolverService, useValue: timezoneResolverMock },
+        {
+          provide: WorkingDayResolverService,
+          useValue: workingDayResolverMock,
         },
       ],
     }).compile();
@@ -260,6 +317,80 @@ describe('AttendanceService', () => {
         id: 'attendance-1',
         halfDay: true,
       },
+    });
+  });
+
+  describe('custom fields wiring (M4.5 / P1-2a)', () => {
+    it('checkIn commits the attendance row and its custom field values through the same saveRecord transaction', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'teacher-user-1',
+        role: UserRole.STAFF,
+      });
+      prismaMock.staffProfile.findUnique.mockResolvedValue({
+        campusId: 'campus-1',
+      });
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue(undefined);
+      prismaMock.campus.findUniqueOrThrow.mockResolvedValue({
+        id: 'campus-1',
+        staffStartTime: '08:00:00',
+        lateThreshold: 10,
+      });
+      prismaMock.attendance.findFirst.mockResolvedValue(null);
+      prismaMock.attendance.create.mockResolvedValue({ id: 'attendance-1' });
+
+      await service.checkIn(teacherUser, {
+        userId: 'teacher-user-1',
+        date: '2026-06-12',
+        checkIn: '2026-06-12T08:00:00.000Z',
+        customFields: { device: 'kiosk-1' },
+      });
+
+      expect(
+        entityCustomFieldsServiceMock.resolveInstitutionIdByCampus,
+      ).toHaveBeenCalledWith('campus-1');
+      expect(entityCustomFieldsServiceMock.saveRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          institutionId: 'institution-1',
+          entityType: 'attendance',
+          values: { device: 'kiosk-1' },
+          create: true,
+        }),
+        expect.any(Function),
+      );
+    });
+
+    it('updateAttendanceRecord saves custom field values against the existing record', async () => {
+      const adminUser: CurrentUser = {
+        sub: 'admin-1',
+        email: 'admin@nexus.test',
+        role: UserRole.ADMIN,
+        institutionId: 'institution-1',
+      };
+      prismaMock.attendance.findUnique.mockResolvedValue({
+        id: 'attendance-1',
+        campusId: 'campus-1',
+        userId: 'teacher-user-1',
+        role: UserRole.STAFF,
+        date: new Date('2026-05-07T00:00:00.000Z'),
+        checkOut: null,
+      });
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+      prismaMock.attendance.update.mockResolvedValue({ id: 'attendance-1' });
+
+      await service.updateAttendanceRecord(adminUser, 'attendance-1', {
+        remarks: 'ok',
+        customFields: { verifiedBy: 'admin-1' },
+      });
+
+      expect(entityCustomFieldsServiceMock.saveRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          institutionId: 'institution-1',
+          entityType: 'attendance',
+          values: { verifiedBy: 'admin-1' },
+          create: false,
+        }),
+        expect.any(Function),
+      );
     });
   });
 
@@ -808,6 +939,7 @@ describe('AttendanceService', () => {
 
         // First run: nobody has a row yet.
         prismaMock.attendance.findMany.mockResolvedValueOnce([]);
+        prismaMock.attendance.createMany.mockResolvedValueOnce({ count: 1 });
         const first = await service.markPeriodAbsentees(
           'period-1',
           '2026-06-12',
@@ -825,6 +957,7 @@ describe('AttendanceService', () => {
               periodKey: 'period-1',
             },
           ],
+          skipDuplicates: true,
         });
 
         // Second run: the roster student now already has a row for this
@@ -859,6 +992,231 @@ describe('AttendanceService', () => {
 
         expect(result.data.count).toBe(0);
         expect(prismaMock.attendance.createMany).not.toHaveBeenCalled();
+      });
+    });
+
+    // P0-6 (§ 6.1 of P0-6-7-9-CORRECTIVE-DESIGN.md), mapped to
+    // FOCUS-AREAS.md's own P0-6 Verification 1-3.
+    describe('markCampusAbsentees', () => {
+      beforeEach(() => {
+        prismaMock.campus.findUniqueOrThrow.mockResolvedValue({
+          institutionId: 'institution-1',
+        });
+        // resolveAttendanceMode() defaults to DAILY when unset.
+        prismaMock.institutionSetting.findUnique.mockResolvedValue(undefined);
+        prismaMock.institution.findUnique.mockResolvedValue({
+          currentAcademicYearId: 'year-1',
+        });
+        prismaMock.studentEnrollment.findMany.mockResolvedValue([]);
+        prismaMock.attendance.findMany.mockResolvedValue([]);
+        prismaMock.attendance.createMany.mockImplementation(
+          (args: { data: unknown[] }) =>
+            Promise.resolve({ count: args.data.length }),
+        );
+      });
+
+      it('includes active staff and active DAILY-mode students, excludes withdrawn students, inactive staff, and guardians', async () => {
+        prismaMock.userCampus.findMany.mockResolvedValue([
+          {
+            userId: 'staff-active',
+            user: { role: UserRole.STAFF },
+          },
+          {
+            userId: 'admin-active',
+            user: { role: UserRole.ADMIN },
+          },
+        ]);
+        prismaMock.studentEnrollment.findMany.mockResolvedValue([
+          { student: { userId: 'student-active' } },
+        ]);
+
+        const result = await service.markCampusAbsentees(
+          'campus-1',
+          '2026-06-12',
+        );
+
+        // Withdrawn students (LEFT), RESIGNED/SUSPENDED staff, and stray
+        // guardian UserCampus rows are excluded by construction: the
+        // staffCandidates query filters on User.status ACTIVE + role STAFF/
+        // ADMIN only, and the studentCandidates query filters on
+        // StudentEnrollment.status ACTIVE only — neither query can surface
+        // them, which this assertion locks in via the exact WHERE shape.
+        expect(prismaMock.userCampus.findMany).toHaveBeenCalledWith({
+          where: {
+            campusId: 'campus-1',
+            deletedAt: null,
+            user: {
+              deletedAt: null,
+              status: 'ACTIVE',
+              role: { in: [UserRole.STAFF, UserRole.ADMIN] },
+            },
+          },
+          select: { userId: true, user: { select: { role: true } } },
+        });
+        expect(prismaMock.studentEnrollment.findMany).toHaveBeenCalledWith({
+          where: {
+            campusId: 'campus-1',
+            academicYearId: 'year-1',
+            status: 'ACTIVE',
+            deletedAt: null,
+            student: {
+              deletedAt: null,
+              user: { deletedAt: null, status: 'ACTIVE' },
+            },
+          },
+          select: { student: { select: { userId: true } } },
+        });
+        expect(result.data.count).toBe(3);
+        expect(prismaMock.attendance.createMany).toHaveBeenCalledWith({
+          data: expect.arrayContaining([
+            expect.objectContaining({
+              userId: 'staff-active',
+              role: UserRole.STAFF,
+            }),
+            expect.objectContaining({
+              userId: 'admin-active',
+              role: UserRole.ADMIN,
+            }),
+            expect.objectContaining({
+              userId: 'student-active',
+              role: UserRole.STUDENT,
+            }),
+          ]) as unknown,
+          skipDuplicates: true,
+        });
+      });
+
+      it('omits students entirely in PERIOD mode while still covering staff', async () => {
+        prismaMock.institutionSetting.findUnique.mockResolvedValue({
+          value: { mode: 'PERIOD' },
+        });
+        prismaMock.userCampus.findMany.mockResolvedValue([
+          { userId: 'staff-active', user: { role: UserRole.STAFF } },
+        ]);
+
+        const result = await service.markCampusAbsentees(
+          'campus-1',
+          '2026-06-12',
+        );
+
+        expect(prismaMock.studentEnrollment.findMany).not.toHaveBeenCalled();
+        expect(result.data.count).toBe(1);
+        expect(prismaMock.attendance.createMany).toHaveBeenCalledWith({
+          data: [
+            expect.objectContaining({
+              userId: 'staff-active',
+              role: UserRole.STAFF,
+            }),
+          ],
+          skipDuplicates: true,
+        });
+      });
+
+      it('generates zero absences and skips roster queries entirely on a non-working day', async () => {
+        workingDayResolverMock.isWorkingDay.mockResolvedValue(false);
+
+        const result = await service.markCampusAbsentees(
+          'campus-1',
+          '2026-06-14',
+        );
+
+        expect(result).toEqual({
+          message: 'No absences generated — not a working day',
+          data: { count: 0 },
+        });
+        expect(prismaMock.userCampus.findMany).not.toHaveBeenCalled();
+        expect(prismaMock.attendance.createMany).not.toHaveBeenCalled();
+      });
+
+      it('degrades gracefully (skips the working-day check, still covers staff) when the campus has no institutionId', async () => {
+        prismaMock.campus.findUniqueOrThrow.mockResolvedValue({
+          institutionId: null,
+        });
+        prismaMock.userCampus.findMany.mockResolvedValue([
+          { userId: 'staff-active', user: { role: UserRole.STAFF } },
+        ]);
+
+        const result = await service.markCampusAbsentees(
+          'campus-1',
+          '2026-06-12',
+        );
+
+        expect(workingDayResolverMock.isWorkingDay).not.toHaveBeenCalled();
+        expect(prismaMock.studentEnrollment.findMany).not.toHaveBeenCalled();
+        expect(result.data.count).toBe(1);
+      });
+
+      it('preserves a manually-marked row and reports only the newly-created count on re-run', async () => {
+        prismaMock.userCampus.findMany.mockResolvedValue([
+          { userId: 'staff-active', user: { role: UserRole.STAFF } },
+        ]);
+        prismaMock.studentEnrollment.findMany.mockResolvedValue([
+          { student: { userId: 'student-active' } },
+        ]);
+        // student-active was already manually marked PRESENT by bulkMark().
+        prismaMock.attendance.findMany.mockResolvedValue([
+          { userId: 'student-active' },
+        ]);
+
+        const result = await service.markCampusAbsentees(
+          'campus-1',
+          '2026-06-12',
+        );
+
+        expect(result.data.count).toBe(1);
+        expect(prismaMock.attendance.createMany).toHaveBeenCalledWith({
+          data: [expect.objectContaining({ userId: 'staff-active' })],
+          skipDuplicates: true,
+        });
+      });
+
+      it('is idempotent: a second run after createMany reports zero new rows', async () => {
+        prismaMock.userCampus.findMany.mockResolvedValue([
+          { userId: 'staff-active', user: { role: UserRole.STAFF } },
+        ]);
+        prismaMock.attendance.findMany.mockResolvedValueOnce([]);
+        const first = await service.markCampusAbsentees(
+          'campus-1',
+          '2026-06-12',
+        );
+        expect(first.data.count).toBe(1);
+
+        prismaMock.attendance.findMany.mockResolvedValueOnce([
+          { userId: 'staff-active' },
+        ]);
+        prismaMock.attendance.createMany.mockClear();
+        const second = await service.markCampusAbsentees(
+          'campus-1',
+          '2026-06-12',
+        );
+        expect(second.data.count).toBe(0);
+        expect(prismaMock.attendance.createMany).not.toHaveBeenCalled();
+      });
+
+      it('tolerates a colliding concurrent sweep via skipDuplicates, reporting only the rows this call actually inserted', async () => {
+        prismaMock.userCampus.findMany.mockResolvedValue([
+          { userId: 'staff-1', user: { role: UserRole.STAFF } },
+          { userId: 'staff-2', user: { role: UserRole.STAFF } },
+        ]);
+        // Neither had a row at read time, but staff-1's row was inserted by
+        // a concurrent sweep run between the read and this createMany call
+        // -> Postgres ON CONFLICT DO NOTHING skips it, createMany reports
+        // only the row that actually landed.
+        prismaMock.attendance.createMany.mockResolvedValueOnce({ count: 1 });
+
+        const result = await service.markCampusAbsentees(
+          'campus-1',
+          '2026-06-12',
+        );
+
+        expect(result.data.count).toBe(1);
+        expect(prismaMock.attendance.createMany).toHaveBeenCalledWith({
+          data: expect.arrayContaining([
+            expect.objectContaining({ userId: 'staff-1' }),
+            expect.objectContaining({ userId: 'staff-2' }),
+          ]) as unknown,
+          skipDuplicates: true,
+        });
       });
     });
   });

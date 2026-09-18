@@ -30,6 +30,13 @@ import {
   UpdateNoticeDto,
 } from '../notices/dto/notices.dto';
 import { NoticesService } from '../notices/notices.service';
+import { AttendanceCalendarService } from '../attendance-calendar/attendance-calendar.service';
+import {
+  CreateClosureDateDto,
+  ListClosureDatesQueryDto,
+  UpdateClosureDateDto,
+  UpsertWorkingCalendarDto,
+} from '../attendance-calendar/dto/attendance-calendar.dto';
 import { CreateRoleDto, UpdateRoleDto } from '../roles/dto/roles.dto';
 import { RolesService } from '../roles/roles.service';
 import {
@@ -56,6 +63,7 @@ export class PlatformController {
     private readonly rolesService: RolesService,
     private readonly academicsService: AcademicsService,
     private readonly noticesService: NoticesService,
+    private readonly attendanceCalendarService: AttendanceCalendarService,
   ) {}
 
   @Post('plans')
@@ -519,6 +527,127 @@ export class PlatformController {
       institutionId,
       currentUser,
       noticeId,
+      dto.reason,
+    );
+  }
+
+  // P0-6 (§ 10 step 8's superadmin platform-console mirror, per the
+  // standing "superadmin full authority" convention already established
+  // for Notices above): every institution-admin attendance-calendar
+  // capability mirrored here, institutionId taken from the path param.
+
+  @Get('institutions/:institutionId/attendance-calendar/working-days')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get the working-days calendar',
+    description:
+      'Superadmin escape hatch to read an institution working-days calendar from the platform scope.',
+  })
+  getWorkingCalendarForInstitution(
+    @Param('institutionId') institutionId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.attendanceCalendarService.getWorkingCalendar(
+      institutionId,
+      currentUser,
+    );
+  }
+
+  @Put('institutions/:institutionId/attendance-calendar/working-days')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Save the working-days calendar',
+    description:
+      'Superadmin escape hatch to save an institution working-days calendar from the platform scope.',
+  })
+  upsertWorkingCalendarForInstitution(
+    @Param('institutionId') institutionId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: UpsertWorkingCalendarDto,
+  ) {
+    return this.attendanceCalendarService.upsertWorkingCalendar(
+      institutionId,
+      currentUser,
+      dto,
+    );
+  }
+
+  @Get('institutions/:institutionId/attendance-calendar/closures')
+  @Version('1')
+  @ApiOperation({
+    summary: 'List closure dates',
+    description:
+      'Superadmin escape hatch to list an institution closure dates from the platform scope.',
+  })
+  listClosureDatesForInstitution(
+    @Param('institutionId') institutionId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: ListClosureDatesQueryDto,
+  ) {
+    return this.attendanceCalendarService.listClosureDates(
+      institutionId,
+      currentUser,
+      query,
+    );
+  }
+
+  @Post('institutions/:institutionId/attendance-calendar/closures')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Create a closure date',
+    description:
+      'Superadmin escape hatch to declare an institution closure date from the platform scope.',
+  })
+  createClosureDateForInstitution(
+    @Param('institutionId') institutionId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: CreateClosureDateDto,
+  ) {
+    return this.attendanceCalendarService.createClosureDate(
+      institutionId,
+      currentUser,
+      dto,
+    );
+  }
+
+  @Patch('institutions/:institutionId/attendance-calendar/closures/:closureId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Update a closure date',
+    description:
+      'Superadmin escape hatch to update an institution closure date from the platform scope.',
+  })
+  updateClosureDateForInstitution(
+    @Param('institutionId') institutionId: string,
+    @Param('closureId') closureId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: UpdateClosureDateDto,
+  ) {
+    return this.attendanceCalendarService.updateClosureDate(
+      institutionId,
+      currentUser,
+      closureId,
+      dto,
+    );
+  }
+
+  @Delete('institutions/:institutionId/attendance-calendar/closures/:closureId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Soft-delete a closure date',
+    description:
+      'Superadmin escape hatch to remove an institution closure date from the platform scope.',
+  })
+  deleteClosureDateForInstitution(
+    @Param('institutionId') institutionId: string,
+    @Param('closureId') closureId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: DeleteRecordDto,
+  ) {
+    return this.attendanceCalendarService.deleteClosureDate(
+      institutionId,
+      currentUser,
+      closureId,
       dto.reason,
     );
   }

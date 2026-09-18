@@ -131,6 +131,17 @@ export const PERMISSION_CATALOG: readonly PermissionFeatureDef[] = [
     module: ModuleKey.ATTENDANCE,
     actions: ['read', 'update'],
   },
+  // P0-6 (§ 10 step 7 of P0-6-7-9-CORRECTIVE-DESIGN.md): working-days
+  // pattern + closure dates settings surface. Kept a separate feature key
+  // from 'attendance' itself since it's institution configuration, not
+  // day-to-day attendance marking — same distinction 'academic_years' draws
+  // from 'attendance' under the ACADEMICS module.
+  {
+    key: 'attendance_calendar',
+    label: 'Attendance Working Calendar',
+    module: ModuleKey.ATTENDANCE,
+    actions: ALL_ACTIONS,
+  },
 
   // Finance
   {

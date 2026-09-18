@@ -11,11 +11,16 @@ import {
   ModuleKey,
   UserRole,
   UserRole as PrismaUserRole,
+  UserStatus as PrismaUserStatus,
 } from '../../prisma/client';
 import { AttendanceStatus } from '../../common/enums/domain.enums';
 import { CampusAccessService } from '../../common/services/campus-access.service';
+import { CustomFieldEntity } from '../../common/constants/custom-field-entities.constants';
+import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
+import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
+import { WorkingDayResolverService } from '../../common/services/working-day-resolver.service';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -53,8 +58,11 @@ export class AttendanceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly campusAccessService: CampusAccessService,
+    private readonly entityCustomFieldsService: EntityCustomFieldsService,
     private readonly moduleAccessService: ModuleAccessService,
     private readonly userPermissionsService: UserPermissionsService,
+    private readonly timezoneResolver: TimezoneResolverService,
+    private readonly workingDayResolver: WorkingDayResolverService,
   ) {}
 
   /** SUPERADMIN/ADMIN always qualify; other archetypes (STAFF) qualify only
@@ -94,7 +102,12 @@ export class AttendanceService {
       user.role === PrismaUserRole.STUDENT
         ? campus.studentStartTime
         : campus.staffStartTime;
-    const lateThresholdTime = new Date(`${dto.date}T${officialStart}.000Z`);
+    const timezone = await this.timezoneResolver.resolveForCampus(campusId);
+    const lateThresholdTime = this.timezoneResolver.zonedTimeToInstant(
+      timezone,
+      dto.date,
+      officialStart,
+    );
     lateThresholdTime.setUTCMinutes(
       lateThresholdTime.getUTCMinutes() + campus.lateThreshold,
     );
@@ -113,18 +126,37 @@ export class AttendanceService {
       );
     }
 
-    const item = await this.prisma.attendance.create({
-      data: {
-        userId: dto.userId,
-        role: user.role,
+    const institutionId =
+      await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         campusId,
-        date: new Date(dto.date),
-        checkIn: new Date(dto.checkIn),
-        remarks: dto.remarks,
-        status,
+      );
+    const { customFields, ...checkInFields } = dto;
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.ATTENDANCE,
+        entityType: CustomFieldEntity.ATTENDANCE,
+        values: customFields,
+        create: true,
       },
-    });
-    return { message: 'Check-in recorded successfully', data: item };
+      (transaction) =>
+        transaction.attendance.create({
+          data: {
+            userId: checkInFields.userId,
+            role: user.role,
+            campusId,
+            date: new Date(checkInFields.date),
+            checkIn: new Date(checkInFields.checkIn),
+            remarks: checkInFields.remarks,
+            status,
+          },
+        }),
+    );
+    const data = await this.entityCustomFieldsService.attachToItem(
+      item,
+      CustomFieldEntity.ATTENDANCE,
+    );
+    return { message: 'Check-in recorded successfully', data };
   }
 
   async checkOut(currentUser: CurrentUser, dto: CheckOutDto) {
@@ -150,7 +182,13 @@ export class AttendanceService {
       user.role === PrismaUserRole.STUDENT
         ? campus.studentEndTime
         : campus.staffEndTime;
-    const threshold = new Date(`${dto.date}T${officialEnd}.000Z`);
+    const checkOutTimezone =
+      await this.timezoneResolver.resolveForCampus(campusId);
+    const threshold = this.timezoneResolver.zonedTimeToInstant(
+      checkOutTimezone,
+      dto.date,
+      officialEnd,
+    );
     threshold.setUTCMinutes(
       threshold.getUTCMinutes() - campus.earlyLeaveThreshold,
     );
@@ -245,37 +283,154 @@ export class AttendanceService {
    * done its own per-institution module/subscription eligibility check) can
    * call it directly without a synthetic actor. Idempotent: only creates
    * rows for users who don't already have an attendance record that day.
+   *
+   * P0-6 (§ 6.1 of P0-6-7-9-CORRECTIVE-DESIGN.md): roster is now built from
+   * active enrollment/employment state instead of raw UserCampus
+   * membership — GUARDIAN/SUPERADMIN are excluded by construction (neither
+   * archetype is touched by either candidate query below), RESIGNED/
+   * SUSPENDED accounts and withdrawn (non-ACTIVE) student enrollments are
+   * excluded, and STUDENT rows are omitted entirely in PERIOD-mode
+   * institutions (their whole-day obligation is expressed at period
+   * granularity by markPeriodAbsentees, not the daily key) while STAFF/
+   * ADMIN stay DAILY regardless of mode (§ 9's locked design call).
+   *
+   * P0-6 (§ 6.1) + P0-9 (§ 7.2 / § 7.3): also gated on the campus's local
+   * working-day/closure calendar (fail-closed when unconfigured — a
+   * deliberate product decision, see WorkingDayResolverService), and writes
+   * via `createMany({ skipDuplicates: true })` so overlapping sweep runs or
+   * a manual mark that lands first never throws on the unique-index
+   * collision and never overwrite an existing row (an upsert here would be
+   * wrong — see § 7.3 of the design doc).
+   *
+   * @param {string} campusId
+   * @param {string} date - Date-only string ("YYYY-MM-DD"), the campus's
+   *   already-resolved local date (the scheduler resolves this per campus;
+   *   the manual autoMarkAbsent() endpoint passes whatever the caller sent).
+   * @returns {Promise<{message: string, data: {count: number}}>}
    */
   async markCampusAbsentees(campusId: string, date: string) {
-    const users = await this.prisma.userCampus.findMany({
-      where: { campusId },
-      include: { user: true },
+    const institutionId = await this.resolveInstitutionIdForCampus(campusId);
+    const mode = await this.resolveAttendanceMode(institutionId);
+
+    if (institutionId) {
+      const timezone = await this.timezoneResolver.resolveForCampus(campusId);
+      const localDate = this.timezoneResolver.localDateString(timezone);
+      const localDayOfWeek = this.timezoneResolver.localDayOfWeek(timezone);
+      const isWorking = await this.workingDayResolver.isWorkingDay(
+        institutionId,
+        campusId,
+        localDate,
+        localDayOfWeek,
+      );
+      if (!isWorking) {
+        return {
+          message: 'No absences generated — not a working day',
+          data: { count: 0 },
+        };
+      }
+    }
+
+    // STAFF/ADMIN: always DAILY, regardless of institution mode. Active
+    // employment = User.status ACTIVE + a live, non-deleted UserCampus
+    // assignment at this campus (covers both StaffProfile-holding teaching
+    // staff and UserCampus-only non-teaching staff/campus admins).
+    const staffCandidates = await this.prisma.userCampus.findMany({
+      where: {
+        campusId,
+        deletedAt: null,
+        user: {
+          deletedAt: null,
+          status: PrismaUserStatus.ACTIVE,
+          role: { in: [PrismaUserRole.STAFF, PrismaUserRole.ADMIN] },
+        },
+      },
+      select: { userId: true, user: { select: { role: true } } },
     });
+
+    // STUDENT: only in DAILY mode. Roster is active enrollment, not
+    // UserCampus membership — mirrors resolvePeriodRosterStudents's
+    // "current academic year, ACTIVE status" resolution, applied
+    // campus-wide instead of section-scoped.
+    let studentCandidates: { userId: string }[] = [];
+    if (mode === 'DAILY' && institutionId) {
+      const institution = await this.prisma.institution.findUnique({
+        where: { id: institutionId },
+        select: { currentAcademicYearId: true },
+      });
+      if (institution?.currentAcademicYearId) {
+        const enrollments = await this.prisma.studentEnrollment.findMany({
+          where: {
+            campusId,
+            academicYearId: institution.currentAcademicYearId,
+            status: EnrollmentStatus.ACTIVE,
+            deletedAt: null,
+            student: {
+              deletedAt: null,
+              user: { deletedAt: null, status: PrismaUserStatus.ACTIVE },
+            },
+          },
+          select: { student: { select: { userId: true } } },
+        });
+        studentCandidates = enrollments.map((e) => ({
+          userId: e.student.userId,
+        }));
+      }
+      // No current academic year configured => empty roster, same
+      // fail-safe convention as resolvePeriodRosterStudents — never throws.
+    }
+
+    const candidates = [
+      ...staffCandidates.map((c) => ({ userId: c.userId, role: c.user.role })),
+      ...studentCandidates.map((c) => ({
+        userId: c.userId,
+        role: PrismaUserRole.STUDENT,
+      })),
+    ];
+
+    if (!candidates.length) {
+      return {
+        message: 'Absent users marked successfully',
+        data: { count: 0 },
+      };
+    }
+
+    const day = this.toDateOnly(date);
     const existing = await this.prisma.attendance.findMany({
-      where: { campusId, date: new Date(date) },
+      where: {
+        campusId,
+        date: day,
+        userId: { in: candidates.map((c) => c.userId) },
+      },
       select: { userId: true },
     });
-    const existingIds = new Set(
-      existing.map((item: { userId: string }) => item.userId),
-    );
-    const data = users
-      .filter(
-        (item: { userId: string; user: { role: PrismaUserRole } }) =>
-          !existingIds.has(item.userId),
-      )
-      .map((item: { userId: string; user: { role: PrismaUserRole } }) => ({
-        userId: item.userId,
-        role: item.user.role,
+    const existingIds = new Set(existing.map((item) => item.userId));
+
+    const data = candidates
+      .filter((c) => !existingIds.has(c.userId))
+      .map((c) => ({
+        userId: c.userId,
+        role: c.role,
         campusId,
-        date: new Date(date),
+        date: day,
         status: AttendanceStatus.ABSENT,
       }));
+
+    let created = 0;
     if (data.length) {
-      await this.prisma.attendance.createMany({ data });
+      // P0-9 (§ 7.3): skipDuplicates tolerates an overlapping sweep run or
+      // a manual mark that landed between the existingIds read above and
+      // this write, without failing the whole batch or overwriting the row
+      // that won the race.
+      const result = await this.prisma.attendance.createMany({
+        data,
+        skipDuplicates: true,
+      });
+      created = result.count;
     }
+
     return {
       message: 'Absent users marked successfully',
-      data: { count: data.length },
+      data: { count: created },
     };
   }
 
@@ -343,13 +498,21 @@ export class AttendanceService {
         periodKey: periodSlot.id,
       }));
 
+    let periodCreated = 0;
     if (data.length) {
-      await this.prisma.attendance.createMany({ data });
+      // P0-9 (§ 7.3): same skipDuplicates rationale as markCampusAbsentees —
+      // overlapping period sweeps or a manual mark must not throw or
+      // overwrite.
+      const result = await this.prisma.attendance.createMany({
+        data,
+        skipDuplicates: true,
+      });
+      periodCreated = result.count;
     }
 
     return {
       message: 'Absent students marked successfully',
-      data: { count: data.length },
+      data: { count: periodCreated },
     };
   }
 
@@ -658,7 +821,11 @@ export class AttendanceService {
       where,
       orderBy: { date: 'desc' },
     });
-    return { message: 'Attendance retrieved successfully', data: items };
+    const data = await this.entityCustomFieldsService.attachToItems(
+      items,
+      CustomFieldEntity.ATTENDANCE,
+    );
+    return { message: 'Attendance retrieved successfully', data };
   }
 
   async getAttendanceSummary(
@@ -733,7 +900,11 @@ export class AttendanceService {
 
     await this.assertAttendanceRecordAccess(currentUser, item);
 
-    return { message: 'Attendance record retrieved successfully', data: item };
+    const data = await this.entityCustomFieldsService.attachToItem(
+      item,
+      CustomFieldEntity.ATTENDANCE,
+    );
+    return { message: 'Attendance record retrieved successfully', data };
   }
 
   async updateAttendanceRecord(
@@ -763,29 +934,55 @@ export class AttendanceService {
       ? new Date(dto.checkOut)
       : (existing.checkOut ?? undefined);
 
-    const item = await this.prisma.attendance.update({
-      where: { id: attendanceId },
-      data: {
-        ...(dto.date ? { date: nextDate } : {}),
-        ...(dto.checkIn ? { checkIn: new Date(dto.checkIn) } : {}),
-        ...(dto.checkOut
-          ? {
-              checkOut: nextCheckOut,
-              halfDay: await this.resolveHalfDayStatus(
-                existing.campusId,
-                existing.role,
-                nextDate,
-                nextCheckOut,
-              ),
-            }
-          : {}),
-        ...(dto.status ? { status: dto.status } : {}),
-        ...(dto.halfDay !== undefined ? { halfDay: dto.halfDay } : {}),
-        ...(dto.remarks !== undefined ? { remarks: dto.remarks } : {}),
-      },
-    });
+    const institutionId =
+      await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
+        existing.campusId,
+      );
+    const { customFields, ...updateFields } = dto;
+    const halfDay = updateFields.checkOut
+      ? await this.resolveHalfDayStatus(
+          existing.campusId,
+          existing.role,
+          nextDate,
+          nextCheckOut,
+        )
+      : undefined;
 
-    return { message: 'Attendance record updated successfully', data: item };
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.ATTENDANCE,
+        entityType: CustomFieldEntity.ATTENDANCE,
+        values: customFields,
+        create: false,
+      },
+      (transaction) =>
+        transaction.attendance.update({
+          where: { id: attendanceId },
+          data: {
+            ...(updateFields.date ? { date: nextDate } : {}),
+            ...(updateFields.checkIn
+              ? { checkIn: new Date(updateFields.checkIn) }
+              : {}),
+            ...(updateFields.checkOut
+              ? { checkOut: nextCheckOut, halfDay }
+              : {}),
+            ...(updateFields.status ? { status: updateFields.status } : {}),
+            ...(updateFields.halfDay !== undefined
+              ? { halfDay: updateFields.halfDay }
+              : {}),
+            ...(updateFields.remarks !== undefined
+              ? { remarks: updateFields.remarks }
+              : {}),
+          },
+        }),
+    );
+
+    const data = await this.entityCustomFieldsService.attachToItem(
+      item,
+      CustomFieldEntity.ATTENDANCE,
+    );
+    return { message: 'Attendance record updated successfully', data };
   }
 
   private async resolveCampusId(userId: string, role: string): Promise<string> {
@@ -946,8 +1143,13 @@ export class AttendanceService {
       role === PrismaUserRole.STUDENT
         ? campus.studentEndTime
         : campus.staffEndTime;
+    const timezone = await this.timezoneResolver.resolveForCampus(campusId);
     const datePart = date.toISOString().slice(0, 10);
-    const threshold = new Date(`${datePart}T${officialEnd}.000Z`);
+    const threshold = this.timezoneResolver.zonedTimeToInstant(
+      timezone,
+      datePart,
+      officialEnd,
+    );
     threshold.setUTCMinutes(
       threshold.getUTCMinutes() - campus.earlyLeaveThreshold,
     );

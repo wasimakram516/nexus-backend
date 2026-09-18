@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { IsNumber, IsString, IsUUID } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 import { CustomFieldPayloadDto } from '../../../common/dto/custom-field-payload.dto';
 
 export class CreateCampusDto extends CustomFieldPayloadDto {
@@ -38,6 +44,15 @@ export class CreateCampusDto extends CustomFieldPayloadDto {
   @ApiProperty()
   @IsNumber()
   earlyLeaveThreshold!: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional per-campus IANA timezone override (e.g. "Asia/Dubai"). Null/omitted falls back to the parent Institution.timezone. Validated against a real IANA zone by TimezoneResolverService.',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  timezone?: string;
 }
 
 export class UpdateCampusDto extends PartialType(CreateCampusDto) {}

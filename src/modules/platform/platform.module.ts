@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AcademicsModule } from '../academics/academics.module';
+import { AttendanceCalendarModule } from '../attendance-calendar/attendance-calendar.module';
 import { AuthModule } from '../auth/auth.module';
 import { NoticesModule } from '../notices/notices.module';
 import { RolesModule } from '../roles/roles.module';
@@ -11,7 +12,13 @@ import { PlatformService } from './platform.service';
 import { SignupService } from './signup.service';
 
 @Module({
-  imports: [AuthModule, RolesModule, AcademicsModule, NoticesModule],
+  imports: [
+    AuthModule,
+    RolesModule,
+    AcademicsModule,
+    NoticesModule,
+    AttendanceCalendarModule,
+  ],
   controllers: [
     PlatformPublicController,
     PlatformController,

@@ -1,11 +1,12 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { SubscriptionStatus, UserRole } from '../../prisma/client';
+import { Prisma, SubscriptionStatus, UserRole } from '../../prisma/client';
 import { AuditLogService } from '../../common/services/audit-log.service';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
+import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CampusesService } from './campuses.service';
@@ -33,6 +34,7 @@ describe('CampusesService', () => {
     campus: {
       count: jest.fn(),
       create: jest.fn(),
+      update: jest.fn(),
     },
   };
 
@@ -62,7 +64,14 @@ describe('CampusesService', () => {
         {
           provide: EntityCustomFieldsService,
           useValue: {
-            saveValues: jest.fn().mockResolvedValue({}),
+            saveRecord: jest.fn(
+              (
+                _params: unknown,
+                mutation: (
+                  transaction: Prisma.TransactionClient,
+                ) => Promise<unknown>,
+              ) => mutation(prismaMock as unknown as Prisma.TransactionClient),
+            ),
             attachToItem: jest
               .fn()
               .mockImplementation((item) =>
@@ -99,10 +108,25 @@ describe('CampusesService', () => {
               ),
           },
         },
+        {
+          provide: TimezoneResolverService,
+          useValue: {
+            assertValidTimezone: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
     service = moduleRef.get<CampusesService>(CampusesService);
+  });
+
+  it('rejects moving a campus across institutions before any write', async () => {
+    await expect(
+      service.updateCampus(currentUser, 'campus-1', {
+        institutionId: 'institution-2',
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prismaMock.campus.update).not.toHaveBeenCalled();
   });
 
   it('creates a campus within the plan limit', async () => {

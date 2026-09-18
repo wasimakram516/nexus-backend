@@ -15,8 +15,9 @@ import {
 } from 'class-validator';
 import { AttendanceStatus } from '../../../common/enums/domain.enums';
 import { UserRole } from '../../../prisma/client';
+import { CustomFieldPayloadDto } from '../../../common/dto/custom-field-payload.dto';
 
-export class CheckInDto {
+export class CheckInDto extends CustomFieldPayloadDto {
   @ApiProperty() @IsUUID() userId!: string;
   @ApiProperty() @IsDateString() date!: string;
   @ApiProperty() @IsDateString() checkIn!: string;
@@ -89,7 +90,7 @@ export class BulkMarkAttendanceDto {
   entries!: BulkMarkEntryDto[];
 }
 
-export class UpdateAttendanceRecordDto {
+export class UpdateAttendanceRecordDto extends CustomFieldPayloadDto {
   @ApiPropertyOptional() @IsOptional() @IsDateString() date?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() checkIn?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() checkOut?: string;

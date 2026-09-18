@@ -18,6 +18,7 @@ import { BillingCycle } from '../../common/enums/domain.enums';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
+import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
 import { generateUniqueSlug } from '../../common/utils/slug.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -58,6 +59,7 @@ export class PlatformService {
     private readonly moduleAccessService: ModuleAccessService,
     private readonly requestContext: RequestContextService,
     private readonly configService: ConfigService,
+    private readonly timezoneResolver: TimezoneResolverService,
   ) {}
 
   /** Trial window applied to newly created TRIAL subscriptions. */
@@ -209,6 +211,9 @@ export class PlatformService {
   }
 
   async createInstitution(dto: CreateInstitutionDto, currentUser: CurrentUser) {
+    if (dto.timezone) {
+      this.timezoneResolver.assertValidTimezone(dto.timezone);
+    }
     const plans = await this.syncBootstrapPlans();
     const plan = await this.resolvePlan(dto.planId, plans);
     const deploymentModes = this.readDeploymentModes(plan.deploymentModes);
@@ -266,6 +271,7 @@ export class PlatformService {
               contactEmail: dto.contactEmail,
               contactPhone: dto.contactPhone,
               notes: dto.notes,
+              ...(dto.timezone ? { timezone: dto.timezone } : {}),
               branding: {
                 create: {
                   displayName: dto.name,
@@ -391,6 +397,9 @@ export class PlatformService {
     currentUser: CurrentUser,
   ) {
     await this.ensureInstitutionExists(institutionId);
+    if (dto.timezone) {
+      this.timezoneResolver.assertValidTimezone(dto.timezone);
+    }
 
     const institution = await this.prisma.$transaction(
       async (tx: Prisma.TransactionClient) => {

@@ -19,6 +19,7 @@ import { PlatformModule } from './modules/platform/platform.module';
 import { RolesModule } from './modules/roles/roles.module';
 import { CustomFieldsModule } from './modules/custom-fields/custom-fields.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
+import { AttendanceCalendarModule } from './modules/attendance-calendar/attendance-calendar.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
@@ -51,6 +52,7 @@ import { TimetableModule } from './modules/timetable/timetable.module';
     AcademicsModule,
     PeopleModule,
     AttendanceModule,
+    AttendanceCalendarModule,
     FinanceModule,
     CustomFieldsModule,
     RealtimeModule,

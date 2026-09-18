@@ -5,6 +5,7 @@ import { BillingCycle } from '../../common/enums/domain.enums';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
+import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlatformService } from './platform.service';
 
@@ -126,6 +127,12 @@ describe('PlatformService', () => {
           useValue: {
             get: jest.fn().mockReturnValue(14),
             getOrThrow: jest.fn().mockReturnValue(14),
+          },
+        },
+        {
+          provide: TimezoneResolverService,
+          useValue: {
+            assertValidTimezone: jest.fn(),
           },
         },
       ],
