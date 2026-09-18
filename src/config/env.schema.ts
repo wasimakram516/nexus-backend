@@ -23,6 +23,16 @@ export const envSchema = z
     CLOUDINARY_API_KEY: z.string().min(1).optional(),
     CLOUDINARY_API_SECRET: z.string().min(1).optional(),
     CLOUDINARY_FOLDER: z.string().default('Nexus'),
+    // Realtime (parked for v1, decision #11 — P0-10). Disabled by default:
+    // no domain-event consumer exists yet, so there is nothing legitimate to
+    // authorize room access against. Flip only once real events are wired.
+    // z.coerce.boolean() is deliberately NOT used here — it coerces the
+    // literal string "false" to `true` (Boolean("false") === true in JS),
+    // which would make this flag impossible to explicitly disable via env.
+    REALTIME_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
   })
   .superRefine((config, context) => {
     const hasSuperadminEmail = Boolean(config.SUPERADMIN_SEED_EMAIL);
