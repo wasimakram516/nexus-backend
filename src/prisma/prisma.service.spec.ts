@@ -20,6 +20,7 @@ describe('PrismaService audit helpers', () => {
           callback: () => Promise<unknown>,
         ) => Promise<unknown>;
       },
+      model: string,
       args: Record<string, unknown>,
       result: unknown,
       fallbackInstitutionId: string | null,
@@ -96,6 +97,7 @@ describe('PrismaService audit helpers', () => {
       PrismaServiceInternal.resolveAuditInstitutionId(
         service,
         contextService,
+        'Campus',
         { data: { campusId: 'campus-1' } },
         null,
         null,
@@ -105,6 +107,56 @@ describe('PrismaService audit helpers', () => {
       where: { id: 'campus-1' },
       select: { institutionId: true },
     });
+  });
+
+  // Institution has no institutionId column of its own — the row's own id
+  // IS the institution id. Without this special case, every Institution
+  // audit entry would resolve to institutionId: null and disappear from
+  // the institution-scoped audit view for the institution it's about.
+  it('resolves institution ids for Institution rows from their own id', async () => {
+    const contextService = {
+      runWith: jest
+        .fn<
+          Promise<unknown>,
+          [Record<string, unknown>, () => Promise<unknown>]
+        >()
+        .mockImplementation((_state, callback) => callback()),
+    };
+    const service = {};
+
+    await expect(
+      PrismaServiceInternal.resolveAuditInstitutionId(
+        service,
+        contextService,
+        'Institution',
+        { data: { name: 'Nexus Academy' } },
+        { id: 'institution-1', name: 'Nexus Academy' },
+        null,
+      ),
+    ).resolves.toBe('institution-1');
+  });
+
+  it('resolves institution ids for a hard-deleted Institution row from the where clause id', async () => {
+    const contextService = {
+      runWith: jest
+        .fn<
+          Promise<unknown>,
+          [Record<string, unknown>, () => Promise<unknown>]
+        >()
+        .mockImplementation((_state, callback) => callback()),
+    };
+    const service = {};
+
+    await expect(
+      PrismaServiceInternal.resolveAuditInstitutionId(
+        service,
+        contextService,
+        'Institution',
+        { where: { id: 'institution-1' } },
+        undefined,
+        null,
+      ),
+    ).resolves.toBe('institution-1');
   });
 
   // M2 Phase 2 (StaffProfile generalization) § 7.7: this ref key was renamed
@@ -134,6 +186,7 @@ describe('PrismaService audit helpers', () => {
       PrismaServiceInternal.resolveAuditInstitutionId(
         service,
         contextService,
+        'StaffProfile',
         { data: { staffProfileId: 'staff-profile-1' } },
         null,
         null,

@@ -9,7 +9,6 @@ import {
   UserStatus as DtoUserStatus,
 } from '../../common/enums/domain.enums';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
-import { AuditLogService } from '../../common/services/audit-log.service';
 import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
@@ -73,7 +72,6 @@ describe('UsersService', () => {
     $transaction: jest.fn(),
   };
 
-  const auditLogServiceMock = { log: jest.fn().mockResolvedValue(undefined) };
   const requestContextMock = { runWith: jest.fn() };
   const userPermissionsServiceMock = {
     sanitizeOverrides: jest.fn((v: unknown) => v),
@@ -102,7 +100,6 @@ describe('UsersService', () => {
       providers: [
         UsersService,
         { provide: PrismaService, useValue: prismaMock },
-        { provide: AuditLogService, useValue: auditLogServiceMock },
         {
           provide: EntityCustomFieldsService,
           useValue: entityCustomFieldsServiceMock,

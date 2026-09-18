@@ -15,6 +15,7 @@ import { EntityCustomFieldsService } from '../../common/services/entity-custom-f
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
+import { runAuditedTransaction } from '../../common/utils/transaction.util';
 import { ModuleKey } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CampusAccessService } from '../../common/services/campus-access.service';
@@ -66,17 +67,8 @@ export class CampusesService {
         const record = await transaction.campus.create({
           data: { ...campusData, institutionId },
         });
-        await this.auditLogService.log(
-          currentUser,
-          {
-            action: 'CAMPUS_CREATED',
-            entity: 'Campus',
-            entityId: record.id,
-            institutionId,
-            metadata: { name: record.name },
-          },
-          transaction,
-        );
+        // Audited automatically by PrismaService (real before/after
+        // snapshot) — no bespoke AuditLogService call needed here.
         return record;
       },
     );
@@ -169,17 +161,8 @@ export class CampusesService {
           where: { id: campusId },
           data: campusData,
         });
-        await this.auditLogService.log(
-          currentUser,
-          {
-            action: 'CAMPUS_UPDATED',
-            entity: 'Campus',
-            entityId: campusId,
-            institutionId,
-            metadata: { updatedFields: Object.keys(dto) },
-          },
-          transaction,
-        );
+        // Audited automatically by PrismaService (real before/after
+        // snapshot) — no bespoke AuditLogService call needed here.
         return record;
       },
     );
@@ -220,17 +203,8 @@ export class CampusesService {
       },
     });
 
-    await this.auditLogService.log(currentUser, {
-      action: 'CAMPUS_DELETED',
-      entity: 'Campus',
-      entityId: campusId,
-      institutionId: campus.institutionId,
-      metadata: {
-        name: campus.name,
-        reason: reason ?? null,
-      },
-    });
-
+    // Audited automatically by PrismaService (real before/after snapshot)
+    // — no bespoke AuditLogService call needed here.
     return {
       message: 'Campus moved to recycle bin successfully',
       data: campus,
@@ -263,7 +237,15 @@ export class CampusesService {
       );
     }
 
-    const record = await this.prisma.$transaction(
+    // Uses runAuditedTransaction (not a raw $transaction) so the pending
+    // User.institutionId backfill below is audited atomically through the
+    // same tx client — a raw $transaction here would resolve the audit
+    // extension's transactionClient context to the top-level connection
+    // instead, writing that audit entry outside the transaction it
+    // actually happened in.
+    const record = await runAuditedTransaction(
+      this.prisma,
+      this.requestContext,
       async (tx: Prisma.TransactionClient) => {
         if (!user.institutionId && campus.institutionId) {
           await tx.user.update({

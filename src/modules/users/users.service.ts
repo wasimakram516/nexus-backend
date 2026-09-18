@@ -9,7 +9,6 @@ import { ModuleKey, Prisma, UserRole } from '../../prisma/client';
 // everything else here (CurrentUser, DB rows) is Prisma-typed — same values,
 // nominally distinct TS enums, so comparisons against dto.role need this alias.
 import { UserRole as DtoUserRole } from '../../common/enums/domain.enums';
-import { AuditLogService } from '../../common/services/audit-log.service';
 import { CustomFieldEntity } from '../../common/constants/custom-field-entities.constants';
 import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { RequestContextService } from '../../common/services/request-context.service';
@@ -27,7 +26,6 @@ import * as bcrypt from 'bcrypt';
 export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly auditLogService: AuditLogService,
     private readonly entityCustomFieldsService: EntityCustomFieldsService,
     private readonly requestContext: RequestContextService,
     private readonly userPermissionsService: UserPermissionsService,
@@ -81,16 +79,8 @@ export class UsersService {
       },
     });
 
-    await this.auditLogService.log(currentUser, {
-      action: 'USER_PROFILE_UPDATED',
-      entity: 'User',
-      entityId: currentUser.sub,
-      institutionId: user.institutionId,
-      metadata: {
-        updatedFields: Object.keys(dto),
-      },
-    });
-
+    // Audited automatically by PrismaService (real before/after snapshot,
+    // with passwordHash redacted) — no bespoke AuditLogService call needed.
     return { message: 'Profile updated successfully', data: user };
   }
 
@@ -339,19 +329,8 @@ export class UsersService {
           select: selectShape,
         });
 
-    await this.auditLogService.log(currentUser, {
-      action: 'USER_ACCESS_UPDATED',
-      entity: 'User',
-      entityId: userId,
-      institutionId: user.institutionId,
-      metadata: {
-        role: dto.role,
-        status: dto.status,
-        roleId: dto.roleId,
-        permissionOverridesUpdated: dto.permissionOverrides !== undefined,
-      },
-    });
-
+    // Audited automatically by PrismaService (real before/after snapshot)
+    // — no bespoke AuditLogService call needed here.
     const data = await this.entityCustomFieldsService.attachToItem(
       user,
       CustomFieldEntity.USER,
@@ -393,33 +372,19 @@ export class UsersService {
       );
     }
 
+    // A single update (previously two — the first set `status` to its own
+    // current value, a no-op) so the soft delete produces exactly one
+    // audit entry, not a spurious extra UPDATED one ahead of it. Audited
+    // automatically by PrismaService (real before/after snapshot) — no
+    // bespoke AuditLogService call needed here.
     await this.prisma.user.update({
       where: { id: userId },
       data: {
         status: target.status,
-      },
-    });
-
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: {
         deletedAt: new Date(),
         deletedBy: currentUser.sub,
         deleteReason: reason ?? null,
         updatedBy: currentUser.sub,
-      },
-    });
-
-    await this.auditLogService.log(currentUser, {
-      action: 'USER_DELETED',
-      entity: 'User',
-      entityId: userId,
-      institutionId: target.institutionId,
-      metadata: {
-        email: target.email,
-        role: target.role,
-        status: target.status,
-        reason: reason ?? null,
       },
     });
 

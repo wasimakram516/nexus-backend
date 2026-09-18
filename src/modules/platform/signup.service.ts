@@ -2,7 +2,9 @@ import { ConflictException, Injectable } from '@nestjs/common';
 import { Prisma, SubscriptionStatus, UserRole } from '../../prisma/client';
 import * as bcrypt from 'bcrypt';
 import { Response } from 'express';
+import { RequestContextService } from '../../common/services/request-context.service';
 import { generateUniqueSlug } from '../../common/utils/slug.util';
+import { runAuditedTransaction } from '../../common/utils/transaction.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { PublicSignupDto } from './dto/signup.dto';
@@ -14,6 +16,7 @@ export class SignupService {
     private readonly prisma: PrismaService,
     private readonly platformService: PlatformService,
     private readonly authService: AuthService,
+    private readonly requestContext: RequestContextService,
   ) {}
 
   /**
@@ -55,7 +58,15 @@ export class SignupService {
     const passwordHash = await bcrypt.hash(dto.password, 12);
 
     try {
-      const { institution, adminUser } = await this.prisma.$transaction(
+      // Institution and User are now auto-audited by PrismaService (real
+      // before/after snapshots) — runAuditedTransaction (not a raw
+      // $transaction) keeps those audit writes, and the bespoke
+      // INSTITUTION_SELF_SIGNUP business-event entry below, inside the
+      // same transaction as the creates, so a rollback (e.g. a slug/email
+      // race) can't leave orphan audit rows behind.
+      const { institution, adminUser } = await runAuditedTransaction(
+        this.prisma,
+        this.requestContext,
         async (tx: Prisma.TransactionClient) => {
           const institution = await tx.institution.create({
             data: {

@@ -15,11 +15,11 @@ import {
   PLAN_BLUEPRINTS,
 } from '../../common/constants/plan.constants';
 import { BillingCycle } from '../../common/enums/domain.enums';
-import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
 import { generateUniqueSlug } from '../../common/utils/slug.util';
+import { runAuditedTransaction } from '../../common/utils/transaction.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateInstitutionDto,
@@ -92,9 +92,15 @@ export class PlatformService {
     };
   }
 
-  async createPlan(dto: CreatePlanDto, currentUser: CurrentUser) {
+  async createPlan(dto: CreatePlanDto) {
     try {
-      const plan = await this.prisma.$transaction(
+      // Audited automatically by PrismaService (real before/after
+      // snapshot) — runAuditedTransaction (not a raw $transaction) keeps
+      // that audit write inside the same transaction as the create, so a
+      // rollback here can't leave an orphan audit entry behind.
+      const plan = await runAuditedTransaction(
+        this.prisma,
+        this.requestContext,
         async (tx: Prisma.TransactionClient) => {
           const data: Prisma.PlanDefinitionUncheckedCreateInput = {
             key: dto.key.toLowerCase(),
@@ -110,24 +116,7 @@ export class PlatformService {
             metadata: dto.metadata ? this.toJson(dto.metadata) : undefined,
             isActive: dto.isActive ?? true,
           };
-          const created = await tx.planDefinition.create({
-            data,
-          });
-
-          await tx.auditLog.create({
-            data: {
-              userId: currentUser.sub,
-              action: 'PLAN_CREATED',
-              entity: 'PlanDefinition',
-              entityId: created.id,
-              metadata: this.toJson({
-                key: created.key,
-                name: created.name,
-              }),
-            },
-          });
-
-          return created;
+          return tx.planDefinition.create({ data });
         },
       );
 
@@ -145,16 +134,17 @@ export class PlatformService {
     }
   }
 
-  async updatePlan(
-    planId: string,
-    dto: UpdatePlanDto,
-    currentUser: CurrentUser,
-  ) {
+  async updatePlan(planId: string, dto: UpdatePlanDto) {
     await this.syncBootstrapPlans();
     await this.ensurePlanExists(planId);
 
     try {
-      const plan = await this.prisma.$transaction(
+      // Audited automatically by PrismaService (real before/after
+      // snapshot) — see createPlan for why runAuditedTransaction replaces
+      // the raw $transaction here.
+      const plan = await runAuditedTransaction(
+        this.prisma,
+        this.requestContext,
         async (tx: Prisma.TransactionClient) => {
           const data: Prisma.PlanDefinitionUncheckedUpdateInput = {
             key: dto.key?.toLowerCase(),
@@ -174,25 +164,10 @@ export class PlatformService {
             metadata: dto.metadata ? this.toJson(dto.metadata) : undefined,
             isActive: dto.isActive,
           };
-          const updated = await tx.planDefinition.update({
+          return tx.planDefinition.update({
             where: { id: planId },
             data,
           });
-
-          await tx.auditLog.create({
-            data: {
-              userId: currentUser.sub,
-              action: 'PLAN_UPDATED',
-              entity: 'PlanDefinition',
-              entityId: updated.id,
-              metadata: this.toJson({
-                key: updated.key,
-                updatedFields: Object.keys(dto),
-              }),
-            },
-          });
-
-          return updated;
         },
       );
 
@@ -210,7 +185,7 @@ export class PlatformService {
     }
   }
 
-  async createInstitution(dto: CreateInstitutionDto, currentUser: CurrentUser) {
+  async createInstitution(dto: CreateInstitutionDto) {
     if (dto.timezone) {
       this.timezoneResolver.assertValidTimezone(dto.timezone);
     }
@@ -259,9 +234,20 @@ export class PlatformService {
       };
 
     try {
-      const institution = await this.prisma.$transaction(
+      // Audited automatically by PrismaService (real before/after
+      // snapshot, with institutionId resolved from the row's own id — see
+      // resolveAuditInstitutionId's Institution special case). Note the
+      // nested branding/subscriptions/entitlements writes below are part
+      // of this single institution.create call, so they don't get their
+      // own separate CREATED audit entries — the Prisma extension only
+      // hooks top-level model operations, not nested relation writes; the
+      // full nested tree is still visible on the Institution row's own
+      // after-snapshot via the include below.
+      const institution = await runAuditedTransaction(
+        this.prisma,
+        this.requestContext,
         async (tx: Prisma.TransactionClient) => {
-          const createdInstitution = await tx.institution.create({
+          return tx.institution.create({
             data: {
               name: dto.name,
               slug: uniqueSlug,
@@ -291,24 +277,6 @@ export class PlatformService {
             },
             include: this.institutionInclude,
           });
-
-          await tx.auditLog.create({
-            data: {
-              userId: currentUser.sub,
-              institutionId: createdInstitution.id,
-              action: 'INSTITUTION_CREATED',
-              entity: 'Institution',
-              entityId: createdInstitution.id,
-              metadata: this.toJson({
-                slug: createdInstitution.slug,
-                planId: plan.id,
-                planKey: plan.key,
-                deploymentMode,
-              }),
-            },
-          });
-
-          return createdInstitution;
         },
       );
 
@@ -391,19 +359,18 @@ export class PlatformService {
     };
   }
 
-  async updateInstitution(
-    institutionId: string,
-    dto: UpdateInstitutionDto,
-    currentUser: CurrentUser,
-  ) {
+  async updateInstitution(institutionId: string, dto: UpdateInstitutionDto) {
     await this.ensureInstitutionExists(institutionId);
     if (dto.timezone) {
       this.timezoneResolver.assertValidTimezone(dto.timezone);
     }
 
-    const institution = await this.prisma.$transaction(
+    // Audited automatically by PrismaService (real before/after snapshot).
+    const institution = await runAuditedTransaction(
+      this.prisma,
+      this.requestContext,
       async (tx: Prisma.TransactionClient) => {
-        const updated = await tx.institution.update({
+        return tx.institution.update({
           where: { id: institutionId },
           data: {
             ...dto,
@@ -411,21 +378,6 @@ export class PlatformService {
           },
           include: this.institutionInclude,
         });
-
-        await tx.auditLog.create({
-          data: {
-            userId: currentUser.sub,
-            institutionId,
-            action: 'INSTITUTION_UPDATED',
-            entity: 'Institution',
-            entityId: institutionId,
-            metadata: this.toJson({
-              ...dto,
-            }),
-          },
-        });
-
-        return updated;
       },
     );
 
@@ -435,14 +387,13 @@ export class PlatformService {
     };
   }
 
-  async updateBranding(
-    institutionId: string,
-    dto: UpdateBrandingDto,
-    currentUser: CurrentUser,
-  ) {
+  async updateBranding(institutionId: string, dto: UpdateBrandingDto) {
     await this.ensureInstitutionExists(institutionId);
 
-    const branding = await this.prisma.$transaction(
+    // Audited automatically by PrismaService (real before/after snapshot).
+    const branding = await runAuditedTransaction(
+      this.prisma,
+      this.requestContext,
       async (tx: Prisma.TransactionClient) => {
         const deletedBranding = await tx.institutionBranding.findFirst({
           where: {
@@ -452,8 +403,8 @@ export class PlatformService {
           select: { id: true },
         });
 
-        const updated = deletedBranding
-          ? await tx.institutionBranding.update({
+        return deletedBranding
+          ? tx.institutionBranding.update({
               where: { id: deletedBranding.id },
               data: {
                 ...dto,
@@ -462,7 +413,7 @@ export class PlatformService {
                 deleteReason: null,
               },
             })
-          : await tx.institutionBranding.upsert({
+          : tx.institutionBranding.upsert({
               where: { institutionId },
               update: dto,
               create: {
@@ -470,21 +421,6 @@ export class PlatformService {
                 ...dto,
               },
             });
-
-        await tx.auditLog.create({
-          data: {
-            userId: currentUser.sub,
-            institutionId,
-            action: 'INSTITUTION_BRANDING_UPDATED',
-            entity: 'InstitutionBranding',
-            entityId: updated.id,
-            metadata: this.toJson({
-              ...dto,
-            }),
-          },
-        });
-
-        return updated;
       },
     );
 
@@ -497,13 +433,17 @@ export class PlatformService {
   async upsertSettings(
     institutionId: string,
     dto: UpsertInstitutionSettingsDto,
-    currentUser: CurrentUser,
   ) {
     await this.ensureInstitutionExists(institutionId);
 
-    const settings = await this.prisma.$transaction(
+    // Audited automatically by PrismaService — each upserted setting gets
+    // its own real before/after snapshot audit entry (finer-grained than
+    // the old single "keys touched" bespoke entry covering the whole call).
+    const settings = await runAuditedTransaction(
+      this.prisma,
+      this.requestContext,
       async (tx: Prisma.TransactionClient) => {
-        const upserts = await Promise.all(
+        return Promise.all(
           dto.settings.map((setting) => {
             const normalizedKey = this.toSnakeCase(setting.key);
             return tx.institutionSetting.upsert({
@@ -527,21 +467,6 @@ export class PlatformService {
             });
           }),
         );
-
-        await tx.auditLog.create({
-          data: {
-            userId: currentUser.sub,
-            institutionId,
-            action: 'INSTITUTION_SETTINGS_UPDATED',
-            entity: 'InstitutionSetting',
-            entityId: institutionId,
-            metadata: this.toJson({
-              keys: dto.settings.map((setting) => setting.key),
-            }),
-          },
-        });
-
-        return upserts;
       },
     );
 
@@ -551,16 +476,16 @@ export class PlatformService {
     };
   }
 
-  async upsertEntitlements(
-    institutionId: string,
-    dto: UpsertEntitlementsDto,
-    currentUser: CurrentUser,
-  ) {
+  async upsertEntitlements(institutionId: string, dto: UpsertEntitlementsDto) {
     await this.ensureInstitutionExists(institutionId);
 
-    const entitlements = await this.prisma.$transaction(
+    // Audited automatically by PrismaService — each upserted entitlement
+    // gets its own real before/after snapshot audit entry.
+    const entitlements = await runAuditedTransaction(
+      this.prisma,
+      this.requestContext,
       async (tx: Prisma.TransactionClient) => {
-        const upserts = await Promise.all(
+        return Promise.all(
           dto.entitlements.map((entitlement) =>
             tx.institutionEntitlement.upsert({
               where: {
@@ -583,24 +508,6 @@ export class PlatformService {
             }),
           ),
         );
-
-        await tx.auditLog.create({
-          data: {
-            userId: currentUser.sub,
-            institutionId,
-            action: 'INSTITUTION_ENTITLEMENTS_UPDATED',
-            entity: 'InstitutionEntitlement',
-            entityId: institutionId,
-            metadata: this.toJson({
-              modules: dto.entitlements.map((entitlement) => ({
-                moduleKey: entitlement.moduleKey,
-                isEnabled: entitlement.isEnabled,
-              })),
-            }),
-          },
-        });
-
-        return upserts;
       },
     );
 
@@ -610,17 +517,18 @@ export class PlatformService {
     };
   }
 
-  async updateSubscription(
-    institutionId: string,
-    dto: UpdateSubscriptionDto,
-    currentUser: CurrentUser,
-  ) {
+  async updateSubscription(institutionId: string, dto: UpdateSubscriptionDto) {
     await this.ensureInstitutionExists(institutionId);
     const plans = await this.syncBootstrapPlans();
     const plan = await this.resolvePlan(dto.planId, plans);
     const defaultModules = this.readModuleKeys(plan.defaultModules);
 
-    const subscription = await this.prisma.$transaction(
+    // Audited automatically by PrismaService (real before/after snapshot
+    // for the subscription row; entitlement upserts below each get their
+    // own entry too).
+    const subscription = await runAuditedTransaction(
+      this.prisma,
+      this.requestContext,
       async (tx: Prisma.TransactionClient) => {
         const activeSubscription = await tx.institutionSubscription.findFirst({
           where: { institutionId },
@@ -691,22 +599,6 @@ export class PlatformService {
             }),
           ),
         );
-
-        await tx.auditLog.create({
-          data: {
-            userId: currentUser.sub,
-            institutionId,
-            action: 'INSTITUTION_SUBSCRIPTION_UPDATED',
-            entity: 'InstitutionSubscription',
-            entityId: updated.id,
-            metadata: this.toJson({
-              planId: plan.id,
-              planKey: plan.key,
-              status: dto.status ?? updated.status,
-              autoRenew: dto.autoRenew ?? updated.autoRenew,
-            }),
-          },
-        });
 
         return updated;
       },

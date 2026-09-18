@@ -1973,18 +1973,9 @@ export class RecycleBinService {
       },
     });
 
-    await this.auditLogService.log(currentUser, {
-      action: 'USER_RESTORED',
-      entity: 'User',
-      entityId: userId,
-      institutionId: restoredUser.institutionId,
-      metadata: {
-        email: restoredUser.email,
-        role: restoredUser.role,
-        status: restoredUser.status,
-      },
-    });
-
+    // Audited automatically by PrismaService (real before/after snapshot,
+    // resolved as a RESTORED action since deletedAt reset to null) — no
+    // bespoke AuditLogService call needed here.
     return {
       message: 'User restored successfully',
       data: restoredUser,
@@ -2042,18 +2033,10 @@ export class RecycleBinService {
       });
     });
 
-    await this.auditLogService.log(currentUser, {
-      action: 'USER_PERMANENTLY_DELETED',
-      entity: 'User',
-      entityId: userId,
-      institutionId: target.institutionId,
-      metadata: {
-        email: target.email,
-        role: target.role,
-        status: target.status,
-      },
-    });
-
+    // Audited automatically by PrismaService (real before/after snapshot —
+    // the "before" side here is the full purged row, which is a stronger
+    // record of a permanent delete than the old field-list metadata) — no
+    // bespoke AuditLogService call needed here.
     return {
       message: 'User permanently deleted successfully',
       data: { id: userId },
@@ -2105,17 +2088,8 @@ export class RecycleBinService {
       },
     });
 
-    await this.auditLogService.log(currentUser, {
-      action: 'CAMPUS_RESTORED',
-      entity: 'Campus',
-      entityId: campusId,
-      institutionId: restoredCampus.institutionId,
-      metadata: {
-        name: restoredCampus.name,
-        location: restoredCampus.location,
-      },
-    });
-
+    // Audited automatically by PrismaService (real before/after snapshot)
+    // — no bespoke AuditLogService call needed here.
     return {
       message: 'Campus restored successfully',
       data: restoredCampus,
@@ -2158,16 +2132,8 @@ export class RecycleBinService {
       },
     });
 
-    await this.auditLogService.log(currentUser, {
-      action: 'ROLE_RESTORED',
-      entity: 'Role',
-      entityId: roleId,
-      institutionId: template.institutionId,
-      metadata: {
-        name: restoredTemplate.name,
-      },
-    });
-
+    // Audited automatically by PrismaService (real before/after snapshot)
+    // — no bespoke AuditLogService call needed here.
     return {
       message: 'Role restored successfully',
       data: restoredTemplate,
@@ -2972,17 +2938,9 @@ export class RecycleBinService {
       });
     });
 
-    await this.auditLogService.log(currentUser, {
-      action: 'CAMPUS_PERMANENTLY_DELETED',
-      entity: 'Campus',
-      entityId: campusId,
-      institutionId: campus.institutionId,
-      metadata: {
-        name: campus.name,
-        location: campus.location,
-      },
-    });
-
+    // Audited automatically by PrismaService (real before/after snapshot —
+    // the "before" side here is the full purged row) — no bespoke
+    // AuditLogService call needed here.
     return {
       message: 'Campus permanently deleted successfully',
       data: { id: campusId },
@@ -3031,16 +2989,9 @@ export class RecycleBinService {
       });
     });
 
-    await this.auditLogService.log(currentUser, {
-      action: 'ROLE_PERMANENTLY_DELETED',
-      entity: 'Role',
-      entityId: roleId,
-      institutionId: template.institutionId,
-      metadata: {
-        name: template.name,
-      },
-    });
-
+    // Audited automatically by PrismaService (real before/after snapshot —
+    // the "before" side here is the full purged row) — no bespoke
+    // AuditLogService call needed here.
     return {
       message: 'Role permanently deleted successfully',
       data: { id: roleId },

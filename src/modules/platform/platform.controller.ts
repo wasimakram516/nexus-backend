@@ -73,11 +73,8 @@ export class PlatformController {
     description:
       'Creates a new platform subscription plan for pricing, entitlements, and institution onboarding flows.',
   })
-  createPlan(
-    @Body() dto: CreatePlanDto,
-    @CurrentUserDecorator() currentUser: CurrentUser,
-  ) {
-    return this.platformService.createPlan(dto, currentUser);
+  createPlan(@Body() dto: CreatePlanDto) {
+    return this.platformService.createPlan(dto);
   }
 
   @Patch('plans/:planId')
@@ -87,12 +84,8 @@ export class PlatformController {
     description:
       'Updates plan metadata, limits, or pricing-related fields used by institution subscription management.',
   })
-  updatePlan(
-    @Param('planId') planId: string,
-    @Body() dto: UpdatePlanDto,
-    @CurrentUserDecorator() currentUser: CurrentUser,
-  ) {
-    return this.platformService.updatePlan(planId, dto, currentUser);
+  updatePlan(@Param('planId') planId: string, @Body() dto: UpdatePlanDto) {
+    return this.platformService.updatePlan(planId, dto);
   }
 
   @Post('institutions')
@@ -102,11 +95,8 @@ export class PlatformController {
     description:
       'Creates a new institution tenant and prepares it for branding, settings, entitlements, and permission-template setup.',
   })
-  createInstitution(
-    @Body() dto: CreateInstitutionDto,
-    @CurrentUserDecorator() currentUser: CurrentUser,
-  ) {
-    return this.platformService.createInstitution(dto, currentUser);
+  createInstitution(@Body() dto: CreateInstitutionDto) {
+    return this.platformService.createInstitution(dto);
   }
 
   @Get('institutions')
@@ -152,13 +142,8 @@ export class PlatformController {
   updateInstitution(
     @Param('institutionId') institutionId: string,
     @Body() dto: UpdateInstitutionAccessDto,
-    @CurrentUserDecorator() currentUser: CurrentUser,
   ) {
-    return this.platformService.updateInstitution(
-      institutionId,
-      dto,
-      currentUser,
-    );
+    return this.platformService.updateInstitution(institutionId, dto);
   }
 
   @Put('institutions/:institutionId/branding')
@@ -171,9 +156,8 @@ export class PlatformController {
   updateBranding(
     @Param('institutionId') institutionId: string,
     @Body() dto: UpdateBrandingDto,
-    @CurrentUserDecorator() currentUser: CurrentUser,
   ) {
-    return this.platformService.updateBranding(institutionId, dto, currentUser);
+    return this.platformService.updateBranding(institutionId, dto);
   }
 
   @Put('institutions/:institutionId/settings')
@@ -186,9 +170,8 @@ export class PlatformController {
   upsertSettings(
     @Param('institutionId') institutionId: string,
     @Body() dto: UpsertInstitutionSettingsDto,
-    @CurrentUserDecorator() currentUser: CurrentUser,
   ) {
-    return this.platformService.upsertSettings(institutionId, dto, currentUser);
+    return this.platformService.upsertSettings(institutionId, dto);
   }
 
   @Put('institutions/:institutionId/entitlements')
@@ -201,13 +184,8 @@ export class PlatformController {
   upsertEntitlements(
     @Param('institutionId') institutionId: string,
     @Body() dto: UpsertEntitlementsDto,
-    @CurrentUserDecorator() currentUser: CurrentUser,
   ) {
-    return this.platformService.upsertEntitlements(
-      institutionId,
-      dto,
-      currentUser,
-    );
+    return this.platformService.upsertEntitlements(institutionId, dto);
   }
 
   @Put('institutions/:institutionId/subscription')
@@ -220,13 +198,8 @@ export class PlatformController {
   updateSubscription(
     @Param('institutionId') institutionId: string,
     @Body() dto: UpdateSubscriptionAccessDto,
-    @CurrentUserDecorator() currentUser: CurrentUser,
   ) {
-    return this.platformService.updateSubscription(
-      institutionId,
-      dto,
-      currentUser,
-    );
+    return this.platformService.updateSubscription(institutionId, dto);
   }
 
   @Post('institutions/:institutionId/roles')
@@ -239,9 +212,8 @@ export class PlatformController {
   createRole(
     @Param('institutionId') institutionId: string,
     @Body() dto: CreateRoleDto,
-    @CurrentUserDecorator() currentUser: CurrentUser,
   ) {
-    return this.rolesService.createRole(institutionId, dto, currentUser);
+    return this.rolesService.createRole(institutionId, dto);
   }
 
   @Get('institutions/:institutionId/roles')
@@ -278,14 +250,8 @@ export class PlatformController {
     @Param('institutionId') institutionId: string,
     @Param('roleId') roleId: string,
     @Body() dto: UpdateRoleDto,
-    @CurrentUserDecorator() currentUser: CurrentUser,
   ) {
-    return this.rolesService.updateRole(
-      institutionId,
-      roleId,
-      dto,
-      currentUser,
-    );
+    return this.rolesService.updateRole(institutionId, roleId, dto);
   }
 
   @Delete('institutions/:institutionId/roles/:roleId')

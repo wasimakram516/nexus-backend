@@ -4,7 +4,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '../../prisma/client';
-import { AuditLogService } from '../../common/services/audit-log.service';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -20,15 +19,10 @@ import { CreateRoleDto, UpdateRoleDto } from './dto/roles.dto';
 export class RolesService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly auditLogService: AuditLogService,
     private readonly userPermissionsService: UserPermissionsService,
   ) {}
 
-  async createRole(
-    institutionId: string,
-    dto: CreateRoleDto,
-    currentUser: CurrentUser,
-  ) {
+  async createRole(institutionId: string, dto: CreateRoleDto) {
     await this.ensureInstitutionExists(institutionId);
     const permissions = this.userPermissionsService.sanitizeRolePermissions(
       dto.permissions,
@@ -44,14 +38,8 @@ export class RolesService {
         },
       });
 
-      await this.auditLogService.log(currentUser, {
-        action: 'ROLE_CREATED',
-        entity: 'Role',
-        entityId: role.id,
-        institutionId,
-        metadata: { name: dto.name },
-      });
-
+      // Audited automatically by PrismaService (real before/after snapshot)
+      // — no bespoke AuditLogService call needed here.
       return { message: 'Role created successfully', data: role };
     } catch (error) {
       if (
@@ -81,12 +69,7 @@ export class RolesService {
     return { message: 'Role retrieved successfully', data: role };
   }
 
-  async updateRole(
-    institutionId: string,
-    roleId: string,
-    dto: UpdateRoleDto,
-    currentUser: CurrentUser,
-  ) {
+  async updateRole(institutionId: string, roleId: string, dto: UpdateRoleDto) {
     await this.ensureInstitutionExists(institutionId);
     await this.getRoleOrThrow(institutionId, roleId);
 
@@ -107,14 +90,8 @@ export class RolesService {
         },
       });
 
-      await this.auditLogService.log(currentUser, {
-        action: 'ROLE_UPDATED',
-        entity: 'Role',
-        entityId: role.id,
-        institutionId,
-        metadata: { updatedFields: Object.keys(dto) },
-      });
-
+      // Audited automatically by PrismaService (real before/after snapshot)
+      // — no bespoke AuditLogService call needed here.
       return { message: 'Role updated successfully', data: role };
     } catch (error) {
       if (
@@ -146,14 +123,8 @@ export class RolesService {
       },
     });
 
-    await this.auditLogService.log(currentUser, {
-      action: 'ROLE_DELETED',
-      entity: 'Role',
-      entityId: roleId,
-      institutionId,
-      metadata: { reason: reason ?? null },
-    });
-
+    // Audited automatically by PrismaService (real before/after snapshot)
+    // — no bespoke AuditLogService call needed here.
     return {
       message: 'Role moved to recycle bin successfully',
       data: { id: roleId },

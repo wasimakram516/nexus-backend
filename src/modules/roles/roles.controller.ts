@@ -53,7 +53,6 @@ export class RolesController {
     return this.rolesService.createRole(
       this.requireInstitutionId(currentUser),
       dto,
-      currentUser,
     );
   }
 
@@ -128,7 +127,6 @@ export class RolesController {
       this.requireInstitutionId(currentUser),
       roleId,
       dto,
-      currentUser,
     );
   }
 

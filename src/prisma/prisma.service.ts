@@ -4,19 +4,14 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { RequestContextService } from '../common/services/request-context.service';
 
-const AUTO_AUDIT_EXCLUDED_MODELS = new Set([
-  'AuditLog',
-  'RefreshSession',
-  'User',
-  'Campus',
-  'Institution',
-  'PlanDefinition',
-  'InstitutionBranding',
-  'InstitutionSetting',
-  'InstitutionEntitlement',
-  'InstitutionSubscription',
-  'Role',
-]);
+// AuditLog can't audit itself (infinite recursion). RefreshSession is
+// extremely high-volume (created/deleted on every login/refresh) and is
+// pure noise for audit purposes — both stay excluded permanently. Every
+// other model (including the former User/Campus/Institution/PlanDefinition/
+// InstitutionBranding/InstitutionSetting/InstitutionEntitlement/
+// InstitutionSubscription/Role bespoke-audit set) now gets the same
+// automatic before/after snapshot auditing as the rest of the schema.
+const AUTO_AUDIT_EXCLUDED_MODELS = new Set(['AuditLog', 'RefreshSession']);
 
 type ModelCapabilities = {
   createdBy: boolean;
@@ -206,6 +201,7 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
             const institutionId = await PrismaService.resolveAuditInstitutionId(
               auditClient,
               contextService,
+              model,
               nextArgs,
               result,
               actor?.institutionId ?? null,
@@ -622,10 +618,31 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
   private static async resolveAuditInstitutionId(
     service: Prisma.TransactionClient,
     contextService: RequestContextService,
+    model: string,
     args: QueryArgs,
     result: unknown,
     fallbackInstitutionId: string | null,
   ) {
+    // Institution has no institutionId column — the row's own id IS the
+    // institution id for audit-scoping purposes. Without this, every
+    // Institution create/update/delete would resolve to institutionId: null
+    // (falling through the generic lookup below, which only ever looks for
+    // an institutionId/campusId/etc. reference field) and silently drop out
+    // of the institution-scoped audit view for the institution it's about.
+    if (model === 'Institution') {
+      const ownId =
+        PrismaService.extractEntityId(result) ??
+        (args.where &&
+        typeof args.where === 'object' &&
+        !Array.isArray(args.where)
+          ? ((args.where as { id?: unknown }).id as string | undefined)
+          : undefined);
+
+      if (typeof ownId === 'string') {
+        return ownId;
+      }
+    }
+
     const directInstitutionId =
       PrismaService.extractInstitutionId(result) ??
       PrismaService.extractInstitutionId(args.data) ??

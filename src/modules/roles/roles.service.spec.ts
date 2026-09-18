@@ -2,7 +2,6 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Prisma } from '../../prisma/client';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
-import { AuditLogService } from '../../common/services/audit-log.service';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RolesService } from './roles.service';
@@ -37,10 +36,6 @@ describe('RolesService', () => {
     },
   };
 
-  const auditLogServiceMock = {
-    log: jest.fn().mockResolvedValue(undefined),
-  };
-
   const userPermissionsService = new UserPermissionsService(
     prismaMock as never,
   );
@@ -55,7 +50,6 @@ describe('RolesService', () => {
       providers: [
         RolesService,
         { provide: PrismaService, useValue: prismaMock },
-        { provide: AuditLogService, useValue: auditLogServiceMock },
         { provide: UserPermissionsService, useValue: userPermissionsService },
       ],
     }).compile();
@@ -67,17 +61,13 @@ describe('RolesService', () => {
     it('sanitizes unknown feature keys and actions before persisting', async () => {
       prismaMock.role.create.mockResolvedValue(role);
 
-      await service.createRole(
-        'institution-1',
-        {
-          name: 'Front Desk',
-          permissions: {
-            students: { read: true, launch_missiles: true },
-            not_a_real_feature: { read: true },
-          },
+      await service.createRole('institution-1', {
+        name: 'Front Desk',
+        permissions: {
+          students: { read: true, launch_missiles: true },
+          not_a_real_feature: { read: true },
         },
-        adminUser,
-      );
+      });
 
       /* eslint-disable @typescript-eslint/no-unsafe-assignment -- untyped Prisma mock */
       expect(prismaMock.role.create).toHaveBeenCalledWith(
@@ -90,21 +80,16 @@ describe('RolesService', () => {
         }),
       );
       /* eslint-enable @typescript-eslint/no-unsafe-assignment */
-      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
-        adminUser,
-        expect.objectContaining({ action: 'ROLE_CREATED' }),
-      );
     });
 
     it('throws NotFoundException when the institution does not exist', async () => {
       prismaMock.institution.findUnique.mockResolvedValueOnce(null);
 
       await expect(
-        service.createRole(
-          'institution-missing',
-          { name: 'X', permissions: {} },
-          adminUser,
-        ),
+        service.createRole('institution-missing', {
+          name: 'X',
+          permissions: {},
+        }),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -117,11 +102,10 @@ describe('RolesService', () => {
       );
 
       await expect(
-        service.createRole(
-          'institution-1',
-          { name: 'Front Desk', permissions: {} },
-          adminUser,
-        ),
+        service.createRole('institution-1', {
+          name: 'Front Desk',
+          permissions: {},
+        }),
       ).rejects.toBeInstanceOf(ConflictException);
     });
   });
@@ -152,12 +136,9 @@ describe('RolesService', () => {
         permissions: { students: { read: true, update: true } },
       });
 
-      await service.updateRole(
-        'institution-1',
-        'role-1',
-        { permissions: { students: { read: true, update: true, hack: true } } },
-        adminUser,
-      );
+      await service.updateRole('institution-1', 'role-1', {
+        permissions: { students: { read: true, update: true, hack: true } },
+      });
 
       /* eslint-disable @typescript-eslint/no-unsafe-assignment -- untyped Prisma mock */
       expect(prismaMock.role.update).toHaveBeenCalledWith(

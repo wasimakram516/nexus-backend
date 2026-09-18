@@ -25,7 +25,7 @@ describe('RecycleBinService', () => {
   const prismaMock = {
     $transaction: jest.fn(),
     user: {
-      findMany: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
@@ -393,14 +393,10 @@ describe('RecycleBinService', () => {
         updatedAt: true,
       },
     });
-    expect(auditLogServiceMock.log).toHaveBeenCalledWith(
-      adminUser,
-      expect.objectContaining({
-        action: 'USER_RESTORED',
-        entity: 'User',
-        entityId: 'user-1',
-      }),
-    );
+    // Restoring User is now audited automatically by PrismaService (real
+    // before/after snapshot) rather than through the bespoke
+    // AuditLogService call this used to assert on — see prisma.service.spec
+    // for that mechanism's own coverage.
     expect(result).toMatchObject({
       message: 'User restored successfully',
       data: {
@@ -427,7 +423,7 @@ describe('RecycleBinService', () => {
   });
 
   it('lists soft-deleted fee payments under the finance recycle-bin entity', async () => {
-    prismaMock.feePayment.findMany.mockResolvedValue([
+    prismaMock.feePayment.findMany.mockResolvedValueOnce([
       {
         id: 'payment-1',
         voucherId: 'voucher-1',
@@ -1738,6 +1734,978 @@ describe('RecycleBinService', () => {
           'section-1',
         ),
       ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('restoreRecord — remaining entities', () => {
+    it('restores a soft-deleted campus', async () => {
+      prismaMock.campus.findFirst.mockResolvedValue({
+        id: 'campus-1',
+        name: 'City Campus',
+        location: 'Lahore',
+        institutionId: 'institution-1',
+        deletedAt: new Date(),
+      });
+      prismaMock.campus.update.mockResolvedValue({ id: 'campus-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.CAMPUS,
+        'campus-1',
+      );
+
+      expect(result.message).toBe('Campus restored successfully');
+    });
+
+    it('404s restoring a campus not in the recycle bin', async () => {
+      prismaMock.campus.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(adminUser, RecycleBinEntity.CAMPUS, 'missing'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted role', async () => {
+      prismaMock.role.findFirst.mockResolvedValue({
+        id: 'role-1',
+        institutionId: 'institution-1',
+        name: 'Accountant',
+        description: null,
+      });
+      prismaMock.role.update.mockResolvedValue({ id: 'role-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.ROLE,
+        'role-1',
+      );
+
+      expect(result.message).toBe('Role restored successfully');
+    });
+
+    it('404s restoring a role not in the recycle bin', async () => {
+      prismaMock.role.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(adminUser, RecycleBinEntity.ROLE, 'missing'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted student', async () => {
+      prismaMock.student.findFirst.mockResolvedValue({
+        id: 'student-1',
+        regNo: 'NEX-001',
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.student.update.mockResolvedValue({ id: 'student-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.STUDENT,
+        'student-1',
+      );
+
+      expect(result.message).toBe('Student restored successfully');
+    });
+
+    it('404s restoring a student not in the recycle bin', async () => {
+      prismaMock.student.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(adminUser, RecycleBinEntity.STUDENT, 'missing'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted guardian', async () => {
+      prismaMock.guardian.findFirst.mockResolvedValue({
+        id: 'guardian-1',
+        relation: 'Father',
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.guardian.update.mockResolvedValue({ id: 'guardian-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.GUARDIAN,
+        'guardian-1',
+      );
+
+      expect(result.message).toBe('Guardian restored successfully');
+    });
+
+    it('404s restoring a guardian not in the recycle bin', async () => {
+      prismaMock.guardian.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(adminUser, RecycleBinEntity.GUARDIAN, 'missing'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted level', async () => {
+      prismaMock.level.findFirst.mockResolvedValue({
+        name: 'Primary',
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.level.update.mockResolvedValue({ id: 'level-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.LEVEL,
+        'level-1',
+      );
+
+      expect(result.message).toBe('Level restored successfully');
+    });
+
+    it('404s restoring a level not in the recycle bin', async () => {
+      prismaMock.level.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(adminUser, RecycleBinEntity.LEVEL, 'missing'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted class', async () => {
+      prismaMock.academicClass.findFirst.mockResolvedValue({
+        name: 'Grade 1',
+        level: { campus: { institutionId: 'institution-1' } },
+      });
+      prismaMock.academicClass.update.mockResolvedValue({ id: 'class-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.CLASS,
+        'class-1',
+      );
+
+      expect(result.message).toBe('Class restored successfully');
+    });
+
+    it('404s restoring a class not in the recycle bin', async () => {
+      prismaMock.academicClass.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(adminUser, RecycleBinEntity.CLASS, 'missing'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted section', async () => {
+      prismaMock.section.findFirst.mockResolvedValue({
+        name: 'A',
+        class: { level: { campus: { institutionId: 'institution-1' } } },
+      });
+      prismaMock.section.update.mockResolvedValue({ id: 'section-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.SECTION,
+        'section-1',
+      );
+
+      expect(result.message).toBe('Section restored successfully');
+    });
+
+    it('404s restoring a section not in the recycle bin', async () => {
+      prismaMock.section.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(adminUser, RecycleBinEntity.SECTION, 'missing'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted subject', async () => {
+      prismaMock.subject.findFirst.mockResolvedValue({
+        name: 'Math',
+        class: { level: { campus: { institutionId: 'institution-1' } } },
+      });
+      prismaMock.subject.update.mockResolvedValue({ id: 'subject-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.SUBJECT,
+        'subject-1',
+      );
+
+      expect(result.message).toBe('Subject restored successfully');
+    });
+
+    it('404s restoring a subject not in the recycle bin', async () => {
+      prismaMock.subject.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(adminUser, RecycleBinEntity.SUBJECT, 'missing'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted salary record', async () => {
+      prismaMock.staffSalary.findFirst.mockResolvedValue({
+        userId: 'user-1',
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.staffSalary.update.mockResolvedValue({ id: 'salary-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.SALARY,
+        'salary-1',
+      );
+
+      expect(result.message).toBe('Salary restored successfully');
+    });
+
+    it('404s restoring a salary record not in the recycle bin', async () => {
+      prismaMock.staffSalary.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(adminUser, RecycleBinEntity.SALARY, 'missing'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted salary deduction rule', async () => {
+      prismaMock.salaryDeductionRule.findFirst.mockResolvedValue({
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.salaryDeductionRule.update.mockResolvedValue({ id: 'rule-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.SALARY_DEDUCTION_RULE,
+        'rule-1',
+      );
+
+      expect(result.message).toBe(
+        'Salary deduction rule restored successfully',
+      );
+    });
+
+    it('404s restoring a salary deduction rule not in the recycle bin', async () => {
+      prismaMock.salaryDeductionRule.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.SALARY_DEDUCTION_RULE,
+          'missing',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted salary adjustment', async () => {
+      prismaMock.salaryAdjustment.findFirst.mockResolvedValue({
+        userId: 'user-1',
+        salaryId: 'salary-1',
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.salaryAdjustment.update.mockResolvedValue({ id: 'adj-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.SALARY_ADJUSTMENT,
+        'adj-1',
+      );
+
+      expect(result.message).toBe('Salary adjustment restored successfully');
+    });
+
+    it('404s restoring a salary adjustment not in the recycle bin', async () => {
+      prismaMock.salaryAdjustment.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.SALARY_ADJUSTMENT,
+          'missing',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted salary payment and its deduction summary', async () => {
+      prismaMock.salaryPayment.findFirst.mockResolvedValue({
+        userId: 'user-1',
+        salaryId: 'salary-1',
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.salaryPayment.update.mockResolvedValue({ id: 'payment-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.SALARY_PAYMENT,
+        'payment-1',
+      );
+
+      expect(prismaMock.salaryDeductionSummary.updateMany).toHaveBeenCalled();
+      expect(result.message).toBe('Salary payment restored successfully');
+    });
+
+    it('404s restoring a salary payment not in the recycle bin', async () => {
+      prismaMock.salaryPayment.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.SALARY_PAYMENT,
+          'missing',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted bank account', async () => {
+      prismaMock.bankAccount.findFirst.mockResolvedValue({
+        bankName: 'HBL',
+        accountTitle: 'Main',
+        accountNumber: '12345',
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.bankAccount.update.mockResolvedValue({ id: 'bank-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.BANK_ACCOUNT,
+        'bank-1',
+      );
+
+      expect(result.message).toBe('Bank account restored successfully');
+    });
+
+    it('404s restoring a bank account not in the recycle bin', async () => {
+      prismaMock.bankAccount.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.BANK_ACCOUNT,
+          'missing',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted fee structure', async () => {
+      prismaMock.feeStructure.findFirst.mockResolvedValue({
+        classId: 'class-1',
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.feeStructure.update.mockResolvedValue({ id: 'fs-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.FEE_STRUCTURE,
+        'fs-1',
+      );
+
+      expect(result.message).toBe('Fee structure restored successfully');
+    });
+
+    it('404s restoring a fee structure not in the recycle bin', async () => {
+      prismaMock.feeStructure.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.FEE_STRUCTURE,
+          'missing',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted student discount', async () => {
+      prismaMock.studentDiscount.findFirst.mockResolvedValue({
+        studentId: 'student-1',
+        student: { campus: { institutionId: 'institution-1' } },
+      });
+      prismaMock.studentDiscount.update.mockResolvedValue({ id: 'disc-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.STUDENT_DISCOUNT,
+        'disc-1',
+      );
+
+      expect(result.message).toBe('Student discount restored successfully');
+    });
+
+    it('404s restoring a student discount not in the recycle bin', async () => {
+      prismaMock.studentDiscount.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.STUDENT_DISCOUNT,
+          'missing',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted student fine rule', async () => {
+      prismaMock.studentFineRule.findFirst.mockResolvedValue({
+        campusId: 'campus-1',
+        classId: null,
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.studentFineRule.update.mockResolvedValue({ id: 'fr-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.STUDENT_FINE_RULE,
+        'fr-1',
+      );
+
+      expect(result.message).toBe('Student fine rule restored successfully');
+    });
+
+    it('404s restoring a student fine rule not in the recycle bin', async () => {
+      prismaMock.studentFineRule.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.STUDENT_FINE_RULE,
+          'missing',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted student fine', async () => {
+      prismaMock.studentFine.findFirst.mockResolvedValue({
+        studentId: 'student-1',
+        month: 3,
+        year: 2026,
+        student: { campus: { institutionId: 'institution-1' } },
+      });
+      prismaMock.studentFine.update.mockResolvedValue({ id: 'fine-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.STUDENT_FINE,
+        'fine-1',
+      );
+
+      expect(result.message).toBe('Student fine restored successfully');
+    });
+
+    it('404s restoring a student fine not in the recycle bin', async () => {
+      prismaMock.studentFine.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.STUDENT_FINE,
+          'missing',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('restores a soft-deleted fee voucher and reconciles its settlement', async () => {
+      prismaMock.feeVoucher.findFirst.mockResolvedValue({
+        studentId: 'student-1',
+        month: 3,
+        year: 2026,
+        student: { campus: { institutionId: 'institution-1' } },
+      });
+      prismaMock.feeVoucher.update.mockResolvedValue({
+        id: 'voucher-1',
+        feeBreakdown: [],
+        discountsApplied: [],
+        lateFeeFine: 0,
+      });
+      prismaMock.feePayment.aggregate.mockResolvedValue({
+        _sum: { amount: null },
+      });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.FEE_VOUCHER,
+        'voucher-1',
+      );
+
+      expect(result.message).toBe('Fee voucher restored successfully');
+    });
+
+    it('404s restoring a fee voucher not in the recycle bin', async () => {
+      prismaMock.feeVoucher.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.FEE_VOUCHER,
+          'missing',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('permanentlyDeleteRecord — remaining leaf entities', () => {
+    const longAgo = () => {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - 31);
+      return d;
+    };
+
+    it('permanently deletes a role once eligible', async () => {
+      prismaMock.role.findFirst.mockResolvedValue({
+        id: 'role-1',
+        institutionId: 'institution-1',
+        name: 'Accountant',
+        deletedAt: longAgo(),
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.ROLE,
+        'role-1',
+      );
+
+      expect(prismaMock.role.delete).toHaveBeenCalled();
+      expect(result.message).toBe('Role permanently deleted successfully');
+    });
+
+    it('404s permanently deleting a role not in the recycle bin', async () => {
+      prismaMock.role.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.ROLE,
+          'missing',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('permanently deletes a guardian once eligible', async () => {
+      prismaMock.guardian.findFirst.mockResolvedValue({
+        relation: 'Father',
+        deletedAt: longAgo(),
+        campus: { institutionId: 'institution-1' },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.GUARDIAN,
+        'guardian-1',
+      );
+
+      expect(prismaMock.guardian.delete).toHaveBeenCalled();
+      expect(result.message).toBe('Guardian permanently deleted successfully');
+    });
+
+    it('blocks a permanent delete of a guardian before the retention period has elapsed', async () => {
+      prismaMock.guardian.findFirst.mockResolvedValue({
+        relation: 'Father',
+        deletedAt: new Date(),
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.GUARDIAN,
+          'guardian-1',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('permanently deletes a salary record once eligible, refusing an active salary payment or adjustment', async () => {
+      prismaMock.staffSalary.findFirst.mockResolvedValue({
+        userId: 'user-1',
+        deletedAt: longAgo(),
+        campus: { institutionId: 'institution-1' },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.SALARY,
+        'salary-1',
+      );
+
+      expect(prismaMock.staffSalary.delete).toHaveBeenCalled();
+      expect(result.message).toBe('Salary permanently deleted successfully');
+
+      prismaMock.salaryPayment.count.mockResolvedValueOnce(1);
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.SALARY,
+          'salary-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('permanently deletes a salary deduction rule once eligible', async () => {
+      prismaMock.salaryDeductionRule.findFirst.mockResolvedValue({
+        deletedAt: longAgo(),
+        campus: { institutionId: 'institution-1' },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.SALARY_DEDUCTION_RULE,
+        'rule-1',
+      );
+
+      expect(prismaMock.salaryDeductionRule.delete).toHaveBeenCalled();
+      expect(result.message).toBe(
+        'Salary deduction rule permanently deleted successfully',
+      );
+    });
+
+    it('permanently deletes a salary adjustment once eligible', async () => {
+      prismaMock.salaryAdjustment.findFirst.mockResolvedValue({
+        userId: 'user-1',
+        salaryId: 'salary-1',
+        deletedAt: longAgo(),
+        campus: { institutionId: 'institution-1' },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.SALARY_ADJUSTMENT,
+        'adj-1',
+      );
+
+      expect(prismaMock.salaryAdjustment.delete).toHaveBeenCalled();
+      expect(result.message).toBe(
+        'Salary adjustment permanently deleted successfully',
+      );
+    });
+
+    it('permanently deletes a salary payment once eligible, cleaning up its deduction summary', async () => {
+      prismaMock.salaryPayment.findFirst.mockResolvedValue({
+        userId: 'user-1',
+        salaryId: 'salary-1',
+        deletedAt: longAgo(),
+        campus: { institutionId: 'institution-1' },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.SALARY_PAYMENT,
+        'payment-1',
+      );
+
+      expect(prismaMock.salaryPayment.delete).toHaveBeenCalled();
+      expect(result.message).toBe(
+        'Salary payment permanently deleted successfully',
+      );
+    });
+
+    it('permanently deletes a bank account once eligible', async () => {
+      prismaMock.bankAccount.findFirst.mockResolvedValue({
+        bankName: 'HBL',
+        accountTitle: 'Main',
+        accountNumber: '12345',
+        deletedAt: longAgo(),
+        campus: { institutionId: 'institution-1' },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.BANK_ACCOUNT,
+        'bank-1',
+      );
+
+      expect(prismaMock.bankAccount.delete).toHaveBeenCalled();
+      expect(result.message).toBe(
+        'Bank account permanently deleted successfully',
+      );
+    });
+
+    it('permanently deletes a fee structure once eligible, refusing an active fee voucher', async () => {
+      prismaMock.feeStructure.findFirst.mockResolvedValue({
+        classId: 'class-1',
+        deletedAt: longAgo(),
+        campus: { institutionId: 'institution-1' },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.FEE_STRUCTURE,
+        'fs-1',
+      );
+
+      expect(prismaMock.feeStructure.delete).toHaveBeenCalled();
+      expect(result.message).toBe(
+        'Fee structure permanently deleted successfully',
+      );
+
+      prismaMock.feeVoucher.count.mockResolvedValueOnce(1);
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.FEE_STRUCTURE,
+          'fs-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('permanently deletes a student discount once eligible', async () => {
+      prismaMock.studentDiscount.findFirst.mockResolvedValue({
+        studentId: 'student-1',
+        deletedAt: longAgo(),
+        student: { campus: { institutionId: 'institution-1' } },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.STUDENT_DISCOUNT,
+        'disc-1',
+      );
+
+      expect(prismaMock.studentDiscount.delete).toHaveBeenCalled();
+      expect(result.message).toBe(
+        'Student discount permanently deleted successfully',
+      );
+    });
+
+    it('permanently deletes a student fine rule once eligible', async () => {
+      prismaMock.studentFineRule.findFirst.mockResolvedValue({
+        campusId: 'campus-1',
+        classId: null,
+        deletedAt: longAgo(),
+        campus: { institutionId: 'institution-1' },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.STUDENT_FINE_RULE,
+        'fr-1',
+      );
+
+      expect(prismaMock.studentFineRule.delete).toHaveBeenCalled();
+      expect(result.message).toBe(
+        'Student fine rule permanently deleted successfully',
+      );
+    });
+
+    it('permanently deletes a student fine once eligible', async () => {
+      prismaMock.studentFine.findFirst.mockResolvedValue({
+        studentId: 'student-1',
+        month: 3,
+        year: 2026,
+        deletedAt: longAgo(),
+        student: { campus: { institutionId: 'institution-1' } },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.STUDENT_FINE,
+        'fine-1',
+      );
+
+      expect(prismaMock.studentFine.delete).toHaveBeenCalled();
+      expect(result.message).toBe(
+        'Student fine permanently deleted successfully',
+      );
+    });
+
+    it('permanently deletes a fee voucher once eligible, refusing an active fee payment', async () => {
+      prismaMock.feeVoucher.findFirst.mockResolvedValue({
+        studentId: 'student-1',
+        month: 3,
+        year: 2026,
+        deletedAt: longAgo(),
+        student: { campus: { institutionId: 'institution-1' } },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.FEE_VOUCHER,
+        'voucher-1',
+      );
+
+      expect(prismaMock.feeVoucher.delete).toHaveBeenCalled();
+      expect(result.message).toBe(
+        'Fee voucher permanently deleted successfully',
+      );
+
+      prismaMock.feePayment.count.mockResolvedValueOnce(1);
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.FEE_VOUCHER,
+          'voucher-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('permanently deletes a fee payment once eligible', async () => {
+      prismaMock.feePayment.findFirst.mockResolvedValue({
+        voucherId: 'voucher-1',
+        month: 3,
+        year: 2026,
+        deletedAt: longAgo(),
+        voucher: { student: { campus: { institutionId: 'institution-1' } } },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.FEE_PAYMENT,
+        'payment-1',
+      );
+
+      expect(prismaMock.feePayment.delete).toHaveBeenCalled();
+      expect(result.message).toBe(
+        'Fee payment permanently deleted successfully',
+      );
+    });
+  });
+
+  describe('listDeletedItems — per-entity filter wiring', () => {
+    // Each of these entities routes to its own listDeletedX private method
+    // when query.entity narrows the search — with every prisma delegate's
+    // findMany defaulting to [] (see prismaMock above), this exercises each
+    // private lister end-to-end (query building, empty-result shaping)
+    // without needing per-entity fixture data.
+    const entities = [
+      RecycleBinEntity.LEVEL,
+      RecycleBinEntity.CLASS,
+      RecycleBinEntity.SECTION,
+      RecycleBinEntity.SUBJECT,
+      RecycleBinEntity.SALARY,
+      RecycleBinEntity.SALARY_DEDUCTION_RULE,
+      RecycleBinEntity.SALARY_ADJUSTMENT,
+      RecycleBinEntity.SALARY_PAYMENT,
+      RecycleBinEntity.BANK_ACCOUNT,
+      RecycleBinEntity.FEE_STRUCTURE,
+      RecycleBinEntity.STUDENT_DISCOUNT,
+      RecycleBinEntity.STUDENT_FINE_RULE,
+      RecycleBinEntity.STUDENT_FINE,
+      RecycleBinEntity.FEE_VOUCHER,
+      RecycleBinEntity.FEE_PAYMENT,
+    ];
+
+    it.each(entities)(
+      'lists deleted %s items (empty result)',
+      async (entity) => {
+        const result = await service.listDeletedItems(adminUser, {
+          page: 1,
+          limit: 10,
+          entity,
+        });
+
+        expect(result).toMatchObject({
+          message: 'Recycle bin items retrieved successfully',
+          data: { total: 0, items: [] },
+        });
+      },
+    );
+  });
+
+  describe('permanentlyDeleteRecord — academic hierarchy entities', () => {
+    const longAgo = () => {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - 31);
+      return d;
+    };
+
+    it('permanently deletes a student once eligible, refusing an active fee voucher', async () => {
+      prismaMock.student.findFirst.mockResolvedValue({
+        regNo: 'NEX-001',
+        deletedAt: longAgo(),
+        campus: { institutionId: 'institution-1' },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.STUDENT,
+        'student-1',
+      );
+
+      expect(prismaMock.student.delete).toHaveBeenCalled();
+      expect(result.message).toBe('Student permanently deleted successfully');
+
+      prismaMock.feeVoucher.count.mockResolvedValueOnce(1);
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.STUDENT,
+          'student-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('permanently deletes a level once eligible, refusing an active class underneath it', async () => {
+      prismaMock.level.findFirst.mockResolvedValue({
+        name: 'Primary',
+        deletedAt: longAgo(),
+        campus: { institutionId: 'institution-1' },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.LEVEL,
+        'level-1',
+      );
+
+      expect(prismaMock.level.delete).toHaveBeenCalled();
+      expect(result.message).toBe('Level permanently deleted successfully');
+
+      prismaMock.academicClass.count.mockResolvedValueOnce(1);
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.LEVEL,
+          'level-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('permanently deletes a class once eligible, refusing an active section underneath it', async () => {
+      prismaMock.academicClass.findFirst.mockResolvedValue({
+        name: 'Grade 1',
+        deletedAt: longAgo(),
+        level: { campus: { institutionId: 'institution-1' } },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.CLASS,
+        'class-1',
+      );
+
+      expect(prismaMock.academicClass.delete).toHaveBeenCalled();
+      expect(result.message).toBe('Class permanently deleted successfully');
+
+      prismaMock.section.count.mockResolvedValueOnce(1);
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.CLASS,
+          'class-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('permanently deletes a section once eligible', async () => {
+      prismaMock.section.findFirst.mockResolvedValue({
+        name: 'A',
+        deletedAt: longAgo(),
+        class: { level: { campus: { institutionId: 'institution-1' } } },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.SECTION,
+        'section-1',
+      );
+
+      expect(prismaMock.section.delete).toHaveBeenCalled();
+      expect(result.message).toBe('Section permanently deleted successfully');
+    });
+
+    it('permanently deletes a subject once eligible', async () => {
+      prismaMock.subject.findFirst.mockResolvedValue({
+        name: 'Math',
+        deletedAt: longAgo(),
+        class: { level: { campus: { institutionId: 'institution-1' } } },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.SUBJECT,
+        'subject-1',
+      );
+
+      expect(prismaMock.subject.delete).toHaveBeenCalled();
+      expect(result.message).toBe('Subject permanently deleted successfully');
     });
   });
 });

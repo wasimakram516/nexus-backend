@@ -316,7 +316,6 @@ describe('PostgreSQL custom-field extension rollback (M4.5 shared blocker #2)', 
   it('rolls back a User access update when a submitted custom value is invalid', async () => {
     const users = new UsersService(
       prisma,
-      new AuditLogService(prisma),
       fields,
       context,
       new UserPermissionsService(prisma),
