@@ -41,18 +41,25 @@ describe('AcademicsService', () => {
       findUnique: jest.fn(),
       findMany: jest.fn(),
       update: jest.fn(),
+      create: jest.fn(),
     },
     academicClass: {
       findUnique: jest.fn(),
+      findMany: jest.fn(),
       update: jest.fn(),
+      create: jest.fn(),
     },
     section: {
       findUnique: jest.fn(),
+      findMany: jest.fn(),
       update: jest.fn(),
+      create: jest.fn(),
     },
     subject: {
       findUnique: jest.fn(),
+      findMany: jest.fn(),
       update: jest.fn(),
+      create: jest.fn(),
     },
     institution: {
       findUnique: jest.fn(),
@@ -98,6 +105,13 @@ describe('AcademicsService', () => {
     resolveInstitutionIdByLevel: jest.fn(),
     resolveInstitutionIdByClass: jest.fn(),
   };
+
+  const attachPassthrough = <T>(item: T) =>
+    Promise.resolve(item ? { ...item, customFields: {} } : null);
+  const attachItemsPassthrough = <T>(items: T[]) =>
+    Promise.resolve(
+      items.map((item) => ({ ...(item as object), customFields: {} })),
+    );
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -254,6 +268,457 @@ describe('AcademicsService', () => {
         id: 'level-1',
         customFields: { shift: 'evening' },
       },
+    });
+  });
+
+  it('creates a level for the resolved campus institution', async () => {
+    entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+      'institution-1',
+    );
+    prismaMock.level.create.mockResolvedValue({
+      id: 'level-1',
+      campusId: 'campus-1',
+      name: 'Primary',
+    });
+    entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+      attachPassthrough,
+    );
+
+    const result = await service.createLevel(currentUser, {
+      campusId: 'campus-1',
+      name: 'Primary',
+    });
+
+    expect(campusAccessServiceMock.assertCampusAccess).toHaveBeenCalledWith(
+      currentUser,
+      'campus-1',
+    );
+    expect(result).toMatchObject({ message: 'Level created successfully' });
+  });
+
+  it('soft-deletes a level', async () => {
+    campusAccessServiceMock.assertLevelAccess.mockResolvedValue('campus-1');
+    prismaMock.level.findUnique.mockResolvedValue({
+      id: 'level-1',
+      campusId: 'campus-1',
+      name: 'Primary',
+    });
+
+    const result = await service.deleteLevel(currentUser, 'level-1', 'Merged');
+
+    expect(prismaMock.level.update).toHaveBeenCalledWith({
+      where: { id: 'level-1' },
+      data: expect.objectContaining({
+        deleteReason: 'Merged',
+        deletedBy: currentUser.sub,
+      }) as never,
+    });
+    expect(result.message).toBe('Level moved to recycle bin successfully');
+  });
+
+  it('returns 404 deleting a level that does not exist', async () => {
+    campusAccessServiceMock.assertLevelAccess.mockResolvedValue('campus-1');
+    prismaMock.level.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.deleteLevel(currentUser, 'missing-level'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('returns 404 updating a level that does not exist', async () => {
+    prismaMock.level.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.updateLevel(currentUser, 'missing-level', {}),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  describe('Class', () => {
+    beforeEach(() => {
+      entityCustomFieldsServiceMock.resolveInstitutionIdByLevel.mockResolvedValue(
+        'institution-1',
+      );
+      entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+        attachPassthrough,
+      );
+      entityCustomFieldsServiceMock.attachToItems.mockImplementation(
+        attachItemsPassthrough,
+      );
+    });
+
+    it('creates a class scoped to the level', async () => {
+      prismaMock.academicClass.create.mockResolvedValue({
+        id: 'class-1',
+        levelId: 'level-1',
+        name: 'Grade 1',
+      });
+
+      const result = await service.createClass(currentUser, {
+        levelId: 'level-1',
+        name: 'Grade 1',
+      });
+
+      expect(campusAccessServiceMock.assertLevelAccess).toHaveBeenCalledWith(
+        currentUser,
+        'level-1',
+      );
+      expect(result).toMatchObject({ message: 'Class created successfully' });
+    });
+
+    it('lists classes scoped to accessible campuses for non-superadmins', async () => {
+      campusAccessServiceMock.getCampusIdsForUser.mockResolvedValue([
+        'campus-1',
+      ]);
+      prismaMock.academicClass.findMany.mockResolvedValue([]);
+
+      await service.listClasses(currentUser);
+
+      expect(prismaMock.academicClass.findMany).toHaveBeenCalledWith({
+        where: { level: { campusId: { in: ['campus-1'] } } },
+        orderBy: { createdAt: 'desc' },
+      });
+    });
+
+    it('lists classes for a superadmin with no campus filter', async () => {
+      const superadmin: CurrentUser = {
+        sub: 'super-1',
+        email: 'super@nexus.test',
+        role: UserRole.SUPERADMIN,
+        institutionId: null,
+      };
+      prismaMock.academicClass.findMany.mockResolvedValue([]);
+
+      await service.listClasses(superadmin);
+
+      expect(prismaMock.academicClass.findMany).toHaveBeenCalledWith({
+        where: {},
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(
+        campusAccessServiceMock.getCampusIdsForUser,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('filters classes by levelId and asserts level access', async () => {
+      prismaMock.academicClass.findMany.mockResolvedValue([]);
+      campusAccessServiceMock.getCampusIdsForUser.mockResolvedValue([
+        'campus-1',
+      ]);
+
+      await service.listClasses(currentUser, 'level-1');
+
+      expect(campusAccessServiceMock.assertLevelAccess).toHaveBeenCalledWith(
+        currentUser,
+        'level-1',
+      );
+      expect(prismaMock.academicClass.findMany).toHaveBeenCalledWith({
+        where: {
+          levelId: 'level-1',
+          level: { campusId: { in: ['campus-1'] } },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    });
+
+    it('gets a class and throws 404 when missing', async () => {
+      prismaMock.academicClass.findUnique.mockResolvedValue({
+        id: 'class-1',
+        levelId: 'level-1',
+      });
+
+      await expect(
+        service.getClass(currentUser, 'class-1'),
+      ).resolves.toMatchObject({ message: 'Class retrieved successfully' });
+
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValueOnce(null);
+      prismaMock.academicClass.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getClass(currentUser, 'missing-class'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('returns 404 updating a class that does not exist', async () => {
+      prismaMock.academicClass.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateClass(currentUser, 'missing-class', {}),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('updates a class, re-asserting access to the target level', async () => {
+      prismaMock.academicClass.findUnique.mockResolvedValue({
+        id: 'class-1',
+        levelId: 'level-1',
+        name: 'Grade 1',
+      });
+      prismaMock.academicClass.update.mockResolvedValue({
+        id: 'class-1',
+        levelId: 'level-2',
+        name: 'Grade 1',
+      });
+
+      const result = await service.updateClass(currentUser, 'class-1', {
+        levelId: 'level-2',
+      });
+
+      expect(campusAccessServiceMock.assertLevelAccess).toHaveBeenCalledWith(
+        currentUser,
+        'level-2',
+      );
+      expect(result).toMatchObject({ message: 'Class updated successfully' });
+    });
+
+    it('soft-deletes a class', async () => {
+      prismaMock.academicClass.findUnique.mockResolvedValue({
+        id: 'class-1',
+        levelId: 'level-1',
+        name: 'Grade 1',
+      });
+
+      const result = await service.deleteClass(currentUser, 'class-1');
+
+      expect(prismaMock.academicClass.update).toHaveBeenCalledWith({
+        where: { id: 'class-1' },
+        data: expect.objectContaining({ deletedBy: currentUser.sub }) as never,
+      });
+      expect(result.message).toBe('Class moved to recycle bin successfully');
+    });
+
+    it('returns 404 deleting a class that does not exist', async () => {
+      prismaMock.academicClass.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.deleteClass(currentUser, 'missing-class'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('Section', () => {
+    beforeEach(() => {
+      entityCustomFieldsServiceMock.resolveInstitutionIdByClass.mockResolvedValue(
+        'institution-1',
+      );
+      entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+        attachPassthrough,
+      );
+      entityCustomFieldsServiceMock.attachToItems.mockImplementation(
+        attachItemsPassthrough,
+      );
+    });
+
+    it('creates a section scoped to the class', async () => {
+      prismaMock.section.create.mockResolvedValue({
+        id: 'section-1',
+        classId: 'class-1',
+        name: 'A',
+      });
+
+      const result = await service.createSection(currentUser, {
+        classId: 'class-1',
+        name: 'A',
+      });
+
+      expect(campusAccessServiceMock.assertClassAccess).toHaveBeenCalledWith(
+        currentUser,
+        'class-1',
+      );
+      expect(result).toMatchObject({
+        message: 'Section created successfully',
+      });
+    });
+
+    it('lists sections scoped to accessible campuses, filtered by classId', async () => {
+      campusAccessServiceMock.getCampusIdsForUser.mockResolvedValue([
+        'campus-1',
+      ]);
+      prismaMock.section.findMany.mockResolvedValue([]);
+
+      await service.listSections(currentUser, 'class-1');
+
+      expect(campusAccessServiceMock.assertClassAccess).toHaveBeenCalledWith(
+        currentUser,
+        'class-1',
+      );
+      expect(prismaMock.section.findMany).toHaveBeenCalledWith({
+        where: {
+          classId: 'class-1',
+          class: { level: { campusId: { in: ['campus-1'] } } },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    });
+
+    it('gets a section and throws 404 when missing', async () => {
+      prismaMock.section.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getSection(currentUser, 'missing-section'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('returns 404 updating a section that does not exist', async () => {
+      prismaMock.section.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateSection(currentUser, 'missing-section', {}),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('updates a section, re-asserting access to the target class', async () => {
+      prismaMock.section.findUnique.mockResolvedValue({
+        id: 'section-1',
+        classId: 'class-1',
+        name: 'A',
+      });
+      prismaMock.section.update.mockResolvedValue({
+        id: 'section-1',
+        classId: 'class-2',
+        name: 'A',
+      });
+
+      const result = await service.updateSection(currentUser, 'section-1', {
+        classId: 'class-2',
+      });
+
+      expect(campusAccessServiceMock.assertClassAccess).toHaveBeenCalledWith(
+        currentUser,
+        'class-2',
+      );
+      expect(result).toMatchObject({
+        message: 'Section updated successfully',
+      });
+    });
+
+    it('soft-deletes a section', async () => {
+      prismaMock.section.findUnique.mockResolvedValue({
+        id: 'section-1',
+        classId: 'class-1',
+        name: 'A',
+      });
+
+      const result = await service.deleteSection(currentUser, 'section-1');
+
+      expect(result.message).toBe('Section moved to recycle bin successfully');
+    });
+
+    it('returns 404 deleting a section that does not exist', async () => {
+      prismaMock.section.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.deleteSection(currentUser, 'missing-section'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('Subject', () => {
+    beforeEach(() => {
+      entityCustomFieldsServiceMock.resolveInstitutionIdByClass.mockResolvedValue(
+        'institution-1',
+      );
+      entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+        attachPassthrough,
+      );
+      entityCustomFieldsServiceMock.attachToItems.mockImplementation(
+        attachItemsPassthrough,
+      );
+    });
+
+    it('creates a subject scoped to the class', async () => {
+      prismaMock.subject.create.mockResolvedValue({
+        id: 'subject-1',
+        classId: 'class-1',
+        name: 'Math',
+      });
+
+      const result = await service.createSubject(currentUser, {
+        classId: 'class-1',
+        name: 'Math',
+      });
+
+      expect(campusAccessServiceMock.assertClassAccess).toHaveBeenCalledWith(
+        currentUser,
+        'class-1',
+      );
+      expect(result).toMatchObject({
+        message: 'Subject created successfully',
+      });
+    });
+
+    it('lists subjects with no classId filter and non-superadmin campus scoping', async () => {
+      campusAccessServiceMock.getCampusIdsForUser.mockResolvedValue([
+        'campus-1',
+      ]);
+      prismaMock.subject.findMany.mockResolvedValue([]);
+
+      await service.listSubjects(currentUser);
+
+      expect(campusAccessServiceMock.assertClassAccess).not.toHaveBeenCalled();
+      expect(prismaMock.subject.findMany).toHaveBeenCalledWith({
+        where: { class: { level: { campusId: { in: ['campus-1'] } } } },
+        orderBy: { createdAt: 'desc' },
+      });
+    });
+
+    it('gets a subject and throws 404 when missing', async () => {
+      prismaMock.subject.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getSubject(currentUser, 'missing-subject'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('returns 404 updating a subject that does not exist', async () => {
+      prismaMock.subject.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateSubject(currentUser, 'missing-subject', {}),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('updates a subject, re-asserting access to the target class', async () => {
+      prismaMock.subject.findUnique.mockResolvedValue({
+        id: 'subject-1',
+        classId: 'class-1',
+        name: 'Math',
+      });
+      prismaMock.subject.update.mockResolvedValue({
+        id: 'subject-1',
+        classId: 'class-2',
+        name: 'Math',
+      });
+
+      const result = await service.updateSubject(currentUser, 'subject-1', {
+        classId: 'class-2',
+      });
+
+      expect(campusAccessServiceMock.assertClassAccess).toHaveBeenCalledWith(
+        currentUser,
+        'class-2',
+      );
+      expect(result).toMatchObject({
+        message: 'Subject updated successfully',
+      });
+    });
+
+    it('soft-deletes a subject', async () => {
+      prismaMock.subject.findUnique.mockResolvedValue({
+        id: 'subject-1',
+        classId: 'class-1',
+        name: 'Math',
+      });
+
+      const result = await service.deleteSubject(currentUser, 'subject-1');
+
+      expect(result.message).toBe('Subject moved to recycle bin successfully');
+    });
+
+    it('returns 404 deleting a subject that does not exist', async () => {
+      prismaMock.subject.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.deleteSubject(currentUser, 'missing-subject'),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 

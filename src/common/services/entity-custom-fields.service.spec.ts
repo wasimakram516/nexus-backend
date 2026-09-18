@@ -22,6 +22,33 @@ describe('EntityCustomFieldsService', () => {
     staffProfile: {
       findUnique: jest.fn(),
     },
+    campus: {
+      findUnique: jest.fn(),
+    },
+    level: {
+      findUnique: jest.fn(),
+    },
+    academicClass: {
+      findUnique: jest.fn(),
+    },
+    section: {
+      findUnique: jest.fn(),
+    },
+    subject: {
+      findUnique: jest.fn(),
+    },
+    student: {
+      findUnique: jest.fn(),
+    },
+    guardian: {
+      findUnique: jest.fn(),
+    },
+    staffSalary: {
+      findUnique: jest.fn(),
+    },
+    feeStructure: {
+      findUnique: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
 
@@ -660,6 +687,263 @@ describe('EntityCustomFieldsService', () => {
       await expect(
         service.resolveInstitutionIdByStaffProfile('missing-staff-profile'),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('resolveInstitutionIdByCampus', () => {
+    it('resolves the institution for a campus', async () => {
+      prismaMock.campus.findUnique.mockResolvedValue({
+        institutionId: 'institution-1',
+      });
+
+      await expect(
+        service.resolveInstitutionIdByCampus('campus-1'),
+      ).resolves.toBe('institution-1');
+    });
+
+    it('throws NotFoundException when the campus has no institution', async () => {
+      prismaMock.campus.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resolveInstitutionIdByCampus('missing-campus'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('resolveInstitutionIdByLevel', () => {
+    it('resolves the institution via the level campus', async () => {
+      prismaMock.level.findUnique.mockResolvedValue({
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.resolveInstitutionIdByLevel('level-1'),
+      ).resolves.toBe('institution-1');
+    });
+
+    it('throws NotFoundException when the level has no resolvable institution', async () => {
+      prismaMock.level.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resolveInstitutionIdByLevel('missing-level'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('resolveInstitutionIdByClass', () => {
+    it('resolves the institution via level -> campus', async () => {
+      prismaMock.academicClass.findUnique.mockResolvedValue({
+        level: { campus: { institutionId: 'institution-1' } },
+      });
+
+      await expect(
+        service.resolveInstitutionIdByClass('class-1'),
+      ).resolves.toBe('institution-1');
+    });
+
+    it('throws NotFoundException when the class has no resolvable institution', async () => {
+      prismaMock.academicClass.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resolveInstitutionIdByClass('missing-class'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('resolveInstitutionIdBySection', () => {
+    it('resolves the institution via class -> level -> campus', async () => {
+      prismaMock.section.findUnique.mockResolvedValue({
+        class: { level: { campus: { institutionId: 'institution-1' } } },
+      });
+
+      await expect(
+        service.resolveInstitutionIdBySection('section-1'),
+      ).resolves.toBe('institution-1');
+    });
+
+    it('throws NotFoundException when the section has no resolvable institution', async () => {
+      prismaMock.section.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resolveInstitutionIdBySection('missing-section'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('resolveInstitutionIdBySubject', () => {
+    it('resolves the institution via class -> level -> campus', async () => {
+      prismaMock.subject.findUnique.mockResolvedValue({
+        class: { level: { campus: { institutionId: 'institution-1' } } },
+      });
+
+      await expect(
+        service.resolveInstitutionIdBySubject('subject-1'),
+      ).resolves.toBe('institution-1');
+    });
+
+    it('throws NotFoundException when the subject has no resolvable institution', async () => {
+      prismaMock.subject.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resolveInstitutionIdBySubject('missing-subject'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('resolveInstitutionIdByStudent', () => {
+    it('resolves the institution via the student campus', async () => {
+      prismaMock.student.findUnique.mockResolvedValue({
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.resolveInstitutionIdByStudent('student-1'),
+      ).resolves.toBe('institution-1');
+    });
+
+    it('throws NotFoundException when the student has no resolvable institution', async () => {
+      prismaMock.student.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resolveInstitutionIdByStudent('missing-student'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('resolveInstitutionIdByGuardian', () => {
+    it('resolves the institution via the guardian campus', async () => {
+      prismaMock.guardian.findUnique.mockResolvedValue({
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.resolveInstitutionIdByGuardian('guardian-1'),
+      ).resolves.toBe('institution-1');
+    });
+
+    it('throws NotFoundException when the guardian has no resolvable institution', async () => {
+      prismaMock.guardian.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resolveInstitutionIdByGuardian('missing-guardian'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('resolveInstitutionIdBySalary', () => {
+    it('resolves the institution via the salary campus', async () => {
+      prismaMock.staffSalary.findUnique.mockResolvedValue({
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.resolveInstitutionIdBySalary('salary-1'),
+      ).resolves.toBe('institution-1');
+    });
+
+    it('throws NotFoundException when the salary record has no resolvable institution', async () => {
+      prismaMock.staffSalary.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resolveInstitutionIdBySalary('missing-salary'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('resolveInstitutionIdByFeeStructure', () => {
+    it('resolves the institution via the fee structure campus', async () => {
+      prismaMock.feeStructure.findUnique.mockResolvedValue({
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.resolveInstitutionIdByFeeStructure('fee-structure-1'),
+      ).resolves.toBe('institution-1');
+    });
+
+    it('throws NotFoundException when the fee structure has no resolvable institution', async () => {
+      prismaMock.feeStructure.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resolveInstitutionIdByFeeStructure('missing-fee-structure'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('resolveInstitutionIdByContact', () => {
+    it('routes "student" to resolveInstitutionIdByStudent', async () => {
+      prismaMock.student.findUnique.mockResolvedValue({
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.resolveInstitutionIdByContact('student', 'student-1'),
+      ).resolves.toBe('institution-1');
+    });
+
+    it('routes "guardian" to resolveInstitutionIdByGuardian', async () => {
+      prismaMock.guardian.findUnique.mockResolvedValue({
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.resolveInstitutionIdByContact('guardian', 'guardian-1'),
+      ).resolves.toBe('institution-1');
+    });
+
+    it('routes "staff" to resolveInstitutionIdByStaffProfile', async () => {
+      prismaMock.staffProfile.findUnique.mockResolvedValue({
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.resolveInstitutionIdByContact('staff', 'staff-profile-1'),
+      ).resolves.toBe('institution-1');
+    });
+
+    it('rejects an unsupported person type', async () => {
+      await expect(
+        service.resolveInstitutionIdByContact('vendor', 'vendor-1'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('attachToItem', () => {
+    it('returns null when the item is null', async () => {
+      await expect(
+        service.attachToItem(null, CustomFieldEntity.STUDENT),
+      ).resolves.toBeNull();
+      expect(prismaMock.customFieldValue.findMany).not.toHaveBeenCalled();
+    });
+
+    it('attaches custom fields to a single item', async () => {
+      prismaMock.customFieldValue.findMany.mockResolvedValue([
+        {
+          entityId: 'student-1',
+          value: 'A+',
+          definition: { fieldKey: 'blood_group' },
+        },
+      ]);
+
+      await expect(
+        service.attachToItem(
+          { id: 'student-1', regNo: 'NEX-001' },
+          CustomFieldEntity.STUDENT,
+        ),
+      ).resolves.toEqual({
+        id: 'student-1',
+        regNo: 'NEX-001',
+        customFields: { blood_group: 'A+' },
+      });
+    });
+  });
+
+  describe('attachToItems', () => {
+    it('returns an empty array without querying when there are no items', async () => {
+      await expect(
+        service.attachToItems([], CustomFieldEntity.STUDENT),
+      ).resolves.toEqual([]);
+      expect(prismaMock.customFieldValue.findMany).not.toHaveBeenCalled();
     });
   });
 });

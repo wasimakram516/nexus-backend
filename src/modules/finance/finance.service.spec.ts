@@ -1,4 +1,8 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import {
   AdjustmentType,
@@ -34,20 +38,25 @@ describe('FinanceService', () => {
       findMany: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      create: jest.fn(),
     },
     bankAccount: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      create: jest.fn(),
     },
     student: {
       findUnique: jest.fn(),
     },
     feeStructure: {
       findFirst: jest.fn(),
+      findMany: jest.fn(),
       findUnique: jest.fn(),
       delete: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
     },
     feeVoucher: {
       findMany: jest.fn(),
@@ -62,6 +71,7 @@ describe('FinanceService', () => {
       findMany: jest.fn(),
       findUnique: jest.fn(),
       aggregate: jest.fn(),
+      groupBy: jest.fn().mockResolvedValue([]),
       create: jest.fn(),
       update: jest.fn(),
     },
@@ -69,39 +79,51 @@ describe('FinanceService', () => {
       findMany: jest.fn(),
       findFirst: jest.fn(),
       findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
     },
     studentFine: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
       findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    studentFineRule: {
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
     },
     salaryDeductionRule: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
       findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
     },
     salaryAdjustment: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
       create: jest.fn(),
+      update: jest.fn(),
     },
     salaryPayment: {
       findFirst: jest.fn(),
       findMany: jest.fn(),
       findUnique: jest.fn(),
       create: jest.fn(),
+      update: jest.fn(),
     },
     salaryDeductionSummary: {
       create: jest.fn(),
+      updateMany: jest.fn(),
     },
     attendance: {
       findMany: jest.fn(),
     },
     institutionSetting: {
-      findUnique: jest.fn(),
-    },
-    studentFineRule: {
-      findMany: jest.fn(),
       findUnique: jest.fn(),
     },
     institution: {
@@ -1042,6 +1064,810 @@ describe('FinanceService', () => {
       });
       expect(prismaMock.salaryPayment.create).not.toHaveBeenCalled();
       expect(prismaMock.salaryDeductionSummary.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getSalary', () => {
+    it('throws 404 when the salary record is missing', async () => {
+      prismaMock.staffSalary.findUnique.mockResolvedValue(null);
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue(null);
+
+      await expect(
+        service.getSalary(accountantUser, 'missing-salary'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('retrieves a salary with attached custom fields', async () => {
+      prismaMock.staffSalary.findUnique.mockResolvedValue({
+        id: 'salary-1',
+        campusId: 'campus-1',
+      });
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+        id: 'salary-1',
+        customFields: {},
+      });
+
+      await expect(
+        service.getSalary(accountantUser, 'salary-1'),
+      ).resolves.toMatchObject({ message: 'Salary retrieved successfully' });
+    });
+  });
+
+  describe('Deduction rules', () => {
+    it('creates a deduction rule and rejects a duplicate campus/role rule', async () => {
+      prismaMock.salaryDeductionRule.findFirst.mockResolvedValueOnce(null);
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      prismaMock.salaryDeductionRule.create.mockResolvedValue({
+        id: 'rule-1',
+      });
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+        id: 'rule-1',
+      });
+
+      await expect(
+        service.createDeductionRule(accountantUser, {
+          campusId: 'campus-1',
+          role: UserRole.STAFF,
+        } as never),
+      ).resolves.toMatchObject({
+        message: 'Salary deduction rule created successfully',
+      });
+
+      prismaMock.salaryDeductionRule.findFirst.mockResolvedValueOnce({
+        id: 'existing-rule',
+      });
+      await expect(
+        service.createDeductionRule(accountantUser, {
+          campusId: 'campus-1',
+          role: UserRole.STAFF,
+        } as never),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('lists deduction rules scoped to accessible campuses', async () => {
+      campusAccessServiceMock.getScopedCampusIds.mockResolvedValue([
+        'campus-1',
+      ]);
+      prismaMock.salaryDeductionRule.findMany.mockResolvedValue([]);
+      entityCustomFieldsServiceMock.attachToItems.mockResolvedValue([]);
+
+      await service.listDeductionRules(accountantUser);
+
+      expect(prismaMock.salaryDeductionRule.findMany).toHaveBeenCalledWith({
+        where: { campusId: { in: ['campus-1'] } },
+        orderBy: { createdAt: 'desc' },
+      });
+    });
+
+    it('throws 404 getting a missing deduction rule, otherwise asserts campus access', async () => {
+      prismaMock.salaryDeductionRule.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.getDeductionRule(accountantUser, 'missing-rule'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prismaMock.salaryDeductionRule.findUnique.mockResolvedValueOnce({
+        id: 'rule-1',
+        campusId: 'campus-1',
+      });
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+        id: 'rule-1',
+      });
+
+      await service.getDeductionRule(accountantUser, 'rule-1');
+
+      expect(campusAccessServiceMock.assertCampusAccess).toHaveBeenCalledWith(
+        accountantUser,
+        'campus-1',
+      );
+    });
+
+    it('soft-deletes a deduction rule, and 404s when missing', async () => {
+      prismaMock.salaryDeductionRule.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.deleteDeductionRule(accountantUser, 'missing-rule'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prismaMock.salaryDeductionRule.findUnique.mockResolvedValueOnce({
+        id: 'rule-1',
+        campusId: 'campus-1',
+      });
+      const result = await service.deleteDeductionRule(
+        accountantUser,
+        'rule-1',
+        'No longer needed',
+      );
+
+      expect(prismaMock.salaryDeductionRule.update).toHaveBeenCalledWith({
+        where: { id: 'rule-1' },
+        data: expect.objectContaining({
+          deleteReason: 'No longer needed',
+        }) as never,
+      });
+      expect(result.message).toBe(
+        'Salary deduction rule moved to recycle bin successfully',
+      );
+    });
+  });
+
+  describe('Salary adjustments', () => {
+    it('applies an adjustment after validating salary access', async () => {
+      prismaMock.staffSalary.findUnique.mockResolvedValue({
+        id: 'salary-1',
+        campusId: 'campus-1',
+        userId: 'teacher-1',
+      });
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      prismaMock.salaryAdjustment.create.mockResolvedValue({ id: 'adj-1' });
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+        id: 'adj-1',
+      });
+
+      await expect(
+        service.applyAdjustment(
+          {
+            campusId: 'campus-1',
+            salaryId: 'salary-1',
+            userId: 'teacher-1',
+            adjustmentType: AdjustmentType.BONUS,
+            amount: 500,
+          } as never,
+          accountantUser,
+        ),
+      ).resolves.toMatchObject({
+        message: 'Salary adjustment applied successfully',
+      });
+    });
+
+    it('lists salary adjustments filtered by user', async () => {
+      campusAccessServiceMock.getScopedCampusIds.mockResolvedValue([
+        'campus-1',
+      ]);
+      prismaMock.salaryAdjustment.findMany.mockResolvedValue([]);
+      entityCustomFieldsServiceMock.attachToItems.mockResolvedValue([]);
+
+      await service.listSalaryAdjustments(
+        accountantUser,
+        'campus-1',
+        'teacher-1',
+      );
+
+      expect(prismaMock.salaryAdjustment.findMany).toHaveBeenCalledWith({
+        where: { campusId: { in: ['campus-1'] }, userId: 'teacher-1' },
+        orderBy: { createdAt: 'desc' },
+      });
+    });
+
+    it('throws 404 getting a missing adjustment', async () => {
+      prismaMock.salaryAdjustment.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getSalaryAdjustment(accountantUser, 'missing-adj'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('soft-deletes an adjustment, and 404s when missing', async () => {
+      prismaMock.salaryAdjustment.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.deleteSalaryAdjustment(accountantUser, 'missing-adj'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prismaMock.salaryAdjustment.findUnique.mockResolvedValueOnce({
+        id: 'adj-1',
+        campusId: 'campus-1',
+      });
+      const result = await service.deleteSalaryAdjustment(
+        accountantUser,
+        'adj-1',
+      );
+
+      expect(result.message).toBe(
+        'Salary adjustment moved to recycle bin successfully',
+      );
+    });
+  });
+
+  describe('Salary payments (list/get/delete)', () => {
+    it('lists salary payments filtered by user', async () => {
+      campusAccessServiceMock.getScopedCampusIds.mockResolvedValue([
+        'campus-1',
+      ]);
+      prismaMock.salaryPayment.findMany.mockResolvedValue([]);
+      entityCustomFieldsServiceMock.attachToItems.mockResolvedValue([]);
+
+      await service.listSalaryPayments(accountantUser, 'campus-1', 'user-1');
+
+      expect(prismaMock.salaryPayment.findMany).toHaveBeenCalledWith({
+        where: { campusId: { in: ['campus-1'] }, userId: 'user-1' },
+        orderBy: { createdAt: 'desc' },
+      });
+    });
+
+    it('throws 404 getting a missing salary payment', async () => {
+      prismaMock.salaryPayment.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getSalaryPayment(accountantUser, 'missing-payment'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('soft-deletes a salary payment and its deduction summary, 404s when missing', async () => {
+      prismaMock.salaryPayment.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.deleteSalaryPayment(accountantUser, 'missing-payment'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prismaMock.salaryPayment.findUnique.mockResolvedValueOnce({
+        id: 'payment-1',
+        campusId: 'campus-1',
+      });
+      const result = await service.deleteSalaryPayment(
+        accountantUser,
+        'payment-1',
+      );
+
+      expect(prismaMock.salaryDeductionSummary.updateMany).toHaveBeenCalled();
+      expect(result.message).toBe(
+        'Salary payment moved to recycle bin successfully',
+      );
+    });
+  });
+
+  describe('Bank accounts', () => {
+    it('creates a bank account for the target campus', async () => {
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      prismaMock.bankAccount.create.mockResolvedValue({ id: 'bank-1' });
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+        id: 'bank-1',
+      });
+
+      await expect(
+        service.createBankAccount(accountantUser, {
+          campusId: 'campus-1',
+          accountTitle: 'Main',
+          bankName: 'HBL',
+          accountNumber: '12345',
+        }),
+      ).resolves.toMatchObject({
+        message: 'Bank account created successfully',
+      });
+    });
+
+    it('throws 404 getting a missing bank account', async () => {
+      prismaMock.bankAccount.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getBankAccount(accountantUser, 'missing-bank'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('throws 404 updating a missing bank account', async () => {
+      prismaMock.bankAccount.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateBankAccount(accountantUser, 'missing-bank', {}),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('updates a bank account, re-asserting access when the campus changes', async () => {
+      prismaMock.bankAccount.findUnique.mockResolvedValue({
+        id: 'bank-1',
+        campusId: 'campus-1',
+      });
+      prismaMock.bankAccount.update.mockResolvedValue({
+        id: 'bank-1',
+        campusId: 'campus-2',
+      });
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+        id: 'bank-1',
+      });
+
+      const result = await service.updateBankAccount(accountantUser, 'bank-1', {
+        campusId: 'campus-2',
+      });
+
+      expect(result).toMatchObject({
+        message: 'Bank account updated successfully',
+      });
+    });
+
+    it('soft-deletes a bank account, and 404s when missing', async () => {
+      prismaMock.bankAccount.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.deleteBankAccount(accountantUser, 'missing-bank'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prismaMock.bankAccount.findUnique.mockResolvedValueOnce({
+        id: 'bank-1',
+        campusId: 'campus-1',
+      });
+      const result = await service.deleteBankAccount(accountantUser, 'bank-1');
+
+      expect(result.message).toBe(
+        'Bank account moved to recycle bin successfully',
+      );
+    });
+  });
+
+  describe('Fee structures', () => {
+    it('creates a fee structure and rejects a class/campus mismatch or duplicate', async () => {
+      campusAccessServiceMock.assertClassAccess.mockResolvedValue('campus-1');
+      prismaMock.feeStructure.findFirst.mockResolvedValueOnce(null);
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      prismaMock.feeStructure.create.mockResolvedValue({ id: 'fs-1' });
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+        id: 'fs-1',
+      });
+
+      await expect(
+        service.createFeeStructure(accountantUser, {
+          campusId: 'campus-1',
+          classId: 'class-1',
+        } as never),
+      ).resolves.toMatchObject({
+        message: 'Fee structure created successfully',
+      });
+
+      prismaMock.feeStructure.findFirst.mockResolvedValueOnce({
+        id: 'existing',
+      });
+      await expect(
+        service.createFeeStructure(accountantUser, {
+          campusId: 'campus-1',
+          classId: 'class-1',
+        } as never),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('rejects fee structure creation when the class belongs to a different campus', async () => {
+      campusAccessServiceMock.assertClassAccess.mockResolvedValue('campus-9');
+
+      await expect(
+        service.createFeeStructure(accountantUser, {
+          campusId: 'campus-1',
+          classId: 'class-1',
+        } as never),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('lists fee structures filtered by class', async () => {
+      campusAccessServiceMock.getScopedCampusIds.mockResolvedValue([
+        'campus-1',
+      ]);
+      prismaMock.feeStructure.findMany.mockResolvedValue([]);
+      entityCustomFieldsServiceMock.attachToItems.mockResolvedValue([]);
+
+      await service.listFeeStructures(accountantUser, 'campus-1', 'class-1');
+
+      expect(campusAccessServiceMock.assertClassAccess).toHaveBeenCalledWith(
+        accountantUser,
+        'class-1',
+      );
+    });
+
+    it('throws 404 getting a missing fee structure', async () => {
+      prismaMock.feeStructure.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getFeeStructure(accountantUser, 'missing-fs'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('throws 404 updating a missing fee structure', async () => {
+      prismaMock.feeStructure.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateFeeStructure(accountantUser, 'missing-fs', {}),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('updates a fee structure', async () => {
+      prismaMock.feeStructure.findUnique.mockResolvedValue({
+        id: 'fs-1',
+        campusId: 'campus-1',
+        classId: 'class-1',
+      });
+      campusAccessServiceMock.assertClassAccess.mockResolvedValue('campus-1');
+      prismaMock.feeStructure.update.mockResolvedValue({ id: 'fs-1' });
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+        id: 'fs-1',
+      });
+
+      await expect(
+        service.updateFeeStructure(accountantUser, 'fs-1', {
+          feeBreakdown: undefined,
+        }),
+      ).resolves.toMatchObject({
+        message: 'Fee structure updated successfully',
+      });
+    });
+
+    it('soft-deletes a fee structure, and 404s when missing', async () => {
+      prismaMock.feeStructure.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.deleteFeeStructure(accountantUser, 'missing-fs'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prismaMock.feeStructure.findUnique.mockResolvedValueOnce({
+        id: 'fs-1',
+        campusId: 'campus-1',
+      });
+      const result = await service.deleteFeeStructure(accountantUser, 'fs-1');
+
+      expect(result.message).toBe(
+        'Fee structure moved to recycle bin successfully',
+      );
+    });
+  });
+
+  describe('Student discounts', () => {
+    it('creates a student discount', async () => {
+      entityCustomFieldsServiceMock.resolveInstitutionIdByStudent.mockResolvedValue(
+        'institution-1',
+      );
+      prismaMock.studentDiscount.create.mockResolvedValue({ id: 'disc-1' });
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+        id: 'disc-1',
+      });
+
+      await expect(
+        service.createStudentDiscount(
+          { studentId: 'student-1', amount: 100 } as never,
+          accountantUser,
+        ),
+      ).resolves.toMatchObject({
+        message: 'Student discount created successfully',
+      });
+    });
+
+    it('lists student discounts filtered by student', async () => {
+      campusAccessServiceMock.getScopedCampusIds.mockResolvedValue([
+        'campus-1',
+      ]);
+      prismaMock.studentDiscount.findMany.mockResolvedValue([]);
+      entityCustomFieldsServiceMock.attachToItems.mockResolvedValue([]);
+
+      await service.listStudentDiscounts(
+        accountantUser,
+        'campus-1',
+        'student-1',
+      );
+
+      expect(campusAccessServiceMock.assertStudentAccess).toHaveBeenCalledWith(
+        accountantUser,
+        'student-1',
+      );
+    });
+
+    it('throws 404 getting a missing student discount', async () => {
+      prismaMock.studentDiscount.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getStudentDiscount(accountantUser, 'missing-disc'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('soft-deletes a student discount, and 404s when missing', async () => {
+      prismaMock.studentDiscount.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.deleteStudentDiscount(accountantUser, 'missing-disc'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prismaMock.studentDiscount.findUnique.mockResolvedValueOnce({
+        id: 'disc-1',
+        studentId: 'student-1',
+      });
+      const result = await service.deleteStudentDiscount(
+        accountantUser,
+        'disc-1',
+      );
+
+      expect(result.message).toBe(
+        'Student discount moved to recycle bin successfully',
+      );
+    });
+  });
+
+  describe('Student fine rules', () => {
+    it('creates a student fine rule and rejects a class/campus mismatch', async () => {
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      prismaMock.studentFineRule.create.mockResolvedValue({ id: 'fr-1' });
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+        id: 'fr-1',
+      });
+
+      await expect(
+        service.createStudentFineRule(accountantUser, {
+          campusId: 'campus-1',
+        } as never),
+      ).resolves.toMatchObject({
+        message: 'Student fine rule created successfully',
+      });
+
+      campusAccessServiceMock.assertClassAccess.mockResolvedValueOnce(
+        'campus-9',
+      );
+      await expect(
+        service.createStudentFineRule(accountantUser, {
+          campusId: 'campus-1',
+          classId: 'class-1',
+        } as never),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('lists student fine rules filtered by class', async () => {
+      campusAccessServiceMock.getScopedCampusIds.mockResolvedValue([
+        'campus-1',
+      ]);
+      prismaMock.studentFineRule.findMany.mockResolvedValue([]);
+      entityCustomFieldsServiceMock.attachToItems.mockResolvedValue([]);
+
+      await service.listStudentFineRules(accountantUser, 'campus-1', 'class-1');
+
+      expect(campusAccessServiceMock.assertClassAccess).toHaveBeenCalledWith(
+        accountantUser,
+        'class-1',
+      );
+    });
+
+    it('throws 404 getting a missing student fine rule', async () => {
+      prismaMock.studentFineRule.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getStudentFineRule(accountantUser, 'missing-fr'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('soft-deletes a student fine rule, and 404s when missing', async () => {
+      prismaMock.studentFineRule.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.deleteStudentFineRule(accountantUser, 'missing-fr'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prismaMock.studentFineRule.findUnique.mockResolvedValueOnce({
+        id: 'fr-1',
+        campusId: 'campus-1',
+      });
+      const result = await service.deleteStudentFineRule(
+        accountantUser,
+        'fr-1',
+      );
+
+      expect(result.message).toBe(
+        'Student fine rule moved to recycle bin successfully',
+      );
+    });
+  });
+
+  describe('Student fines', () => {
+    it('creates a student fine and rejects a duplicate for the same period', async () => {
+      campusAccessServiceMock.assertStudentAccess.mockResolvedValue('campus-1');
+      prismaMock.studentFine.findFirst.mockResolvedValueOnce(null);
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      prismaMock.studentFine.create.mockResolvedValue({ id: 'fine-1' });
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+        id: 'fine-1',
+      });
+
+      await expect(
+        service.createStudentFine(accountantUser, {
+          campusId: 'campus-1',
+          studentId: 'student-1',
+          month: 3,
+          year: 2026,
+        } as never),
+      ).resolves.toMatchObject({
+        message: 'Student fine created successfully',
+      });
+
+      prismaMock.studentFine.findFirst.mockResolvedValueOnce({
+        id: 'existing-fine',
+      });
+      await expect(
+        service.createStudentFine(accountantUser, {
+          campusId: 'campus-1',
+          studentId: 'student-1',
+          month: 3,
+          year: 2026,
+        } as never),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('rejects student fine creation when the student belongs to a different campus', async () => {
+      campusAccessServiceMock.assertStudentAccess.mockResolvedValue('campus-9');
+
+      await expect(
+        service.createStudentFine(accountantUser, {
+          campusId: 'campus-1',
+          studentId: 'student-1',
+          month: 3,
+          year: 2026,
+        } as never),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('lists student fines filtered by student', async () => {
+      campusAccessServiceMock.getScopedCampusIds.mockResolvedValue([
+        'campus-1',
+      ]);
+      prismaMock.studentFine.findMany.mockResolvedValue([]);
+      entityCustomFieldsServiceMock.attachToItems.mockResolvedValue([]);
+
+      await service.listStudentFines(accountantUser, 'campus-1', 'student-1');
+
+      expect(campusAccessServiceMock.assertStudentAccess).toHaveBeenCalledWith(
+        accountantUser,
+        'student-1',
+      );
+    });
+
+    it('throws 404 getting a missing student fine', async () => {
+      prismaMock.studentFine.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getStudentFine(accountantUser, 'missing-fine'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('gets a student fine, asserting both campus and student access', async () => {
+      prismaMock.studentFine.findUnique.mockResolvedValue({
+        id: 'fine-1',
+        campusId: 'campus-1',
+        studentId: 'student-1',
+      });
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+        id: 'fine-1',
+      });
+
+      await service.getStudentFine(accountantUser, 'fine-1');
+
+      expect(campusAccessServiceMock.assertCampusAccess).toHaveBeenCalledWith(
+        accountantUser,
+        'campus-1',
+      );
+      expect(campusAccessServiceMock.assertStudentAccess).toHaveBeenCalledWith(
+        accountantUser,
+        'student-1',
+      );
+    });
+
+    it('soft-deletes a student fine, and 404s when missing', async () => {
+      prismaMock.studentFine.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.deleteStudentFine(accountantUser, 'missing-fine'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prismaMock.studentFine.findUnique.mockResolvedValueOnce({
+        id: 'fine-1',
+        campusId: 'campus-1',
+        studentId: 'student-1',
+        month: 3,
+        year: 2026,
+      });
+      const result = await service.deleteStudentFine(accountantUser, 'fine-1');
+
+      expect(result.message).toBe(
+        'Student fine moved to recycle bin successfully',
+      );
+    });
+  });
+
+  describe('Fee vouchers (list/get/delete)', () => {
+    it('lists fee vouchers filtered by student', async () => {
+      campusAccessServiceMock.getScopedCampusIds.mockResolvedValue([
+        'campus-1',
+      ]);
+      prismaMock.feeVoucher.findMany.mockResolvedValue([]);
+      entityCustomFieldsServiceMock.attachToItems.mockImplementation((items) =>
+        Promise.resolve(items),
+      );
+
+      await service.listFeeVouchers(accountantUser, 'campus-1', 'student-1');
+
+      expect(campusAccessServiceMock.assertStudentAccess).toHaveBeenCalledWith(
+        accountantUser,
+        'student-1',
+      );
+    });
+
+    it('throws 404 getting a missing fee voucher', async () => {
+      prismaMock.feeVoucher.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getFeeVoucher(accountantUser, 'missing-voucher'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('soft-deletes a fee voucher, and 404s when missing', async () => {
+      prismaMock.feeVoucher.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.deleteFeeVoucher(accountantUser, 'missing-voucher'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prismaMock.feeVoucher.findUnique.mockResolvedValueOnce({
+        id: 'voucher-1',
+        studentId: 'student-1',
+        feeStructureId: 'fs-1',
+        month: 3,
+        year: 2026,
+        student: { campusId: 'campus-1' },
+      });
+      const result = await service.deleteFeeVoucher(
+        accountantUser,
+        'voucher-1',
+      );
+
+      expect(result.message).toBe(
+        'Fee voucher moved to recycle bin successfully',
+      );
+    });
+  });
+
+  describe('Fee payments (list/get)', () => {
+    it('lists fee payments filtered by voucher, 404s on a missing voucher', async () => {
+      prismaMock.feeVoucher.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.listFeePayments(accountantUser, undefined, 'missing-voucher'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prismaMock.feeVoucher.findUnique.mockResolvedValueOnce({
+        student: { campusId: 'campus-1' },
+      });
+      campusAccessServiceMock.getScopedCampusIds.mockResolvedValue([
+        'campus-1',
+      ]);
+      prismaMock.feePayment.findMany.mockResolvedValue([]);
+      entityCustomFieldsServiceMock.attachToItems.mockResolvedValue([]);
+
+      await service.listFeePayments(accountantUser, 'campus-1', 'voucher-1');
+
+      expect(campusAccessServiceMock.assertCampusAccess).toHaveBeenCalledWith(
+        accountantUser,
+        'campus-1',
+      );
+    });
+
+    it('throws 404 getting a missing fee payment', async () => {
+      prismaMock.feePayment.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getFeePayment(accountantUser, 'missing-payment'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('gets a fee payment with campus access asserted through the voucher', async () => {
+      prismaMock.feePayment.findUnique.mockResolvedValue({
+        id: 'payment-1',
+        voucher: { student: { campusId: 'campus-1' } },
+      });
+      entityCustomFieldsServiceMock.attachToItem.mockResolvedValue({
+        id: 'payment-1',
+      });
+
+      await service.getFeePayment(accountantUser, 'payment-1');
+
+      expect(campusAccessServiceMock.assertCampusAccess).toHaveBeenCalledWith(
+        accountantUser,
+        'campus-1',
+      );
     });
   });
 });

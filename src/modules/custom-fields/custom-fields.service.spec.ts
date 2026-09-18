@@ -49,6 +49,69 @@ describe('CustomFieldsService', () => {
     user: {
       findUnique: jest.fn(),
     },
+    campus: {
+      findUnique: jest.fn(),
+    },
+    level: {
+      findUnique: jest.fn(),
+    },
+    academicClass: {
+      findUnique: jest.fn(),
+    },
+    section: {
+      findUnique: jest.fn(),
+    },
+    subject: {
+      findUnique: jest.fn(),
+    },
+    guardian: {
+      findUnique: jest.fn(),
+    },
+    staffProfile: {
+      findUnique: jest.fn(),
+    },
+    staffSalary: {
+      findUnique: jest.fn(),
+    },
+    salaryDeductionRule: {
+      findUnique: jest.fn(),
+    },
+    salaryAdjustment: {
+      findUnique: jest.fn(),
+    },
+    salaryPayment: {
+      findUnique: jest.fn(),
+    },
+    bankAccount: {
+      findUnique: jest.fn(),
+    },
+    feeStructure: {
+      findUnique: jest.fn(),
+    },
+    studentDiscount: {
+      findUnique: jest.fn(),
+    },
+    studentFineRule: {
+      findUnique: jest.fn(),
+    },
+    studentFine: {
+      findUnique: jest.fn(),
+    },
+    feeVoucher: {
+      findUnique: jest.fn(),
+    },
+    feePayment: {
+      findUnique: jest.fn(),
+    },
+    studentHistory: {
+      findUnique: jest.fn(),
+    },
+    teacherSubject: {
+      findUnique: jest.fn(),
+    },
+    contact: {
+      findUnique: jest.fn(),
+    },
   };
 
   beforeEach(async () => {
@@ -790,6 +853,604 @@ describe('CustomFieldsService', () => {
           value: 'EMP-042',
         }),
       ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('assertEntityAccess — campus-scoped entity types', () => {
+    // Every one of these entity types shares the exact same
+    // "select campusId + campus.institutionId, then delegate to
+    // assertCampusScopedEntityAccess" shape — table-driven to cover each
+    // switch case in one pass instead of repeating the same test 15 times.
+    type FindUniqueDelegate = { findUnique: jest.Mock };
+    const delegates = prismaMock as unknown as Record<
+      string,
+      FindUniqueDelegate
+    >;
+    const cases: Array<{
+      entityType: string;
+      delegate: string;
+    }> = [
+      { entityType: CustomFieldEntity.LEVEL, delegate: 'level' },
+      { entityType: CustomFieldEntity.GUARDIAN, delegate: 'guardian' },
+      {
+        entityType: CustomFieldEntity.STAFF_PROFILE,
+        delegate: 'staffProfile',
+      },
+      { entityType: CustomFieldEntity.STAFF_SALARY, delegate: 'staffSalary' },
+      {
+        entityType: CustomFieldEntity.SALARY_DEDUCTION_RULE,
+        delegate: 'salaryDeductionRule',
+      },
+      {
+        entityType: CustomFieldEntity.SALARY_ADJUSTMENT,
+        delegate: 'salaryAdjustment',
+      },
+      {
+        entityType: CustomFieldEntity.SALARY_PAYMENT,
+        delegate: 'salaryPayment',
+      },
+      { entityType: CustomFieldEntity.BANK_ACCOUNT, delegate: 'bankAccount' },
+      {
+        entityType: CustomFieldEntity.FEE_STRUCTURE,
+        delegate: 'feeStructure',
+      },
+      {
+        entityType: CustomFieldEntity.STUDENT_FINE_RULE,
+        delegate: 'studentFineRule',
+      },
+      {
+        entityType: CustomFieldEntity.TEACHER_SUBJECT,
+        delegate: 'teacherSubject',
+      },
+      { entityType: CustomFieldEntity.PERIOD_SLOT, delegate: 'periodSlot' },
+      { entityType: CustomFieldEntity.ATTENDANCE, delegate: 'attendance' },
+    ];
+
+    it.each(cases)(
+      'resolves $entityType access via campus scoping and rejects entities outside the institution',
+      async ({ entityType, delegate }) => {
+        const definitionId = `definition-${entityType}`;
+        prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+          id: definitionId,
+          institutionId: 'institution-1',
+          moduleKey: ModuleKey.PEOPLE,
+          entityType,
+          fieldKey: 'note',
+          label: 'Note',
+          inputType: CustomFieldInputType.TEXT,
+          isRequired: false,
+          isActive: true,
+          sortOrder: 0,
+        });
+
+        delegates[delegate].findUnique.mockResolvedValueOnce(null);
+
+        await expect(
+          service.upsertValue(adminUser, {
+            definitionId,
+            entityId: 'entity-1',
+            value: 'text',
+          }),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+
+        delegates[delegate].findUnique.mockResolvedValueOnce({
+          campusId: 'campus-1',
+          campus: { institutionId: 'institution-1' },
+        });
+
+        await expect(
+          service.upsertValue(adminUser, {
+            definitionId,
+            entityId: 'entity-1',
+            value: 'text',
+          }),
+        ).resolves.toBeDefined();
+      },
+    );
+
+    // CLASS/SECTION/SUBJECT reshape a nested level/class lookup into the
+    // same { campusId, campus } shape before delegating — worth a dedicated
+    // check that the reshape itself (not just the final campus check) works.
+    it('reshapes the CLASS entity nested level lookup into campusId/campus', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-class',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.CLASS,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.academicClass.findUnique.mockResolvedValue({
+        level: {
+          campusId: 'campus-1',
+          campus: { institutionId: 'institution-1' },
+        },
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-class',
+          entityId: 'class-1',
+          value: 'text',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('reshapes the SECTION entity nested class/level lookup into campusId/campus', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-section',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.SECTION,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.section.findUnique.mockResolvedValue({
+        class: {
+          level: {
+            campusId: 'campus-1',
+            campus: { institutionId: 'institution-1' },
+          },
+        },
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-section',
+          entityId: 'section-1',
+          value: 'text',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('reshapes the SUBJECT entity nested class/level lookup into campusId/campus', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-subject',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.SUBJECT,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.subject.findUnique.mockResolvedValue({
+        class: {
+          level: {
+            campusId: 'campus-1',
+            campus: { institutionId: 'institution-1' },
+          },
+        },
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-subject',
+          entityId: 'subject-1',
+          value: 'text',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('rejects a CLASS/SECTION/SUBJECT lookup that resolves to no record', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-class-missing',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.CLASS,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.academicClass.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-class-missing',
+          entityId: 'missing-class',
+          value: 'text',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('assertEntityAccess — CAMPUS', () => {
+    it('resolves campus access directly and rejects a campus outside the institution', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-campus',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.CAMPUS,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.campus.findUnique.mockResolvedValueOnce({
+        institutionId: 'institution-2',
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-campus',
+          entityId: 'campus-1',
+          value: 'text',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      prismaMock.campus.findUnique.mockResolvedValueOnce({
+        institutionId: 'institution-1',
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-campus',
+          entityId: 'campus-1',
+          value: 'text',
+        }),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  describe('assertEntityAccess — STUDENT_DISCOUNT/STUDENT_FINE/FEE_VOUCHER/FEE_PAYMENT/STUDENT_HISTORY', () => {
+    it('resolves STUDENT_DISCOUNT access through the owning student', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-discount',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.STUDENT_DISCOUNT,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.studentDiscount.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-discount',
+          entityId: 'discount-1',
+          value: 'text',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      prismaMock.studentDiscount.findUnique.mockResolvedValueOnce({
+        studentId: 'student-1',
+        student: { campus: { institutionId: 'institution-1' } },
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-discount',
+          entityId: 'discount-1',
+          value: 'text',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('resolves STUDENT_FINE access through campus and student checks', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-fine',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.STUDENT_FINE,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.studentFine.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-fine',
+          entityId: 'fine-1',
+          value: 'text',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      prismaMock.studentFine.findUnique.mockResolvedValueOnce({
+        campusId: 'campus-1',
+        studentId: 'student-1',
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-fine',
+          entityId: 'fine-1',
+          value: 'text',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('resolves FEE_VOUCHER access through the owning student', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-voucher',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.FEE_VOUCHER,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.feeVoucher.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-voucher',
+          entityId: 'voucher-1',
+          value: 'text',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      prismaMock.feeVoucher.findUnique.mockResolvedValueOnce({
+        studentId: 'student-1',
+        student: {
+          campusId: 'campus-1',
+          campus: { institutionId: 'institution-1' },
+        },
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-voucher',
+          entityId: 'voucher-1',
+          value: 'text',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('resolves FEE_PAYMENT access through the voucher -> student chain', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-payment',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.FEE_PAYMENT,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.feePayment.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-payment',
+          entityId: 'payment-1',
+          value: 'text',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      prismaMock.feePayment.findUnique.mockResolvedValueOnce({
+        voucher: {
+          studentId: 'student-1',
+          student: {
+            campusId: 'campus-1',
+            campus: { institutionId: 'institution-1' },
+          },
+        },
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-payment',
+          entityId: 'payment-1',
+          value: 'text',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('resolves STUDENT_HISTORY access through the owning student', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-history',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.PEOPLE,
+        entityType: CustomFieldEntity.STUDENT_HISTORY,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.studentHistory.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-history',
+          entityId: 'history-1',
+          value: 'text',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      prismaMock.studentHistory.findUnique.mockResolvedValueOnce({
+        studentId: 'student-1',
+        student: { campus: { institutionId: 'institution-1' } },
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-history',
+          entityId: 'history-1',
+          value: 'text',
+        }),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  describe('assertEntityAccess — CONTACT', () => {
+    it('rejects a contact with no resolvable owner', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-contact',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.PEOPLE,
+        entityType: CustomFieldEntity.CONTACT,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.contact.findUnique.mockResolvedValue({
+        studentId: null,
+        guardianId: null,
+        staffProfileId: null,
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-contact',
+          entityId: 'contact-1',
+          value: 'text',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('routes a student-owned contact through STUDENT entity access', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-contact',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.PEOPLE,
+        entityType: CustomFieldEntity.CONTACT,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.contact.findUnique.mockResolvedValue({
+        studentId: 'student-1',
+        guardianId: null,
+        staffProfileId: null,
+      });
+      prismaMock.student.findUnique.mockResolvedValue({
+        campusId: 'campus-1',
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-contact',
+          entityId: 'contact-1',
+          value: 'text',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('routes a guardian-owned contact through GUARDIAN entity access', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-contact',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.PEOPLE,
+        entityType: CustomFieldEntity.CONTACT,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.contact.findUnique.mockResolvedValue({
+        studentId: null,
+        guardianId: 'guardian-1',
+        staffProfileId: null,
+      });
+      prismaMock.guardian.findUnique.mockResolvedValue({
+        campusId: 'campus-1',
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-contact',
+          entityId: 'contact-1',
+          value: 'text',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('routes a staff-owned contact through STAFF_PROFILE entity access', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-contact',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.PEOPLE,
+        entityType: CustomFieldEntity.CONTACT,
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.contact.findUnique.mockResolvedValue({
+        studentId: null,
+        guardianId: null,
+        staffProfileId: 'staff-profile-1',
+      });
+      prismaMock.staffProfile.findUnique.mockResolvedValue({
+        campusId: 'campus-1',
+        campus: { institutionId: 'institution-1' },
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-contact',
+          entityId: 'contact-1',
+          value: 'text',
+        }),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  describe('assertEntityAccess — default (unconfigured entity type)', () => {
+    it('rejects an entity type with no configured access check', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-unknown',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.PEOPLE,
+        entityType: 'student_guardian',
+        fieldKey: 'note',
+        label: 'Note',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-unknown',
+          entityId: 'entity-1',
+          value: 'text',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 });
