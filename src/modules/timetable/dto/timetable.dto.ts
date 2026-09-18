@@ -10,13 +10,14 @@ import {
   Min,
 } from 'class-validator';
 import { DayOfWeek } from '../../../prisma/client';
+import { CustomFieldPayloadDto } from '../../../common/dto/custom-field-payload.dto';
 
 /** "HH:mm", 24-hour clock — same convention as Campus.studentStartTime, just
  *  enforced at the DTO layer here since Timetable is a brand-new resource
  *  (no pre-existing loosely-formatted rows to stay compatible with). */
 const TIME_FORMAT_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-export class CreatePeriodSlotDto {
+export class CreatePeriodSlotDto extends CustomFieldPayloadDto {
   @ApiProperty({
     description:
       "Must match sectionId's own class (400 on mismatch) — stored denormalized on PeriodSlot purely so class-wide list queries skip a join.",

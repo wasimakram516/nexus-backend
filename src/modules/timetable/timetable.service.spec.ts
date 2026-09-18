@@ -7,6 +7,7 @@ import { Test } from '@nestjs/testing';
 import { DayOfWeek, Prisma, UserRole } from '../../prisma/client';
 import { AuditLogService } from '../../common/services/audit-log.service';
 import { CampusAccessService } from '../../common/services/campus-access.service';
+import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -39,6 +40,24 @@ describe('TimetableService', () => {
 
   const auditLogServiceMock = {
     log: jest.fn().mockResolvedValue(undefined),
+  };
+
+  const entityCustomFieldsServiceMock = {
+    resolveInstitutionIdByCampus: jest.fn().mockResolvedValue('institution-1'),
+    saveRecord: jest
+      .fn()
+      .mockImplementation(
+        (
+          _params: unknown,
+          mutation: (transaction: Prisma.TransactionClient) => Promise<unknown>,
+        ) => mutation(prismaMock as unknown as Prisma.TransactionClient),
+      ),
+    attachToItem: jest
+      .fn()
+      .mockImplementation((item: unknown) => Promise.resolve(item)),
+    attachToItems: jest
+      .fn()
+      .mockImplementation((items: unknown) => Promise.resolve(items)),
   };
 
   const adminUser: CurrentUser = {
@@ -79,6 +98,10 @@ describe('TimetableService', () => {
         { provide: PrismaService, useValue: prismaMock },
         { provide: AuditLogService, useValue: auditLogServiceMock },
         { provide: CampusAccessService, useValue: campusAccessServiceMock },
+        {
+          provide: EntityCustomFieldsService,
+          useValue: entityCustomFieldsServiceMock,
+        },
         { provide: ModuleAccessService, useValue: moduleAccessServiceMock },
       ],
     }).compile();
@@ -332,6 +355,70 @@ describe('TimetableService', () => {
       await expect(
         service.updatePeriodSlot(adminUser, 'missing', { name: 'X' }),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('custom fields wiring (M4.5 / P1-2a)', () => {
+    it('createPeriodSlot commits the slot and its custom field values through the same saveRecord transaction', async () => {
+      prismaMock.section.findUnique.mockResolvedValue(sectionRow);
+      prismaMock.periodSlot.create.mockResolvedValue({
+        id: 'slot-1',
+        ...baseDto,
+        campusId: 'campus-1',
+      });
+
+      await service.createPeriodSlot(adminUser, {
+        ...baseDto,
+        customFields: { room: 'B-12' },
+      });
+
+      expect(
+        entityCustomFieldsServiceMock.resolveInstitutionIdByCampus,
+      ).toHaveBeenCalledWith('campus-1');
+      expect(entityCustomFieldsServiceMock.saveRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          institutionId: 'institution-1',
+          entityType: 'period_slot',
+          values: { room: 'B-12' },
+          create: true,
+        }),
+        expect.any(Function),
+      );
+      expect(entityCustomFieldsServiceMock.attachToItem).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'slot-1' }),
+        'period_slot',
+      );
+    });
+
+    it('updatePeriodSlot saves custom field values against the existing record', async () => {
+      prismaMock.periodSlot.findFirst.mockResolvedValue({
+        id: 'slot-1',
+        campusId: 'campus-1',
+        classId: 'class-1',
+        sectionId: 'section-1',
+        subjectId: null,
+        staffProfileId: null,
+        name: 'Period 1',
+        periodNumber: 1,
+        dayOfWeek: DayOfWeek.MONDAY,
+        startTime: '08:00',
+        endTime: '08:40',
+      });
+      prismaMock.periodSlot.update.mockResolvedValue({ id: 'slot-1' });
+
+      await service.updatePeriodSlot(adminUser, 'slot-1', {
+        customFields: { room: 'B-14' },
+      });
+
+      expect(entityCustomFieldsServiceMock.saveRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          institutionId: 'institution-1',
+          entityType: 'period_slot',
+          values: { room: 'B-14' },
+          create: false,
+        }),
+        expect.any(Function),
+      );
     });
   });
 

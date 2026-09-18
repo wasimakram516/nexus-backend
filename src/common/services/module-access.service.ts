@@ -86,6 +86,18 @@ export class ModuleAccessService {
     }
   }
 
+  /** Resolves the plan key driving custom-field plan-gating (§ M4.5's
+   *  "plan and visibility rules" shared blocker) — null when no active
+   *  subscription can be resolved (e.g. dedicated/self-hosted deployments,
+   *  which use baked-in entitlements instead of the plan/subscription
+   *  tables per decision #1). */
+  async resolvePlanKeyForInstitution(
+    institutionId: string,
+  ): Promise<string | null> {
+    const runtimeConfig = await this.getInstitutionRuntimeConfig(institutionId);
+    return runtimeConfig.subscription?.planKey ?? null;
+  }
+
   async getInstitutionRuntimeConfig(
     institutionId: string,
   ): Promise<RuntimeConfigRecord> {

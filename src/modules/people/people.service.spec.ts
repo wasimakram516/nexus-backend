@@ -120,6 +120,14 @@ describe('PeopleService', () => {
     resolveInstitutionIdByStaffProfile: jest.fn(),
     resolveInstitutionIdByContact: jest.fn(),
     saveValues: jest.fn(),
+    saveRecord: jest
+      .fn()
+      .mockImplementation(
+        (
+          _params: unknown,
+          mutation: (transaction: Prisma.TransactionClient) => Promise<unknown>,
+        ) => mutation(prismaMock as unknown as Prisma.TransactionClient),
+      ),
     attachToItem: jest.fn(),
     attachToItems: jest.fn(),
   };
@@ -299,12 +307,14 @@ describe('PeopleService', () => {
         regNo: 'NEX-009',
       },
     });
-    expect(entityCustomFieldsServiceMock.saveValues).toHaveBeenCalledWith({
+    const calls = entityCustomFieldsServiceMock.saveRecord.mock
+      .calls as unknown as Array<[Record<string, unknown>]>;
+    expect(calls[0][0]).toMatchObject({
       institutionId: 'institution-1',
       moduleKey: ModuleKey.PEOPLE,
       entityType: 'student',
-      entityId: 'student-1',
       values: { transport: 'yes' },
+      create: false,
     });
     expect(result).toMatchObject({
       message: 'Student updated successfully',
@@ -380,6 +390,39 @@ describe('PeopleService', () => {
         campusId: 'campus-1',
       }),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('saves teacher assignment values through the atomic record helper', async () => {
+    campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+    campusAccessServiceMock.assertStaffProfileAccess.mockResolvedValue(
+      'campus-1',
+    );
+    campusAccessServiceMock.assertClassAccess.mockResolvedValue('campus-1');
+    campusAccessServiceMock.assertSubjectAccess.mockResolvedValue('campus-1');
+    campusAccessServiceMock.assertSectionAccess.mockResolvedValue('campus-1');
+    prismaMock.section.findUnique.mockResolvedValue({ classId: 'class-1' });
+    prismaMock.teacherSubject.findFirst.mockResolvedValue(null);
+    prismaMock.teacherSubject.create.mockResolvedValue({ id: 'assignment-1' });
+    entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+      'institution-1',
+    );
+    await service.assignTeacherSubject(currentUser, {
+      staffProfileId: 'staff-1',
+      classId: 'class-1',
+      subjectId: 'subject-1',
+      sectionId: 'section-1',
+      campusId: 'campus-1',
+      customFields: { room: 'A' },
+    });
+    const calls = entityCustomFieldsServiceMock.saveRecord.mock
+      .calls as unknown as Array<[Record<string, unknown>]>;
+    expect(calls[0][0]).toMatchObject({
+      institutionId: 'institution-1',
+      entityType: 'teacher_subject',
+      create: true,
+      values: { room: 'A' },
+    });
+    expect(prismaMock.teacherSubject.create).toHaveBeenCalledTimes(1);
   });
 
   it('rejects assignment when the section belongs to a different class', async () => {
@@ -474,7 +517,7 @@ describe('PeopleService', () => {
 
       expect(prismaMock.staffProfile.create).not.toHaveBeenCalled();
       expect(prismaMock.staffProfile.update).toHaveBeenCalledWith({
-        where: { id: 'staff-profile-1' },
+        where: { id: 'staff-profile-1', deletedAt: { not: null } },
         data: {
           userId: 'user-1',
           employmentType: 'TEACHING',

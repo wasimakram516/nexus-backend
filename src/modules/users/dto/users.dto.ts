@@ -11,6 +11,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { UserRole, UserStatus } from '../../../common/enums/domain.enums';
+import { CustomFieldPayloadDto } from '../../../common/dto/custom-field-payload.dto';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 import { PermissionOverrides } from '../../../common/interfaces/permission.interface';
 
@@ -32,7 +33,7 @@ export class UpdateProfileDto {
   password?: string;
 }
 
-export class UpdateUserRoleDto {
+export class UpdateUserRoleDto extends CustomFieldPayloadDto {
   @ApiPropertyOptional({
     enum: UserRole,
     description: 'Optional role change for the target user.',

@@ -4,9 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { UserRole } from '../../prisma/client';
+import { Prisma, UserRole } from '../../prisma/client';
 import { AuditLogService } from '../../common/services/audit-log.service';
 import { CampusAccessService } from '../../common/services/campus-access.service';
+import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -100,6 +101,24 @@ describe('NoticesService', () => {
     log: jest.fn().mockResolvedValue(undefined),
   };
 
+  const entityCustomFieldsServiceMock = {
+    resolveInstitutionIdByCampus: jest.fn(),
+    saveRecord: jest
+      .fn()
+      .mockImplementation(
+        (
+          _params: unknown,
+          mutation: (transaction: Prisma.TransactionClient) => Promise<unknown>,
+        ) => mutation(prismaMock as unknown as Prisma.TransactionClient),
+      ),
+    attachToItem: jest
+      .fn()
+      .mockImplementation((item: unknown) => Promise.resolve(item)),
+    attachToItems: jest
+      .fn()
+      .mockImplementation((items: unknown) => Promise.resolve(items)),
+  };
+
   const adminUser: CurrentUser = {
     sub: 'admin-1',
     email: 'admin@nexus.test',
@@ -142,6 +161,10 @@ describe('NoticesService', () => {
         { provide: PrismaService, useValue: prismaMock },
         { provide: AuditLogService, useValue: auditLogServiceMock },
         { provide: CampusAccessService, useValue: campusAccessServiceMock },
+        {
+          provide: EntityCustomFieldsService,
+          useValue: entityCustomFieldsServiceMock,
+        },
         { provide: ModuleAccessService, useValue: moduleAccessServiceMock },
       ],
     }).compile();
@@ -808,6 +831,64 @@ describe('NoticesService', () => {
       expect(matchesWhere(where, matching)).toBe(true);
       expect(matchesWhere(where, wrongCampus)).toBe(false);
       expect(matchesWhere(where, wrongRole)).toBe(false);
+    });
+  });
+
+  describe('custom fields wiring (M4.5 / P1-2a)', () => {
+    it('createNotice commits the notice and its custom field values through the same saveRecord transaction', async () => {
+      prismaMock.notice.create.mockResolvedValue({
+        id: 'notice-1',
+        title: 'Sports Day',
+      });
+
+      await service.createNotice('institution-1', adminUser, {
+        title: 'Sports Day',
+        body: 'Details',
+        customFields: { audience: 'all-campuses' },
+      });
+
+      expect(entityCustomFieldsServiceMock.saveRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          institutionId: 'institution-1',
+          entityType: 'notice',
+          values: { audience: 'all-campuses' },
+          create: true,
+        }),
+        expect.any(Function),
+      );
+      expect(entityCustomFieldsServiceMock.attachToItem).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'notice-1' }),
+        'notice',
+      );
+    });
+
+    it('updateNotice saves custom field values against the existing record without requiring them', async () => {
+      prismaMock.notice.findFirst.mockResolvedValue({
+        id: 'notice-1',
+        campusId: 'campus-1',
+        classId: null,
+        sectionId: null,
+        title: 'Old title',
+      });
+      prismaMock.notice.update.mockResolvedValue({
+        id: 'notice-1',
+        title: 'New title',
+      });
+
+      await service.updateNotice('institution-1', adminUser, 'notice-1', {
+        title: 'New title',
+        customFields: { audience: 'staff-only' },
+      });
+
+      expect(entityCustomFieldsServiceMock.saveRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          institutionId: 'institution-1',
+          entityType: 'notice',
+          values: { audience: 'staff-only' },
+          create: false,
+        }),
+        expect.any(Function),
+      );
     });
   });
 

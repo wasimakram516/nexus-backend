@@ -1,3 +1,4 @@
+import { runAuditedTransaction } from '../../common/utils/transaction.util';
 import {
   ConflictException,
   ForbiddenException,
@@ -169,21 +170,48 @@ export class PeopleService {
       select: { id: true },
     });
 
-    const persist = (resolvedRegNo: string) => {
-      const data = { ...studentData, regNo: resolvedRegNo };
-      return deletedStudent
-        ? this.prisma.student.update({
-            where: { id: deletedStudent.id },
-            data: {
-              ...data,
-              deletedAt: null,
-              deletedBy: null,
-              deleteReason: null,
-            },
-          })
-        : this.prisma.student.create({ data });
-    };
-
+    /** Commits admission, placement, login identifier and custom values together. */
+    const persist = (resolvedRegNo: string) =>
+      this.entityCustomFieldsService.saveRecord(
+        {
+          institutionId,
+          moduleKey: ModuleKey.PEOPLE,
+          entityType: CustomFieldEntity.STUDENT,
+          values: customFields,
+          create: !deletedStudent,
+        },
+        async (transaction) => {
+          const studentRecordData = { ...studentData, regNo: resolvedRegNo };
+          const record = deletedStudent
+            ? await transaction.student.update({
+                where: { id: deletedStudent.id, deletedAt: { not: null } },
+                data: {
+                  ...studentRecordData,
+                  deletedAt: null,
+                  deletedBy: null,
+                  deleteReason: null,
+                },
+              })
+            : await transaction.student.create({ data: studentRecordData });
+          // Admission creates initial placement only when a class was supplied.
+          if (classId)
+            await transaction.studentEnrollment.create({
+              data: {
+                studentId: record.id,
+                academicYearId,
+                campusId: dto.campusId,
+                classId,
+                sectionId: sectionId ?? null,
+                createdBy: currentUser.sub,
+              },
+            });
+          await transaction.user.update({
+            where: { id: dto.userId },
+            data: { identifier: record.regNo },
+          });
+          return record;
+        },
+      );
     let item;
     if (regNo) {
       try {
@@ -192,7 +220,7 @@ export class PeopleService {
         this.rethrowUniqueConflict(error, 'student');
       }
     } else {
-      // § 7.2: regNo omitted -> generate it, retrying on a live collision.
+      // Each generated-number collision rolls back the whole attempt before retrying.
       item = await this.createStudentWithGeneratedRegNo(
         institutionId,
         dto.campusId,
@@ -200,40 +228,6 @@ export class PeopleService {
         persist,
       );
     }
-
-    // § 7.5: createStudent() only creates the *first* StudentEnrollment row
-    // — there's no "previous" state, so no StudentHistory row is written
-    // here (matches today's behavior, where admission doesn't write one
-    // either). Only created when a class was actually given, preserving the
-    // existing optionality of classId/sectionId at admission time — the
-    // schema's StudentEnrollment.classId is NOT NULL, so a classless
-    // admission simply has no enrollment row yet (currentEnrollment: null)
-    // until one is added via POST /people/student-enrollments.
-    if (classId) {
-      await this.prisma.studentEnrollment.create({
-        data: {
-          studentId: item.id,
-          academicYearId,
-          campusId: dto.campusId,
-          classId,
-          sectionId: sectionId ?? null,
-          createdBy: currentUser.sub,
-        },
-      });
-    }
-
-    // Students log in with their registration number (see AuthService.login).
-    await this.prisma.user.update({
-      where: { id: dto.userId },
-      data: { identifier: item.regNo },
-    });
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.PEOPLE,
-      entityType: CustomFieldEntity.STUDENT,
-      entityId: item.id,
-      values: customFields,
-    });
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.STUDENT,
@@ -371,34 +365,39 @@ export class PeopleService {
     // go through PATCH /people/student-enrollments/:id instead, which pairs
     // the change with a StudentHistory row).
     const { customFields, ...studentFields } = dto;
-    const item = await this.prisma.student.update({
-      where: { id: studentId },
-      data: {
-        ...studentFields,
-        ...(dto.dob && { dob: new Date(dto.dob) }),
-        ...(dto.admissionDate && {
-          admissionDate: new Date(dto.admissionDate),
-        }),
-      },
-    });
-    if (dto.regNo && dto.regNo !== existing.regNo) {
-      // Keep the login identifier in sync with the registration number.
-      await this.prisma.user.update({
-        where: { id: item.userId },
-        data: { identifier: dto.regNo },
-      });
-    }
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         targetCampusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.PEOPLE,
-      entityType: CustomFieldEntity.STUDENT,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.PEOPLE,
+        entityType: CustomFieldEntity.STUDENT,
+        values: customFields,
+        create: false,
+      },
+      async (transaction) => {
+        const item = await transaction.student.update({
+          where: { id: studentId },
+          data: {
+            ...studentFields,
+            ...(dto.dob && { dob: new Date(dto.dob) }),
+            ...(dto.admissionDate && {
+              admissionDate: new Date(dto.admissionDate),
+            }),
+          },
+        });
+        if (dto.regNo && dto.regNo !== existing.regNo) {
+          // Keep the login identifier in sync with the registration number.
+          await transaction.user.update({
+            where: { id: item.userId },
+            data: { identifier: dto.regNo },
+          });
+        }
+        return item;
+      },
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.STUDENT,
@@ -464,33 +463,36 @@ export class PeopleService {
       },
       select: { id: true },
     });
-    let item;
-    try {
-      item = deletedGuardian
-        ? await this.prisma.guardian.update({
-            where: { id: deletedGuardian.id },
-            data: {
-              ...guardianData,
-              deletedAt: null,
-              deletedBy: null,
-              deleteReason: null,
-            },
-          })
-        : await this.prisma.guardian.create({ data: guardianData });
-    } catch (error) {
-      this.rethrowUniqueConflict(error, 'guardian');
-    }
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.PEOPLE,
-      entityType: CustomFieldEntity.GUARDIAN,
-      entityId: item.id,
-      values: customFields,
-    });
+    let item;
+    try {
+      item = await this.entityCustomFieldsService.saveRecord(
+        {
+          institutionId,
+          moduleKey: ModuleKey.PEOPLE,
+          entityType: CustomFieldEntity.GUARDIAN,
+          values: customFields,
+          create: !deletedGuardian,
+        },
+        async (transaction) =>
+          deletedGuardian
+            ? await transaction.guardian.update({
+                where: { id: deletedGuardian.id, deletedAt: { not: null } },
+                data: {
+                  ...guardianData,
+                  deletedAt: null,
+                  deletedBy: null,
+                  deleteReason: null,
+                },
+              })
+            : await transaction.guardian.create({ data: guardianData }),
+      );
+    } catch (error) {
+      this.rethrowUniqueConflict(error, 'guardian');
+    }
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.GUARDIAN,
@@ -587,21 +589,24 @@ export class PeopleService {
     );
 
     const { customFields, ...guardianData } = dto;
-    const item = await this.prisma.guardian.update({
-      where: { id: guardianId },
-      data: guardianData,
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         targetCampusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.PEOPLE,
-      entityType: CustomFieldEntity.GUARDIAN,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.PEOPLE,
+        entityType: CustomFieldEntity.GUARDIAN,
+        values: customFields,
+        create: false,
+      },
+      (transaction) =>
+        transaction.guardian.update({
+          where: { id: guardianId },
+          data: guardianData,
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.GUARDIAN,
@@ -683,34 +688,44 @@ export class PeopleService {
       },
       select: { id: true },
     });
-    let item;
-    try {
-      item = deletedStaffProfile
-        ? await this.prisma.staffProfile.update({
-            where: { id: deletedStaffProfile.id },
-            data: {
-              ...staffProfileData,
-              deletedAt: null,
-              deletedBy: null,
-              deleteReason: null,
-            },
-          })
-        : await this.prisma.staffProfile.create({ data: staffProfileData });
-    } catch (error) {
-      this.rethrowUniqueConflict(error, 'staff profile');
-    }
-    await this.syncUserCampusAssignment(dto.userId, dto.campusId);
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.PEOPLE,
-      entityType: CustomFieldEntity.STAFF_PROFILE,
-      entityId: item.id,
-      values: customFields,
-    });
+    let item;
+    try {
+      item = await this.entityCustomFieldsService.saveRecord(
+        {
+          institutionId,
+          moduleKey: ModuleKey.PEOPLE,
+          entityType: CustomFieldEntity.STAFF_PROFILE,
+          values: customFields,
+          create: !deletedStaffProfile,
+        },
+        async (transaction) => {
+          const record = deletedStaffProfile
+            ? await transaction.staffProfile.update({
+                where: { id: deletedStaffProfile.id, deletedAt: { not: null } },
+                data: {
+                  ...staffProfileData,
+                  deletedAt: null,
+                  deletedBy: null,
+                  deleteReason: null,
+                },
+              })
+            : await transaction.staffProfile.create({ data: staffProfileData });
+          await this.syncUserCampusAssignment(
+            dto.userId,
+            dto.campusId,
+            undefined,
+            transaction,
+          );
+          return record;
+        },
+      );
+    } catch (error) {
+      this.rethrowUniqueConflict(error, 'staff profile');
+    }
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.STAFF_PROFILE,
@@ -801,29 +816,35 @@ export class PeopleService {
     );
 
     const { customFields, ...staffProfileFields } = dto;
-    const item = await this.prisma.staffProfile.update({
-      where: { id: staffProfileId },
-      data: {
-        ...staffProfileFields,
-        ...(dto.joiningDate && { joiningDate: new Date(dto.joiningDate) }),
-      },
-    });
-    await this.syncUserCampusAssignment(
-      item.userId,
-      targetCampusId,
-      existing.campusId,
-    );
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         targetCampusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.PEOPLE,
-      entityType: CustomFieldEntity.STAFF_PROFILE,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.PEOPLE,
+        entityType: CustomFieldEntity.STAFF_PROFILE,
+        values: customFields,
+        create: false,
+      },
+      async (transaction) => {
+        const item = await transaction.staffProfile.update({
+          where: { id: staffProfileId },
+          data: {
+            ...staffProfileFields,
+            ...(dto.joiningDate && { joiningDate: new Date(dto.joiningDate) }),
+          },
+        });
+        await this.syncUserCampusAssignment(
+          item.userId,
+          targetCampusId,
+          existing.campusId,
+          transaction,
+        );
+        return item;
+      },
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.STAFF_PROFILE,
@@ -899,33 +920,46 @@ export class PeopleService {
     }
 
     const { customFields, ...linkData } = dto;
-    const item = await this.prisma.studentGuardian.upsert({
-      where: {
-        studentId_guardianId_activeScopeKey: {
-          studentId: dto.studentId,
-          guardianId: dto.guardianId,
-          activeScopeKey: 'ACTIVE',
-        },
+    const item = await runAuditedTransaction(
+      this.prisma,
+      this.requestContext,
+      async (transaction) => {
+        const where = {
+          studentId_guardianId_activeScopeKey: {
+            studentId: dto.studentId,
+            guardianId: dto.guardianId,
+            activeScopeKey: 'ACTIVE',
+          },
+        };
+        const existing = await transaction.studentGuardian.findUnique({
+          where,
+        });
+        const record = await transaction.studentGuardian.upsert({
+          where,
+          create: linkData,
+          update: {},
+        });
+        const entityId = `${record.studentId}:${record.guardianId}`;
+        await this.entityCustomFieldsService.saveValues(
+          {
+            institutionId: studentInstitutionId,
+            moduleKey: ModuleKey.PEOPLE,
+            entityType: CustomFieldEntity.STUDENT_GUARDIAN,
+            entityId,
+            values: customFields,
+            requireRequiredFields: !existing,
+          },
+          transaction,
+        );
+        return { ...record, id: entityId };
       },
-      create: linkData,
-      update: {},
-    });
-    const institutionId = studentInstitutionId;
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.PEOPLE,
-      entityType: CustomFieldEntity.STUDENT_GUARDIAN,
-      entityId: `${item.studentId}:${item.guardianId}`,
-      values: customFields,
-    });
-    return {
-      message: 'Guardian linked successfully',
-      data: {
-        ...item,
-        id: `${item.studentId}:${item.guardianId}`,
-        customFields: customFields ?? {},
-      },
-    };
+      Prisma.TransactionIsolationLevel.Serializable,
+    );
+    const data = await this.entityCustomFieldsService.attachToItem(
+      item,
+      CustomFieldEntity.STUDENT_GUARDIAN,
+    );
+    return { message: 'Guardian linked successfully', data };
   }
 
   /**
@@ -1021,54 +1055,62 @@ export class PeopleService {
     const { customFields } = dto;
     const promotionDate = new Date(dto.promotionDate);
 
-    const result = await this.prisma.$transaction((tx) =>
-      this.applyEnrollmentTransition(tx, {
-        studentId: dto.studentId,
-        previous: existingEnrollment
-          ? {
-              enrollmentId: existingEnrollment.id,
-              update: {
-                classId: dto.newClassId ?? existingEnrollment.classId,
-                sectionId: dto.newSectionId ?? existingEnrollment.sectionId,
-                updatedBy: currentUser.sub,
-              },
-            }
-          : null,
-        // No enrollment row exists yet for this year — create one directly
-        // rather than updating, but only if we actually have a class to put
-        // the student in (StudentEnrollment.classId is NOT NULL).
-        next:
-          !existingEnrollment && dto.newClassId
+    const result = await runAuditedTransaction(
+      this.prisma,
+      this.requestContext,
+      async (tx) => {
+        const result = await this.applyEnrollmentTransition(tx, {
+          studentId: dto.studentId,
+          previous: existingEnrollment
             ? {
-                studentId: dto.studentId,
-                academicYearId,
-                campusId: studentCampusId,
-                classId: dto.newClassId,
-                sectionId: dto.newSectionId ?? null,
-                createdBy: currentUser.sub,
+                enrollmentId: existingEnrollment.id,
+                update: {
+                  classId: dto.newClassId ?? existingEnrollment.classId,
+                  sectionId: dto.newSectionId ?? existingEnrollment.sectionId,
+                  updatedBy: currentUser.sub,
+                },
               }
             : null,
-        historySnapshot: {
-          previousClassId: dto.previousClassId ?? null,
-          previousSectionId: dto.previousSectionId ?? null,
-          newClassId: dto.newClassId ?? null,
-          newSectionId: dto.newSectionId ?? null,
-        },
-        academicYearId,
-        promotionDate,
-        promotionReason: dto.promotionReason,
-        remarks: dto.remarks,
-        createdBy: currentUser.sub,
-      }),
+          // No enrollment row exists yet for this year — create one directly
+          // rather than updating, but only if we actually have a class to put
+          // the student in (StudentEnrollment.classId is NOT NULL).
+          next:
+            !existingEnrollment && dto.newClassId
+              ? {
+                  studentId: dto.studentId,
+                  academicYearId,
+                  campusId: studentCampusId,
+                  classId: dto.newClassId,
+                  sectionId: dto.newSectionId ?? null,
+                  createdBy: currentUser.sub,
+                }
+              : null,
+          historySnapshot: {
+            previousClassId: dto.previousClassId ?? null,
+            previousSectionId: dto.previousSectionId ?? null,
+            newClassId: dto.newClassId ?? null,
+            newSectionId: dto.newSectionId ?? null,
+          },
+          academicYearId,
+          promotionDate,
+          promotionReason: dto.promotionReason,
+          remarks: dto.remarks,
+          createdBy: currentUser.sub,
+        });
+        await this.entityCustomFieldsService.saveValues(
+          {
+            institutionId: student.institutionId,
+            moduleKey: ModuleKey.PEOPLE,
+            entityType: CustomFieldEntity.STUDENT_HISTORY,
+            entityId: result.history.id,
+            values: customFields,
+            requireRequiredFields: true,
+          },
+          tx,
+        );
+        return result;
+      },
     );
-
-    await this.entityCustomFieldsService.saveValues({
-      institutionId: student.institutionId,
-      moduleKey: ModuleKey.PEOPLE,
-      entityType: CustomFieldEntity.STUDENT_HISTORY,
-      entityId: result.history.id,
-      values: customFields,
-    });
     const data = await this.entityCustomFieldsService.attachToItem(
       result.history,
       CustomFieldEntity.STUDENT_HISTORY,
@@ -1743,20 +1785,21 @@ export class PeopleService {
     }
 
     const { customFields, ...assignmentData } = dto;
-    const item = await this.prisma.teacherSubject.create({
-      data: assignmentData,
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.PEOPLE,
-      entityType: CustomFieldEntity.TEACHER_SUBJECT,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.PEOPLE,
+        entityType: CustomFieldEntity.TEACHER_SUBJECT,
+        values: customFields,
+        create: true,
+      },
+      (transaction) =>
+        transaction.teacherSubject.create({ data: assignmentData }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.TEACHER_SUBJECT,
@@ -1855,34 +1898,39 @@ export class PeopleService {
       personType: resolvedOwner.personType,
       ...resolvedOwner.ownerFields,
     };
-    const item = await this.prisma.contact.create({
-      data: createData,
-    });
-    if (resolvedOwner.personType === ContactPersonType.GUARDIAN) {
-      // Guardians log in with their phone number (see AuthService.login).
-      const guardian = await this.prisma.guardian.findUnique({
-        where: { id: resolvedOwner.personId },
-        select: { userId: true },
-      });
-      if (guardian) {
-        await this.prisma.user.update({
-          where: { id: guardian.userId },
-          data: { identifier: dto.phone1 },
-        });
-      }
-    }
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByContact(
         resolvedOwner.personType,
         resolvedOwner.personId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.PEOPLE,
-      entityType: CustomFieldEntity.CONTACT,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.PEOPLE,
+        entityType: CustomFieldEntity.CONTACT,
+        values: customFields,
+        create: true,
+      },
+      async (transaction) => {
+        const item = await transaction.contact.create({
+          data: createData,
+        });
+        if (resolvedOwner.personType === ContactPersonType.GUARDIAN) {
+          // Guardians log in with their phone number (see AuthService.login).
+          const guardian = await transaction.guardian.findUnique({
+            where: { id: resolvedOwner.personId },
+            select: { userId: true },
+          });
+          if (guardian) {
+            await transaction.user.update({
+              where: { id: guardian.userId },
+              data: { identifier: dto.phone1 },
+            });
+          }
+        }
+        return item;
+      },
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       {
         ...item,
@@ -1989,15 +2037,16 @@ export class PeopleService {
     userId: string,
     campusId: string,
     previousCampusId?: string,
+    transaction: Prisma.TransactionClient = this.prisma,
   ) {
     if (previousCampusId && previousCampusId !== campusId) {
       await this.requestContext.runWith({ allowHardDelete: true }, () =>
-        this.prisma.userCampus.deleteMany({
+        transaction.userCampus.deleteMany({
           where: { userId, campusId: previousCampusId },
         }),
       );
     }
-    await this.prisma.userCampus.upsert({
+    await transaction.userCampus.upsert({
       where: {
         userId_campusId_activeScopeKey: {
           userId,

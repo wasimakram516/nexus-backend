@@ -6,6 +6,8 @@ import {
 import { AuditLogService } from '../../common/services/audit-log.service';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
+import { CustomFieldEntity } from '../../common/constants/custom-field-entities.constants';
+import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import {
   EnrollmentStatus,
@@ -42,6 +44,7 @@ export class NoticesService {
     private readonly prisma: PrismaService,
     private readonly auditLogService: AuditLogService,
     private readonly campusAccessService: CampusAccessService,
+    private readonly entityCustomFieldsService: EntityCustomFieldsService,
     private readonly moduleAccessService: ModuleAccessService,
   ) {}
 
@@ -75,31 +78,57 @@ export class NoticesService {
     }
     await this.validateHierarchy(dto);
 
-    const notice = await this.prisma.notice.create({
-      data: {
+    const { customFields, ...noticeFields } = dto;
+    const notice = await this.entityCustomFieldsService.saveRecord(
+      {
         institutionId,
-        campusId: dto.campusId ?? null,
-        classId: dto.classId ?? null,
-        sectionId: dto.sectionId ?? null,
-        targetRole: dto.targetRole ?? null,
-        title: dto.title,
-        body: dto.body,
-        attachments: this.toJsonOrUndefined(dto.attachments),
-        publishAt: dto.publishAt ? new Date(dto.publishAt) : undefined,
-        expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
-        createdBy: currentUser.sub,
+        moduleKey: ModuleKey.NOTICES,
+        entityType: CustomFieldEntity.NOTICE,
+        values: customFields,
+        create: true,
       },
-    });
+      async (transaction) => {
+        const record = await transaction.notice.create({
+          data: {
+            institutionId,
+            campusId: noticeFields.campusId ?? null,
+            classId: noticeFields.classId ?? null,
+            sectionId: noticeFields.sectionId ?? null,
+            targetRole: noticeFields.targetRole ?? null,
+            title: noticeFields.title,
+            body: noticeFields.body,
+            attachments: this.toJsonOrUndefined(noticeFields.attachments),
+            publishAt: noticeFields.publishAt
+              ? new Date(noticeFields.publishAt)
+              : undefined,
+            expiresAt: noticeFields.expiresAt
+              ? new Date(noticeFields.expiresAt)
+              : null,
+            createdBy: currentUser.sub,
+          },
+        });
 
-    await this.auditLogService.log(currentUser, {
-      action: 'NOTICE_CREATED',
-      entity: 'Notice',
-      entityId: notice.id,
-      institutionId,
-      metadata: { title: notice.title },
-    });
+        await this.auditLogService.log(
+          currentUser,
+          {
+            action: 'NOTICE_CREATED',
+            entity: 'Notice',
+            entityId: record.id,
+            institutionId,
+            metadata: { title: record.title },
+          },
+          transaction,
+        );
 
-    return { message: 'Notice created successfully', data: notice };
+        return record;
+      },
+    );
+
+    const data = await this.entityCustomFieldsService.attachToItem(
+      notice,
+      CustomFieldEntity.NOTICE,
+    );
+    return { message: 'Notice created successfully', data };
   }
 
   /**
@@ -153,7 +182,11 @@ export class NoticesService {
       orderBy: { publishAt: 'desc' },
     });
 
-    return { message: 'Notices retrieved successfully', data: items };
+    const data = await this.entityCustomFieldsService.attachToItems(
+      items,
+      CustomFieldEntity.NOTICE,
+    );
+    return { message: 'Notices retrieved successfully', data };
   }
 
   /**
@@ -214,9 +247,13 @@ export class NoticesService {
       this.prisma.notice.count({ where }),
     ]);
 
+    const attachedItems = await this.entityCustomFieldsService.attachToItems(
+      items,
+      CustomFieldEntity.NOTICE,
+    );
     return {
       message: 'Notices retrieved successfully',
-      data: { items, total, page, limit },
+      data: { items: attachedItems, total, page, limit },
     };
   }
 
@@ -238,7 +275,11 @@ export class NoticesService {
     const notice = await this.findNoticeOrThrow(id, institutionId);
     await this.assertNoticeCampusAccess(currentUser, notice);
 
-    return { message: 'Notice retrieved successfully', data: notice };
+    const data = await this.entityCustomFieldsService.attachToItem(
+      notice,
+      CustomFieldEntity.NOTICE,
+    );
+    return { message: 'Notice retrieved successfully', data };
   }
 
   /**
@@ -280,37 +321,77 @@ export class NoticesService {
         dto.sectionId !== undefined ? dto.sectionId : existing.sectionId,
     });
 
-    const notice = await this.prisma.notice.update({
-      where: { id },
-      data: {
-        ...(dto.campusId !== undefined ? { campusId: dto.campusId } : {}),
-        ...(dto.classId !== undefined ? { classId: dto.classId } : {}),
-        ...(dto.sectionId !== undefined ? { sectionId: dto.sectionId } : {}),
-        ...(dto.targetRole !== undefined ? { targetRole: dto.targetRole } : {}),
-        ...(dto.title !== undefined ? { title: dto.title } : {}),
-        ...(dto.body !== undefined ? { body: dto.body } : {}),
-        ...(dto.attachments !== undefined
-          ? { attachments: this.toJsonOrUndefined(dto.attachments) }
-          : {}),
-        ...(dto.publishAt !== undefined
-          ? { publishAt: new Date(dto.publishAt) }
-          : {}),
-        ...(dto.expiresAt !== undefined
-          ? { expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null }
-          : {}),
-        updatedBy: currentUser.sub,
+    const { customFields, ...noticeFields } = dto;
+    const notice = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.NOTICES,
+        entityType: CustomFieldEntity.NOTICE,
+        values: customFields,
+        create: false,
       },
-    });
+      async (transaction) => {
+        const record = await transaction.notice.update({
+          where: { id },
+          data: {
+            ...(noticeFields.campusId !== undefined
+              ? { campusId: noticeFields.campusId }
+              : {}),
+            ...(noticeFields.classId !== undefined
+              ? { classId: noticeFields.classId }
+              : {}),
+            ...(noticeFields.sectionId !== undefined
+              ? { sectionId: noticeFields.sectionId }
+              : {}),
+            ...(noticeFields.targetRole !== undefined
+              ? { targetRole: noticeFields.targetRole }
+              : {}),
+            ...(noticeFields.title !== undefined
+              ? { title: noticeFields.title }
+              : {}),
+            ...(noticeFields.body !== undefined
+              ? { body: noticeFields.body }
+              : {}),
+            ...(noticeFields.attachments !== undefined
+              ? {
+                  attachments: this.toJsonOrUndefined(noticeFields.attachments),
+                }
+              : {}),
+            ...(noticeFields.publishAt !== undefined
+              ? { publishAt: new Date(noticeFields.publishAt) }
+              : {}),
+            ...(noticeFields.expiresAt !== undefined
+              ? {
+                  expiresAt: noticeFields.expiresAt
+                    ? new Date(noticeFields.expiresAt)
+                    : null,
+                }
+              : {}),
+            updatedBy: currentUser.sub,
+          },
+        });
 
-    await this.auditLogService.log(currentUser, {
-      action: 'NOTICE_UPDATED',
-      entity: 'Notice',
-      entityId: id,
-      institutionId,
-      metadata: { updatedFields: Object.keys(dto) },
-    });
+        await this.auditLogService.log(
+          currentUser,
+          {
+            action: 'NOTICE_UPDATED',
+            entity: 'Notice',
+            entityId: id,
+            institutionId,
+            metadata: { updatedFields: Object.keys(dto) },
+          },
+          transaction,
+        );
 
-    return { message: 'Notice updated successfully', data: notice };
+        return record;
+      },
+    );
+
+    const data = await this.entityCustomFieldsService.attachToItem(
+      notice,
+      CustomFieldEntity.NOTICE,
+    );
+    return { message: 'Notice updated successfully', data };
   }
 
   /**

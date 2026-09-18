@@ -1,11 +1,16 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { CustomFieldInputType, ModuleKey } from '../../../prisma/client';
+import {
+  CustomFieldInputType,
+  ModuleKey,
+  UserRole,
+} from '../../../prisma/client';
 import {
   IsArray,
   IsBoolean,
   IsDefined,
   IsEnum,
   IsInt,
+  IsIn,
   IsNotEmpty,
   IsObject,
   IsOptional,
@@ -26,6 +31,24 @@ export class CustomFieldOptionDto {
   @IsString()
   @IsNotEmpty()
   value!: string;
+}
+
+/**
+ * Role-based visibility rule stored on `CustomFieldDefinition.visibilityRules`.
+ * An unset or empty `roles` list means the field is visible to every role
+ * (see `isCustomFieldDefinitionVisibleToRole` for the enforcement side).
+ */
+export class CustomFieldVisibilityRulesDto {
+  @ApiPropertyOptional({
+    enum: UserRole,
+    isArray: true,
+    description:
+      'Roles allowed to see and set this field. Omitted or empty means visible to every role.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsEnum(UserRole, { each: true })
+  roles?: UserRole[];
 }
 
 export class CreateCustomFieldDefinitionDto {
@@ -79,24 +102,23 @@ export class CreateCustomFieldDefinitionDto {
   options?: CustomFieldOptionDto[];
 
   @ApiPropertyOptional({
-    type: 'object',
-    additionalProperties: true,
     description:
-      'Optional rules like accepted mime types, max file size, regex, min/max values, or URL/email/phone hints.',
+      'Optional typed default matching the selected input type (text, number, boolean, or choice array).',
   })
   @IsOptional()
-  @IsObject()
-  defaultValue?: Record<string, unknown>;
+  defaultValue?: unknown;
 
   @ApiPropertyOptional({ type: 'object', additionalProperties: true })
   @IsOptional()
   @IsObject()
   validation?: Record<string, unknown>;
 
-  @ApiPropertyOptional({ type: 'object', additionalProperties: true })
+  @ApiPropertyOptional({ type: CustomFieldVisibilityRulesDto })
   @IsOptional()
   @IsObject()
-  visibilityRules?: Record<string, unknown>;
+  @ValidateNested()
+  @Type(() => CustomFieldVisibilityRulesDto)
+  visibilityRules?: CustomFieldVisibilityRulesDto;
 
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
@@ -145,6 +167,22 @@ export class ListCustomFieldDefinitionsQueryDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+}
+
+export class FormCustomFieldDefinitionsQueryDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  entityType!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  institutionId?: string;
+
+  @ApiProperty({ enum: ['create', 'read', 'update'] })
+  @IsIn(['create', 'read', 'update'])
+  action!: 'create' | 'read' | 'update';
 }
 
 export class UpsertCustomFieldValueDto {

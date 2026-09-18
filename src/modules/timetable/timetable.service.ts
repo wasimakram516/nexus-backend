@@ -7,6 +7,8 @@ import {
 import { AuditLogService } from '../../common/services/audit-log.service';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
+import { CustomFieldEntity } from '../../common/constants/custom-field-entities.constants';
+import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { ModuleKey, Prisma, UserRole } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -37,6 +39,7 @@ export class TimetableService {
     private readonly prisma: PrismaService,
     private readonly auditLogService: AuditLogService,
     private readonly campusAccessService: CampusAccessService,
+    private readonly entityCustomFieldsService: EntityCustomFieldsService,
     private readonly moduleAccessService: ModuleAccessService,
   ) {}
 
@@ -72,37 +75,64 @@ export class TimetableService {
       sectionId: dto.sectionId,
     });
 
+    const institutionId =
+      await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
+        scope.campusId,
+      );
+    const { customFields, ...periodSlotFields } = dto;
+
     try {
-      const periodSlot = await this.prisma.periodSlot.create({
-        data: {
-          campusId: scope.campusId,
-          classId: dto.classId,
-          sectionId: dto.sectionId,
-          subjectId: dto.subjectId ?? null,
-          staffProfileId: dto.staffProfileId ?? null,
-          name: dto.name,
-          periodNumber: dto.periodNumber,
-          dayOfWeek: dto.dayOfWeek,
-          startTime: dto.startTime,
-          endTime: dto.endTime,
-          createdBy: currentUser.sub,
+      const periodSlot = await this.entityCustomFieldsService.saveRecord(
+        {
+          institutionId,
+          moduleKey: ModuleKey.TIMETABLE,
+          entityType: CustomFieldEntity.PERIOD_SLOT,
+          values: customFields,
+          create: true,
         },
-      });
+        async (transaction) => {
+          const record = await transaction.periodSlot.create({
+            data: {
+              campusId: scope.campusId,
+              classId: periodSlotFields.classId,
+              sectionId: periodSlotFields.sectionId,
+              subjectId: periodSlotFields.subjectId ?? null,
+              staffProfileId: periodSlotFields.staffProfileId ?? null,
+              name: periodSlotFields.name,
+              periodNumber: periodSlotFields.periodNumber,
+              dayOfWeek: periodSlotFields.dayOfWeek,
+              startTime: periodSlotFields.startTime,
+              endTime: periodSlotFields.endTime,
+              createdBy: currentUser.sub,
+            },
+          });
 
-      await this.auditLogService.log(currentUser, {
-        action: 'PERIOD_SLOT_CREATED',
-        entity: 'PeriodSlot',
-        entityId: periodSlot.id,
-        institutionId: currentUser.institutionId ?? null,
-        metadata: {
-          name: periodSlot.name,
-          sectionId: periodSlot.sectionId,
-          dayOfWeek: periodSlot.dayOfWeek,
-          periodNumber: periodSlot.periodNumber,
+          await this.auditLogService.log(
+            currentUser,
+            {
+              action: 'PERIOD_SLOT_CREATED',
+              entity: 'PeriodSlot',
+              entityId: record.id,
+              institutionId: currentUser.institutionId ?? null,
+              metadata: {
+                name: record.name,
+                sectionId: record.sectionId,
+                dayOfWeek: record.dayOfWeek,
+                periodNumber: record.periodNumber,
+              },
+            },
+            transaction,
+          );
+
+          return record;
         },
-      });
+      );
 
-      return { message: 'Period slot created successfully', data: periodSlot };
+      const data = await this.entityCustomFieldsService.attachToItem(
+        periodSlot,
+        CustomFieldEntity.PERIOD_SLOT,
+      );
+      return { message: 'Period slot created successfully', data };
     } catch (error) {
       this.rethrowUniqueConflict(error);
     }
@@ -161,7 +191,11 @@ export class TimetableService {
       orderBy: [{ dayOfWeek: 'asc' }, { periodNumber: 'asc' }],
     });
 
-    return { message: 'Period slots retrieved successfully', data: items };
+    const data = await this.entityCustomFieldsService.attachToItems(
+      items,
+      CustomFieldEntity.PERIOD_SLOT,
+    );
+    return { message: 'Period slots retrieved successfully', data };
   }
 
   /**
@@ -186,7 +220,11 @@ export class TimetableService {
       orderBy: [{ dayOfWeek: 'asc' }, { periodNumber: 'asc' }],
     });
 
-    return { message: 'Weekly timetable retrieved successfully', data: items };
+    const data = await this.entityCustomFieldsService.attachToItems(
+      items,
+      CustomFieldEntity.PERIOD_SLOT,
+    );
+    return { message: 'Weekly timetable retrieved successfully', data };
   }
 
   /**
@@ -209,7 +247,11 @@ export class TimetableService {
       periodSlot.campusId,
     );
 
-    return { message: 'Period slot retrieved successfully', data: periodSlot };
+    const data = await this.entityCustomFieldsService.attachToItem(
+      periodSlot,
+      CustomFieldEntity.PERIOD_SLOT,
+    );
+    return { message: 'Period slot retrieved successfully', data };
   }
 
   /**
@@ -280,37 +322,78 @@ export class TimetableService {
       });
     }
 
+    const institutionId =
+      await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
+        campusId,
+      );
+    const { customFields, ...periodSlotFields } = dto;
+
     try {
-      const periodSlot = await this.prisma.periodSlot.update({
-        where: { id },
-        data: {
-          ...(dto.classId !== undefined ? { classId: dto.classId } : {}),
-          ...(dto.sectionId !== undefined ? { sectionId: dto.sectionId } : {}),
-          ...(scopeChanged ? { campusId } : {}),
-          ...(dto.subjectId !== undefined ? { subjectId: dto.subjectId } : {}),
-          ...(dto.staffProfileId !== undefined
-            ? { staffProfileId: dto.staffProfileId }
-            : {}),
-          ...(dto.name !== undefined ? { name: dto.name } : {}),
-          ...(dto.periodNumber !== undefined
-            ? { periodNumber: dto.periodNumber }
-            : {}),
-          ...(dto.dayOfWeek !== undefined ? { dayOfWeek: dto.dayOfWeek } : {}),
-          ...(dto.startTime !== undefined ? { startTime: dto.startTime } : {}),
-          ...(dto.endTime !== undefined ? { endTime: dto.endTime } : {}),
-          updatedBy: currentUser.sub,
+      const periodSlot = await this.entityCustomFieldsService.saveRecord(
+        {
+          institutionId,
+          moduleKey: ModuleKey.TIMETABLE,
+          entityType: CustomFieldEntity.PERIOD_SLOT,
+          values: customFields,
+          create: false,
         },
-      });
+        async (transaction) => {
+          const record = await transaction.periodSlot.update({
+            where: { id },
+            data: {
+              ...(periodSlotFields.classId !== undefined
+                ? { classId: periodSlotFields.classId }
+                : {}),
+              ...(periodSlotFields.sectionId !== undefined
+                ? { sectionId: periodSlotFields.sectionId }
+                : {}),
+              ...(scopeChanged ? { campusId } : {}),
+              ...(periodSlotFields.subjectId !== undefined
+                ? { subjectId: periodSlotFields.subjectId }
+                : {}),
+              ...(periodSlotFields.staffProfileId !== undefined
+                ? { staffProfileId: periodSlotFields.staffProfileId }
+                : {}),
+              ...(periodSlotFields.name !== undefined
+                ? { name: periodSlotFields.name }
+                : {}),
+              ...(periodSlotFields.periodNumber !== undefined
+                ? { periodNumber: periodSlotFields.periodNumber }
+                : {}),
+              ...(periodSlotFields.dayOfWeek !== undefined
+                ? { dayOfWeek: periodSlotFields.dayOfWeek }
+                : {}),
+              ...(periodSlotFields.startTime !== undefined
+                ? { startTime: periodSlotFields.startTime }
+                : {}),
+              ...(periodSlotFields.endTime !== undefined
+                ? { endTime: periodSlotFields.endTime }
+                : {}),
+              updatedBy: currentUser.sub,
+            },
+          });
 
-      await this.auditLogService.log(currentUser, {
-        action: 'PERIOD_SLOT_UPDATED',
-        entity: 'PeriodSlot',
-        entityId: id,
-        institutionId: currentUser.institutionId ?? null,
-        metadata: { updatedFields: Object.keys(dto) },
-      });
+          await this.auditLogService.log(
+            currentUser,
+            {
+              action: 'PERIOD_SLOT_UPDATED',
+              entity: 'PeriodSlot',
+              entityId: id,
+              institutionId: currentUser.institutionId ?? null,
+              metadata: { updatedFields: Object.keys(dto) },
+            },
+            transaction,
+          );
 
-      return { message: 'Period slot updated successfully', data: periodSlot };
+          return record;
+        },
+      );
+
+      const data = await this.entityCustomFieldsService.attachToItem(
+        periodSlot,
+        CustomFieldEntity.PERIOD_SLOT,
+      );
+      return { message: 'Period slot updated successfully', data };
     } catch (error) {
       this.rethrowUniqueConflict(error);
     }

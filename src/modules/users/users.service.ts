@@ -4,12 +4,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, UserRole } from '../../prisma/client';
+import { ModuleKey, Prisma, UserRole } from '../../prisma/client';
 // UpdateUserAccessDto.role is typed against this hand-maintained mirror;
 // everything else here (CurrentUser, DB rows) is Prisma-typed — same values,
 // nominally distinct TS enums, so comparisons against dto.role need this alias.
 import { UserRole as DtoUserRole } from '../../common/enums/domain.enums';
 import { AuditLogService } from '../../common/services/audit-log.service';
+import { CustomFieldEntity } from '../../common/constants/custom-field-entities.constants';
+import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -26,6 +28,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLogService: AuditLogService,
+    private readonly entityCustomFieldsService: EntityCustomFieldsService,
     private readonly requestContext: RequestContextService,
     private readonly userPermissionsService: UserPermissionsService,
   ) {}
@@ -48,7 +51,11 @@ export class UsersService {
     if (!user || user.deletedAt) {
       throw new NotFoundException('User not found.');
     }
-    return { message: 'Profile retrieved successfully', data: user };
+    const data = await this.entityCustomFieldsService.attachToItem(
+      user,
+      CustomFieldEntity.USER,
+    );
+    return { message: 'Profile retrieved successfully', data };
   }
 
   async updateProfile(currentUser: CurrentUser, dto: UpdateProfileDto) {
@@ -139,9 +146,18 @@ export class UsersService {
       this.prisma.user.count({ where }),
     ]);
 
+    const attachedItems = await this.entityCustomFieldsService.attachToItems(
+      items,
+      CustomFieldEntity.USER,
+    );
     return {
       message: 'Users retrieved successfully',
-      data: { items, total, page: query.page, limit: query.limit },
+      data: {
+        items: attachedItems,
+        total,
+        page: query.page,
+        limit: query.limit,
+      },
     };
   }
 
@@ -233,9 +249,10 @@ export class UsersService {
       }
     }
 
-    const data: Prisma.UserUncheckedUpdateInput = {};
-    if (dto.role !== undefined) data.role = dto.role;
-    if (dto.status !== undefined) data.status = dto.status;
+    const { customFields } = dto;
+    const updateData: Prisma.UserUncheckedUpdateInput = {};
+    if (dto.role !== undefined) updateData.role = dto.role;
+    if (dto.status !== undefined) updateData.status = dto.status;
 
     const touchesPermissions =
       dto.roleId !== undefined || dto.permissionOverrides !== undefined;
@@ -253,7 +270,7 @@ export class UsersService {
 
     if (dto.roleId !== undefined) {
       if (dto.roleId === null) {
-        data.roleId = null;
+        updateData.roleId = null;
       } else {
         const role = await this.prisma.role.findFirst({
           where: {
@@ -268,12 +285,12 @@ export class UsersService {
         if (!role) {
           throw new BadRequestException('Role not found for this institution.');
         }
-        data.roleId = role.id;
+        updateData.roleId = role.id;
       }
     }
 
     if (dto.permissionOverrides !== undefined) {
-      data.permissionOverrides =
+      updateData.permissionOverrides =
         dto.permissionOverrides === null
           ? Prisma.DbNull
           : this.userPermissionsService.sanitizeOverrides(
@@ -281,22 +298,46 @@ export class UsersService {
             );
     }
 
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        status: true,
-        deletedAt: true,
-        institutionId: true,
-        roleId: true,
-        permissionOverrides: true,
-        assignedRole: { select: { name: true } },
-      },
-    });
+    // A user profile is institution-wide, not campus-scoped (§ M4.5 / P1-2a
+    // corrective milestone) — unlike every other custom-field entity, a
+    // target with no institutionId (e.g. a SUPERADMIN account) simply has
+    // no institution context to attach custom field values under, so
+    // custom fields are silently skipped for that case rather than wired
+    // through EntityCustomFieldsService.saveRecord (which requires one).
+    const selectShape = {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      status: true,
+      deletedAt: true,
+      institutionId: true,
+      roleId: true,
+      permissionOverrides: true,
+      assignedRole: { select: { name: true } },
+    } as const;
+
+    const user = target.institutionId
+      ? await this.entityCustomFieldsService.saveRecord(
+          {
+            institutionId: target.institutionId,
+            moduleKey: ModuleKey.PEOPLE,
+            entityType: CustomFieldEntity.USER,
+            values: customFields,
+            create: false,
+          },
+          (transaction) =>
+            transaction.user.update({
+              where: { id: userId },
+              data: updateData,
+              select: selectShape,
+            }),
+        )
+      : await this.prisma.user.update({
+          where: { id: userId },
+          data: updateData,
+          select: selectShape,
+        });
 
     await this.auditLogService.log(currentUser, {
       action: 'USER_ACCESS_UPDATED',
@@ -311,7 +352,11 @@ export class UsersService {
       },
     });
 
-    return { message: 'User updated successfully', data: user };
+    const data = await this.entityCustomFieldsService.attachToItem(
+      user,
+      CustomFieldEntity.USER,
+    );
+    return { message: 'User updated successfully', data };
   }
 
   async deleteUser(currentUser: CurrentUser, userId: string, reason?: string) {

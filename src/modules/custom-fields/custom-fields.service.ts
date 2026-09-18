@@ -16,8 +16,21 @@ import {
   resolveContactOwner,
 } from '../../common/utils/contact-owner.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { UserPermissionsService } from '../../common/services/user-permissions.service';
+import {
+  CUSTOM_FIELD_ENTITY_FEATURES,
+  CUSTOM_FIELD_ENTITY_MODULES,
+} from '../../common/utils/custom-field-entity.util';
+import { validateCustomFieldValue } from '../../common/utils/custom-field-validation.util';
+import { isCustomFieldDefinitionPlanAllowed } from '../../common/utils/custom-field-plan.util';
+import { isCustomFieldDefinitionVisibleToRole } from '../../common/utils/custom-field-visibility.util';
+import {
+  normalizeCustomFieldEntity,
+  assertCustomFieldEntityModule,
+} from '../../common/utils/custom-field-entity.util';
 import {
   CreateCustomFieldDefinitionDto,
+  FormCustomFieldDefinitionsQueryDto,
   ListCustomFieldDefinitionsQueryDto,
   ListCustomFieldValuesQueryDto,
   UpdateCustomFieldDefinitionDto,
@@ -30,7 +43,63 @@ export class CustomFieldsService {
     private readonly prisma: PrismaService,
     private readonly campusAccessService: CampusAccessService,
     private readonly moduleAccessService: ModuleAccessService,
+    private readonly userPermissionsService: UserPermissionsService,
   ) {}
+
+  /** Lets record editors load form definitions without definition-management privileges. */
+  async listFormDefinitions(
+    currentUser: CurrentUser,
+    query: FormCustomFieldDefinitionsQueryDto,
+  ) {
+    const entityType = normalizeCustomFieldEntity(query.entityType);
+    const allowed = await this.userPermissionsService.can(
+      currentUser,
+      CUSTOM_FIELD_ENTITY_FEATURES[entityType],
+      query.action,
+    );
+    if (!allowed)
+      throw new ForbiddenException(
+        'You do not have permission to access custom fields for this record type.',
+      );
+    const institutionId = await this.resolveInstitutionId(
+      currentUser,
+      query.institutionId,
+    );
+    const result = await this.listDefinitions(currentUser, {
+      institutionId,
+      entityType,
+      moduleKey: CUSTOM_FIELD_ENTITY_MODULES[entityType],
+      isActive: true,
+    });
+    if (
+      new Set(result.data.map((definition) => definition.fieldKey)).size !==
+      result.data.length
+    ) {
+      throw new ConflictException(
+        'Conflicting custom field definitions must be resolved before opening this form.',
+      );
+    }
+    // A form must never render or require a field the institution's plan
+    // doesn't include, or one invisible to the caller's role — the write
+    // path (EntityCustomFieldsService.saveValues) would reject either as
+    // unknown anyway, so filtering here keeps the form consistent with what
+    // it's actually allowed to submit.
+    const planKey =
+      await this.moduleAccessService.resolvePlanKeyForInstitution(
+        institutionId,
+      );
+    return {
+      ...result,
+      data: result.data.filter(
+        (definition) =>
+          isCustomFieldDefinitionPlanAllowed(definition.planKeys, planKey) &&
+          isCustomFieldDefinitionVisibleToRole(
+            definition.visibilityRules,
+            currentUser.role,
+          ),
+      ),
+    };
+  }
 
   async createDefinition(
     currentUser: CurrentUser,
@@ -45,13 +114,21 @@ export class CustomFieldsService {
       dto.institutionId,
     );
     this.assertDefinitionRules(dto.inputType, dto.options);
+    if (dto.defaultValue !== undefined) {
+      validateCustomFieldValue({ ...dto, isRequired: false }, dto.defaultValue);
+    }
+    const entityType = assertCustomFieldEntityModule(
+      dto.entityType,
+      dto.moduleKey,
+    );
+    await this.assertUniqueDefinition(institutionId, entityType, dto.fieldKey);
 
     try {
       const definition = await this.prisma.customFieldDefinition.create({
         data: {
           institutionId,
           moduleKey: dto.moduleKey,
-          entityType: dto.entityType,
+          entityType,
           fieldKey: dto.fieldKey,
           label: dto.label,
           inputType: dto.inputType,
@@ -104,7 +181,12 @@ export class CustomFieldsService {
       where: {
         institutionId,
         moduleKey: query.moduleKey,
-        entityType: query.entityType,
+        entityType: query.entityType
+          ? {
+              equals: normalizeCustomFieldEntity(query.entityType),
+              mode: 'insensitive',
+            }
+          : undefined,
         isActive: query.isActive,
       },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
@@ -136,15 +218,55 @@ export class CustomFieldsService {
     );
     this.assertDefinitionRules(
       dto.inputType ?? definition.inputType,
-      dto.options,
+      dto.options ?? definition.options,
     );
+    if (dto.defaultValue !== undefined || dto.inputType !== undefined) {
+      validateCustomFieldValue(
+        {
+          fieldKey: dto.fieldKey ?? definition.fieldKey,
+          label: dto.label ?? definition.label,
+          inputType: dto.inputType ?? definition.inputType,
+          options: dto.options ?? definition.options,
+          validation: dto.validation ?? definition.validation,
+          isRequired: false,
+        },
+        dto.defaultValue !== undefined
+          ? dto.defaultValue
+          : definition.defaultValue,
+      );
+    }
+    if (dto.entityType !== undefined || dto.moduleKey !== undefined) {
+      assertCustomFieldEntityModule(
+        dto.entityType ?? definition.entityType,
+        dto.moduleKey ?? definition.moduleKey,
+      );
+      if (
+        normalizeCustomFieldEntity(dto.entityType ?? definition.entityType) !==
+          normalizeCustomFieldEntity(definition.entityType) ||
+        (dto.moduleKey !== undefined && dto.moduleKey !== definition.moduleKey)
+      ) {
+        throw new BadRequestException(
+          'An existing definition cannot be moved to another entity or module.',
+        );
+      }
+    }
+    if (dto.fieldKey !== undefined || dto.entityType !== undefined) {
+      await this.assertUniqueDefinition(
+        definition.institutionId,
+        normalizeCustomFieldEntity(dto.entityType ?? definition.entityType),
+        dto.fieldKey ?? definition.fieldKey,
+        definition.id,
+      );
+    }
 
     try {
       const updated = await this.prisma.customFieldDefinition.update({
         where: { id: definitionId },
         data: {
           moduleKey: dto.moduleKey,
-          entityType: dto.entityType,
+          entityType: dto.entityType
+            ? normalizeCustomFieldEntity(dto.entityType)
+            : undefined,
           fieldKey: dto.fieldKey,
           label: dto.label,
           inputType: dto.inputType,
@@ -204,6 +326,29 @@ export class CustomFieldsService {
         'Custom field values must be saved against the definition institution.',
       );
     }
+
+    if (!definition.isActive || definition.deletedAt) {
+      throw new BadRequestException('Custom field definition is inactive.');
+    }
+    const planKey = await this.moduleAccessService.resolvePlanKeyForInstitution(
+      definition.institutionId,
+    );
+    if (!isCustomFieldDefinitionPlanAllowed(definition.planKeys, planKey)) {
+      throw new ForbiddenException(
+        'This custom field is not available on the institution’s current plan.',
+      );
+    }
+    if (
+      !isCustomFieldDefinitionVisibleToRole(
+        definition.visibilityRules,
+        currentUser.role,
+      )
+    ) {
+      throw new ForbiddenException(
+        'This custom field is not visible to your role.',
+      );
+    }
+    validateCustomFieldValue(definition, dto.value);
 
     const value = await this.prisma.customFieldValue.upsert({
       where: {
@@ -276,9 +421,38 @@ export class CustomFieldsService {
       orderBy: { createdAt: 'asc' },
     });
 
+    // Same read-side plan and visibility gate as
+    // EntityCustomFieldsService.attachToItems — a value for a
+    // plan-gated-out or role-invisible field must not surface here either.
+    const institutionIds = [
+      ...new Set(items.map((item) => item.institutionId)),
+    ];
+    const planKeyByInstitution = new Map(
+      await Promise.all(
+        institutionIds.map(
+          async (id) =>
+            [
+              id,
+              await this.moduleAccessService.resolvePlanKeyForInstitution(id),
+            ] as const,
+        ),
+      ),
+    );
+    const data = items.filter(
+      (item) =>
+        isCustomFieldDefinitionPlanAllowed(
+          item.definition.planKeys,
+          planKeyByInstitution.get(item.institutionId) ?? null,
+        ) &&
+        isCustomFieldDefinitionVisibleToRole(
+          item.definition.visibilityRules,
+          currentUser.role,
+        ),
+    );
+
     return {
       message: 'Custom field values retrieved successfully',
-      data: items,
+      data,
     };
   }
 
@@ -353,7 +527,7 @@ export class CustomFieldsService {
     entityType: string,
     entityId: string,
   ) {
-    switch (entityType) {
+    switch (normalizeCustomFieldEntity(entityType)) {
       case CustomFieldEntity.CAMPUS: {
         const campus = await this.prisma.campus.findUnique({
           where: { id: entityId },
@@ -767,6 +941,69 @@ export class CustomFieldsService {
           }),
         );
         return;
+      case CustomFieldEntity.NOTICE: {
+        const item = await this.prisma.notice.findUnique({
+          where: { id: entityId },
+          select: { institutionId: true, campusId: true },
+        });
+        if (!item || item.institutionId !== institutionId) {
+          throw new ForbiddenException(
+            'You can only manage custom field values for accessible entities.',
+          );
+        }
+        // Notice.campusId is nullable — null means institution-wide, which
+        // needs no further campus-level check (§ task: "real campusId,
+        // resolve through it" — a no-op when there isn't one).
+        if (item.campusId) {
+          await this.campusAccessService.assertCampusAccess(
+            currentUser,
+            item.campusId,
+          );
+        }
+        return;
+      }
+      case CustomFieldEntity.PERIOD_SLOT:
+        await this.assertCampusScopedEntityAccess(
+          currentUser,
+          institutionId,
+          await this.prisma.periodSlot.findUnique({
+            where: { id: entityId },
+            select: {
+              campusId: true,
+              campus: { select: { institutionId: true } },
+            },
+          }),
+        );
+        return;
+      case CustomFieldEntity.ATTENDANCE:
+        await this.assertCampusScopedEntityAccess(
+          currentUser,
+          institutionId,
+          await this.prisma.attendance.findUnique({
+            where: { id: entityId },
+            select: {
+              campusId: true,
+              campus: { select: { institutionId: true } },
+            },
+          }),
+        );
+        return;
+      case CustomFieldEntity.USER: {
+        // A user profile is institution-wide, not campus-scoped (unlike
+        // every other person-shaped entity above) — resolved through
+        // institutionId directly, matching the M4-EXAMS-RESULTS-DESIGN.md
+        // § 9 precedent for an institution-wide-only entity.
+        const item = await this.prisma.user.findUnique({
+          where: { id: entityId },
+          select: { institutionId: true },
+        });
+        if (!item || item.institutionId !== institutionId) {
+          throw new ForbiddenException(
+            'You can only manage custom field values for accessible entities.',
+          );
+        }
+        return;
+      }
       case CustomFieldEntity.CONTACT: {
         const item = await this.prisma.contact.findUnique({
           where: { id: entityId },
@@ -886,7 +1123,7 @@ export class CustomFieldsService {
 
   private assertDefinitionRules(
     inputType: CustomFieldInputType,
-    options?: { label: string; value: string }[],
+    options?: unknown,
   ) {
     const optionBasedTypes = new Set<CustomFieldInputType>([
       CustomFieldInputType.SELECT,
@@ -895,11 +1132,63 @@ export class CustomFieldsService {
       CustomFieldInputType.RADIO,
     ]);
 
-    if (optionBasedTypes.has(inputType) && (!options || options.length === 0)) {
+    if (
+      optionBasedTypes.has(inputType) &&
+      (!Array.isArray(options) || options.length === 0)
+    ) {
       throw new BadRequestException(
         `${inputType} fields require at least one option.`,
       );
     }
+    if (Array.isArray(options)) {
+      const values = new Set<string>();
+      for (const option of options as unknown[]) {
+        if (
+          !option ||
+          typeof option !== 'object' ||
+          !('label' in option) ||
+          typeof option.label !== 'string' ||
+          !option.label.trim() ||
+          !('value' in option) ||
+          typeof option.value !== 'string' ||
+          !option.value.trim()
+        ) {
+          throw new BadRequestException(
+            'Each option requires a nonempty label and value.',
+          );
+        }
+        if (values.has(option.value)) {
+          throw new BadRequestException(
+            'Custom field option values must be unique.',
+          );
+        }
+        values.add(option.value);
+      }
+    }
+  }
+
+  /** Prevents new canonical definitions from duplicating a legacy uppercase definition. */
+  private async assertUniqueDefinition(
+    institutionId: string,
+    entityType: string,
+    fieldKey: string,
+    excludeId?: string,
+  ): Promise<void> {
+    const existing = await this.prisma.customFieldDefinition.findMany({
+      where: {
+        id: excludeId ? { not: excludeId } : undefined,
+        institutionId,
+        entityType: { equals: entityType, mode: 'insensitive' },
+        fieldKey,
+        deletedAt: null,
+      },
+      select: { id: true },
+      take: 1,
+    });
+    if (existing.length)
+      throw new ConflictException(
+        'A custom field with this key already exists for the entity.',
+      );
   }
 
   private toJson(value: unknown): Prisma.InputJsonValue {

@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { UserRole, UserStatus } from '../../prisma/client';
+import { Prisma, UserRole, UserStatus } from '../../prisma/client';
 // DTOs (UpdateUserAccessDto etc.) are typed against the hand-maintained
 // domain enums, not the Prisma client enum — both share the same values,
 // but TS enums are nominal, so DTO payload literals need this import.
@@ -10,6 +10,7 @@ import {
 } from '../../common/enums/domain.enums';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { AuditLogService } from '../../common/services/audit-log.service';
+import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -77,6 +78,22 @@ describe('UsersService', () => {
   const userPermissionsServiceMock = {
     sanitizeOverrides: jest.fn((v: unknown) => v),
   };
+  const entityCustomFieldsServiceMock = {
+    saveRecord: jest
+      .fn()
+      .mockImplementation(
+        (
+          _params: unknown,
+          mutation: (transaction: Prisma.TransactionClient) => Promise<unknown>,
+        ) => mutation(prismaMock as unknown as Prisma.TransactionClient),
+      ),
+    attachToItem: jest
+      .fn()
+      .mockImplementation((item: unknown) => Promise.resolve(item)),
+    attachToItems: jest
+      .fn()
+      .mockImplementation((items: unknown) => Promise.resolve(items)),
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -86,6 +103,10 @@ describe('UsersService', () => {
         UsersService,
         { provide: PrismaService, useValue: prismaMock },
         { provide: AuditLogService, useValue: auditLogServiceMock },
+        {
+          provide: EntityCustomFieldsService,
+          useValue: entityCustomFieldsServiceMock,
+        },
         { provide: RequestContextService, useValue: requestContextMock },
         {
           provide: UserPermissionsService,
@@ -180,6 +201,53 @@ describe('UsersService', () => {
           roleId: 'role-1',
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('custom fields wiring (M4.5 / P1-2a)', () => {
+    it('updateUserRole saves custom field values against the target institution', async () => {
+      prismaMock.user.findUnique.mockResolvedValue(staffTargetSameInstitution);
+      prismaMock.user.update.mockResolvedValue(staffTargetSameInstitution);
+
+      await service.updateUserRole(adminUser, 'target-staff-1', {
+        status: DtoUserStatus.SUSPENDED,
+        customFields: { employeeId: 'EMP-042' },
+      });
+
+      expect(entityCustomFieldsServiceMock.saveRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          institutionId: 'institution-1',
+          entityType: 'user',
+          values: { employeeId: 'EMP-042' },
+          create: false,
+        }),
+        expect.any(Function),
+      );
+    });
+
+    it('skips custom-field wiring for a target with no institution context (e.g. SUPERADMIN)', async () => {
+      const superadminCaller: CurrentUser = {
+        sub: 'root-1',
+        email: 'root@nexus.test',
+        role: UserRole.SUPERADMIN,
+        institutionId: null,
+      };
+      const superadminTarget = {
+        id: 'target-root-1',
+        role: UserRole.SUPERADMIN,
+        status: UserStatus.ACTIVE,
+        institutionId: null,
+        deletedAt: null,
+      };
+      prismaMock.user.findUnique.mockResolvedValue(superadminTarget);
+      prismaMock.user.update.mockResolvedValue(superadminTarget);
+
+      await service.updateUserRole(superadminCaller, 'target-root-1', {
+        status: DtoUserStatus.SUSPENDED,
+      });
+
+      expect(entityCustomFieldsServiceMock.saveRecord).not.toHaveBeenCalled();
+      expect(prismaMock.user.update).toHaveBeenCalled();
     });
   });
 

@@ -14,6 +14,7 @@ import {
   IsUUID,
   ValidateNested,
 } from 'class-validator';
+import { CustomFieldPayloadDto } from '../../../common/dto/custom-field-payload.dto';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
 /** Maximum attachments a single notice may carry (§ 7.3 of
@@ -60,7 +61,7 @@ export class NoticeAttachmentDto {
   bytes!: number;
 }
 
-export class CreateNoticeDto {
+export class CreateNoticeDto extends CustomFieldPayloadDto {
   @ApiPropertyOptional({
     description: 'Omit for an institution-wide notice.',
   })

@@ -22,6 +22,13 @@ export const CustomFieldEntity = {
   STUDENT_FINE: 'student_fine',
   FEE_VOUCHER: 'fee_voucher',
   FEE_PAYMENT: 'fee_payment',
+  // M4.5 / P1-2a corrective milestone — extensions to entities that were
+  // never registered for custom fields at all (see
+  // CUSTOM-FIELDS-ACCEPTANCE.md's "Extensions already in scope" table).
+  NOTICE: 'notice',
+  PERIOD_SLOT: 'period_slot',
+  ATTENDANCE: 'attendance',
+  USER: 'user',
 } as const;
 
 export type CustomFieldEntityType =

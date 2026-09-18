@@ -46,18 +46,20 @@ export class AcademicsService {
       dto.campusId,
     );
     const { customFields, ...levelData } = dto;
-    const level = await this.prisma.level.create({ data: levelData });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.ACADEMICS,
-      entityType: CustomFieldEntity.LEVEL,
-      entityId: level.id,
-      values: customFields,
-    });
+    const level = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.LEVEL,
+        values: customFields,
+        create: true,
+      },
+      (transaction) => transaction.level.create({ data: levelData }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       level,
       CustomFieldEntity.LEVEL,
@@ -136,21 +138,24 @@ export class AcademicsService {
     );
 
     const { customFields, ...levelData } = dto;
-    const level = await this.prisma.level.update({
-      where: { id: levelId },
-      data: levelData,
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         targetCampusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.ACADEMICS,
-      entityType: CustomFieldEntity.LEVEL,
-      entityId: level.id,
-      values: customFields,
-    });
+    const level = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.LEVEL,
+        values: customFields,
+        create: false,
+      },
+      (transaction) =>
+        transaction.level.update({
+          where: { id: levelId },
+          data: levelData,
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       level,
       CustomFieldEntity.LEVEL,
@@ -195,18 +200,20 @@ export class AcademicsService {
     );
     await this.campusAccessService.assertLevelAccess(currentUser, dto.levelId);
     const { customFields, ...classData } = dto;
-    const item = await this.prisma.academicClass.create({ data: classData });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByLevel(
         dto.levelId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.ACADEMICS,
-      entityType: CustomFieldEntity.CLASS,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.CLASS,
+        values: customFields,
+        create: true,
+      },
+      (transaction) => transaction.academicClass.create({ data: classData }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.CLASS,
@@ -289,21 +296,24 @@ export class AcademicsService {
     );
 
     const { customFields, ...classData } = dto;
-    const item = await this.prisma.academicClass.update({
-      where: { id: classId },
-      data: classData,
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByLevel(
         targetLevelId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.ACADEMICS,
-      entityType: CustomFieldEntity.CLASS,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.CLASS,
+        values: customFields,
+        create: false,
+      },
+      (transaction) =>
+        transaction.academicClass.update({
+          where: { id: classId },
+          data: classData,
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.CLASS,
@@ -348,18 +358,20 @@ export class AcademicsService {
     );
     await this.campusAccessService.assertClassAccess(currentUser, dto.classId);
     const { customFields, ...sectionData } = dto;
-    const item = await this.prisma.section.create({ data: sectionData });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByClass(
         dto.classId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.ACADEMICS,
-      entityType: CustomFieldEntity.SECTION,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.SECTION,
+        values: customFields,
+        create: true,
+      },
+      (transaction) => transaction.section.create({ data: sectionData }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.SECTION,
@@ -444,21 +456,24 @@ export class AcademicsService {
     );
 
     const { customFields, ...sectionData } = dto;
-    const item = await this.prisma.section.update({
-      where: { id: sectionId },
-      data: sectionData,
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByClass(
         targetClassId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.ACADEMICS,
-      entityType: CustomFieldEntity.SECTION,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.SECTION,
+        values: customFields,
+        create: false,
+      },
+      (transaction) =>
+        transaction.section.update({
+          where: { id: sectionId },
+          data: sectionData,
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.SECTION,
@@ -503,18 +518,20 @@ export class AcademicsService {
     );
     await this.campusAccessService.assertClassAccess(currentUser, dto.classId);
     const { customFields, ...subjectData } = dto;
-    const item = await this.prisma.subject.create({ data: subjectData });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByClass(
         dto.classId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.ACADEMICS,
-      entityType: CustomFieldEntity.SUBJECT,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.SUBJECT,
+        values: customFields,
+        create: true,
+      },
+      (transaction) => transaction.subject.create({ data: subjectData }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.SUBJECT,
@@ -599,21 +616,24 @@ export class AcademicsService {
     );
 
     const { customFields, ...subjectData } = dto;
-    const item = await this.prisma.subject.update({
-      where: { id: subjectId },
-      data: subjectData,
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByClass(
         targetClassId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.ACADEMICS,
-      entityType: CustomFieldEntity.SUBJECT,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: CustomFieldEntity.SUBJECT,
+        values: customFields,
+        create: false,
+      },
+      (transaction) =>
+        transaction.subject.update({
+          where: { id: subjectId },
+          data: subjectData,
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.SUBJECT,

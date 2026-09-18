@@ -88,7 +88,12 @@ describe('AcademicsService', () => {
   const entityCustomFieldsServiceMock = {
     attachToItems: jest.fn(),
     attachToItem: jest.fn(),
-    saveValues: jest.fn(),
+    saveRecord: jest.fn(
+      async (
+        _params: unknown,
+        mutation: (transaction: Prisma.TransactionClient) => Promise<unknown>,
+      ) => mutation(prismaMock as unknown as Prisma.TransactionClient),
+    ),
     resolveInstitutionIdByCampus: jest.fn(),
     resolveInstitutionIdByLevel: jest.fn(),
     resolveInstitutionIdByClass: jest.fn(),
@@ -230,13 +235,19 @@ describe('AcademicsService', () => {
         name: 'Senior Primary',
       },
     });
-    expect(entityCustomFieldsServiceMock.saveValues).toHaveBeenCalledWith({
-      institutionId: 'institution-1',
-      moduleKey: ModuleKey.ACADEMICS,
-      entityType: 'level',
-      entityId: 'level-1',
-      values: { shift: 'evening' },
-    });
+    expect(
+      entityCustomFieldsServiceMock.saveRecord.mock.calls.map(
+        ([params]) => params,
+      ),
+    ).toMatchObject([
+      {
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.ACADEMICS,
+        entityType: 'level',
+        create: false,
+        values: { shift: 'evening' },
+      },
+    ]);
     expect(result).toMatchObject({
       message: 'Level updated successfully',
       data: {

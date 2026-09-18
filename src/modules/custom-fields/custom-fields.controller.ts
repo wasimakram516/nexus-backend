@@ -16,8 +16,10 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CustomFieldsService } from './custom-fields.service';
+import { CUSTOM_FIELD_ENTITY_MODULES } from '../../common/utils/custom-field-entity.util';
 import {
   CreateCustomFieldDefinitionDto,
+  FormCustomFieldDefinitionsQueryDto,
   ListCustomFieldDefinitionsQueryDto,
   ListCustomFieldValuesQueryDto,
   UpdateCustomFieldDefinitionDto,
@@ -30,6 +32,29 @@ import {
 @Controller('custom-fields')
 export class CustomFieldsController {
   constructor(private readonly customFieldsService: CustomFieldsService) {}
+
+  /** Authorization is resolved against the requested record feature in the service. */
+  @Get('form-definitions')
+  @Version('1')
+  listFormDefinitions(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: FormCustomFieldDefinitionsQueryDto,
+  ) {
+    return this.customFieldsService.listFormDefinitions(currentUser, query);
+  }
+
+  /** Lists only entity/module combinations implemented by record services. */
+  @Get('entities')
+  @Version('1')
+  @RequirePermission('custom_fields', 'read')
+  listEntities() {
+    return {
+      message: 'Custom field entities retrieved successfully',
+      data: Object.entries(CUSTOM_FIELD_ENTITY_MODULES).map(
+        ([entityType, moduleKey]) => ({ entityType, moduleKey }),
+      ),
+    };
+  }
 
   @Post('definitions')
   @Version('1')
