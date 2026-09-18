@@ -5,6 +5,7 @@ import {
   AttendanceStatus,
   EnrollmentStatus,
   ModuleKey,
+  Prisma,
   UserRole,
 } from '../../prisma/client';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
@@ -14,6 +15,7 @@ import { ModuleAccessService } from '../../common/services/module-access.service
 import { RequestContextService } from '../../common/services/request-context.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinanceService } from './finance.service';
+import { PaymentMethod } from '../../common/enums/domain.enums';
 
 describe('FinanceService', () => {
   let service: FinanceService;
@@ -26,6 +28,7 @@ describe('FinanceService', () => {
   };
 
   const prismaMock = {
+    $transaction: jest.fn(),
     staffSalary: {
       findUnique: jest.fn(),
       findMany: jest.fn(),
@@ -55,8 +58,12 @@ describe('FinanceService', () => {
       delete: jest.fn(),
     },
     feePayment: {
+      findFirst: jest.fn(),
       findMany: jest.fn(),
       findUnique: jest.fn(),
+      aggregate: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
     },
     studentDiscount: {
       findMany: jest.fn(),
@@ -116,6 +123,12 @@ describe('FinanceService', () => {
     attachToItems: jest.fn(),
     attachToItem: jest.fn(),
     saveValues: jest.fn(),
+    saveRecord: jest.fn(
+      (
+        _params: unknown,
+        mutation: (transaction: Prisma.TransactionClient) => Promise<unknown>,
+      ) => mutation(prismaMock as unknown as Prisma.TransactionClient),
+    ),
     resolveInstitutionIdByCampus: jest.fn(),
     resolveInstitutionIdByFeeStructure: jest.fn(),
     resolveInstitutionIdByStudent: jest.fn(),
@@ -123,6 +136,11 @@ describe('FinanceService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    prismaMock.studentDiscount.findMany.mockResolvedValue([]);
+    prismaMock.$transaction.mockImplementation(
+      (callback: (transaction: Prisma.TransactionClient) => Promise<unknown>) =>
+        callback(prismaMock as unknown as Prisma.TransactionClient),
+    );
     // M2 Phase 3: default the withdrawal guard's institution lookup to "no
     // current academic year set" so it's a no-op unless a test explicitly
     // configures it — otherwise every pre-existing createFeeVoucher test
@@ -270,6 +288,13 @@ describe('FinanceService', () => {
         feeBreakdown: { tuition: 1000 },
       });
       prismaMock.feeVoucher.findFirst.mockResolvedValue(null);
+      prismaMock.feeVoucher.findUnique.mockResolvedValue({
+        finalAmountDue: new Prisma.Decimal(1000),
+        dueDate: new Date('2026-05-30'),
+      });
+      prismaMock.feePayment.aggregate.mockResolvedValue({
+        _sum: { paidAmount: null },
+      });
       campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
       campusAccessServiceMock.assertStudentAccess.mockResolvedValue('campus-1');
       entityCustomFieldsServiceMock.resolveInstitutionIdByFeeStructure.mockResolvedValue(
@@ -411,13 +436,19 @@ describe('FinanceService', () => {
         baseSalary: 25000,
       },
     });
-    expect(entityCustomFieldsServiceMock.saveValues).toHaveBeenCalledWith({
-      institutionId: 'institution-1',
-      moduleKey: ModuleKey.FINANCE,
-      entityType: 'staff_salary',
-      entityId: 'salary-1',
-      values: { payrollCode: 'B2' },
-    });
+    expect(
+      entityCustomFieldsServiceMock.saveRecord.mock.calls.map(
+        ([params]) => params,
+      ),
+    ).toMatchObject([
+      {
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.FINANCE,
+        entityType: 'staff_salary',
+        create: false,
+        values: { payrollCode: 'B2' },
+      },
+    ]);
     expect(result).toMatchObject({
       message: 'Salary updated successfully',
       data: {
@@ -522,6 +553,135 @@ describe('FinanceService', () => {
     });
   });
 
+  describe('fee payment settlement', () => {
+    beforeEach(() => {
+      prismaMock.feePayment.findFirst.mockResolvedValue(null);
+      prismaMock.feeVoucher.findUnique.mockResolvedValue({
+        id: 'voucher-1',
+        month: 9,
+        year: 2026,
+        finalAmountDue: new Prisma.Decimal(100),
+        dueDate: new Date('2040-10-01'),
+        student: {
+          campusId: 'campus-1',
+          campus: { institutionId: 'institution-1' },
+        },
+      });
+      prismaMock.feePayment.create.mockResolvedValue({ id: 'payment-1' });
+      entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+        (item: unknown) => Promise.resolve(item),
+      );
+    });
+    it.each([
+      [25, 'PARTIAL'],
+      [100, 'PAID'],
+    ] as const)(
+      'settles an active payment total of %s as %s',
+      async (paidAmount, status) => {
+        prismaMock.feePayment.aggregate.mockResolvedValue({
+          _sum: { paidAmount: new Prisma.Decimal(paidAmount) },
+        });
+        await service.createFeePayment(
+          {
+            requestKey: '11111111-1111-4111-8111-111111111111',
+            voucherId: 'voucher-1',
+            month: 9,
+            year: 2026,
+            paidAmount,
+            paymentMethod: PaymentMethod.CASH,
+            paymentDate: '2026-09-15',
+          },
+          accountantUser,
+        );
+        expect(prismaMock.feeVoucher.update).toHaveBeenCalledWith({
+          where: { id: 'voucher-1' },
+          data: { status },
+        });
+        expect(prismaMock.feePayment.aggregate).toHaveBeenCalledWith({
+          where: { voucherId: 'voucher-1', deletedAt: null },
+          _sum: { paidAmount: true },
+        });
+      },
+    );
+    it('replays an identical request without inserting another receipt and rejects changed details', async () => {
+      const request = {
+        requestKey: '11111111-1111-4111-8111-111111111111',
+        voucherId: 'voucher-1',
+        month: 9,
+        year: 2026,
+        paidAmount: 25,
+        paymentMethod: PaymentMethod.CASH,
+        paymentDate: '2026-09-15',
+      };
+      prismaMock.feePayment.aggregate.mockResolvedValue({
+        _sum: { paidAmount: new Prisma.Decimal(25) },
+      });
+      await service.createFeePayment(request, accountantUser);
+      const calls = prismaMock.feePayment.create.mock.calls as unknown as Array<
+        [{ data: { requestFingerprint: string } }]
+      >;
+      const created = calls[0][0];
+      prismaMock.feePayment.findFirst.mockResolvedValue({
+        id: 'payment-1',
+        requestFingerprint: created.data.requestFingerprint,
+        deletedAt: null,
+      });
+      await expect(
+        service.createFeePayment(request, accountantUser),
+      ).resolves.toMatchObject({ message: 'Fee payment already saved' });
+      expect(prismaMock.feePayment.create).toHaveBeenCalledTimes(1);
+      await expect(
+        service.createFeePayment(
+          { ...request, paidAmount: 30 },
+          accountantUser,
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prismaMock.feePayment.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects overpayment inside the transaction', async () => {
+      prismaMock.feePayment.aggregate.mockResolvedValue({
+        _sum: { paidAmount: new Prisma.Decimal(101) },
+      });
+      await expect(
+        service.createFeePayment(
+          {
+            requestKey: '11111111-1111-4111-8111-111111111111',
+            voucherId: 'voucher-1',
+            month: 9,
+            year: 2026,
+            paidAmount: 101,
+            paymentMethod: PaymentMethod.CASH,
+            paymentDate: '2026-09-15',
+          },
+          accountantUser,
+        ),
+      ).rejects.toThrow('exceeds');
+      expect(prismaMock.feeVoucher.update).not.toHaveBeenCalled();
+    });
+    it('reconciles remaining payments and overdue state after deletion', async () => {
+      prismaMock.feePayment.findUnique.mockResolvedValue({
+        id: 'payment-1',
+        voucherId: 'voucher-1',
+        month: 9,
+        year: 2026,
+        voucher: { student: { campusId: 'campus-1' } },
+      });
+      prismaMock.feeVoucher.findUnique.mockResolvedValue({
+        finalAmountDue: new Prisma.Decimal(100),
+        dueDate: new Date('2000-01-01'),
+      });
+      prismaMock.feePayment.aggregate.mockResolvedValue({
+        _sum: { paidAmount: new Prisma.Decimal(25) },
+      });
+      await service.deleteFeePayment(accountantUser, 'payment-1');
+      expect(prismaMock.feeVoucher.update).toHaveBeenCalledWith({
+        where: { id: 'voucher-1' },
+        data: { status: 'OVERDUE' },
+      });
+    });
+  });
+
   describe('paySalary — payroll correctness', () => {
     const salaryRecord = {
       id: 'salary-1',
@@ -558,6 +718,75 @@ describe('FinanceService', () => {
           Promise.resolve({ id: 'payment-1', ...data }),
       );
       prismaMock.salaryDeductionSummary.create.mockResolvedValue({});
+    });
+
+    it('rejects a negative payroll payment before writing payment or deduction summary', async () => {
+      prismaMock.salaryAdjustment.findMany.mockResolvedValue([
+        { adjustmentType: AdjustmentType.DEDUCTION, amount: 31000 },
+      ]);
+      prismaMock.attendance.findMany.mockResolvedValue([]);
+      await expect(
+        service.paySalary(
+          {
+            userId: 'teacher-1',
+            salaryId: 'salary-1',
+            campusId: 'campus-1',
+            month: 3,
+            year: 2026,
+          },
+          accountantUser,
+        ),
+      ).rejects.toThrow('negative salary');
+      expect(prismaMock.salaryPayment.create).not.toHaveBeenCalled();
+      expect(prismaMock.salaryDeductionSummary.create).not.toHaveBeenCalled();
+    });
+
+    it('keeps preview, payment and summary equal after rounding each deduction category', async () => {
+      prismaMock.staffSalary.findUnique.mockResolvedValue({
+        ...salaryRecord,
+        baseSalary: 100,
+      });
+      prismaMock.salaryAdjustment.findMany.mockResolvedValue([]);
+      prismaMock.salaryDeductionRule.findFirst.mockResolvedValue({
+        ...rule,
+        allowedAbsences: 0,
+        allowedLates: 0,
+        lateDeductionPercent: 100,
+      });
+      prismaMock.attendance.findMany.mockResolvedValue([
+        { status: AttendanceStatus.ABSENT, halfDay: false },
+        { status: AttendanceStatus.LATE, halfDay: false },
+      ]);
+      const selection = {
+        userId: 'teacher-1',
+        salaryId: 'salary-1',
+        campusId: 'campus-1',
+        month: 3,
+        year: 2026,
+      };
+      expect(
+        await service.previewSalary(selection, accountantUser),
+      ).toMatchObject({
+        data: {
+          absenceDeduction: 3.33,
+          lateDeduction: 3.33,
+          totalDeductions: 6.66,
+          finalSalary: 93.34,
+        },
+      });
+      expect(await service.paySalary(selection, accountantUser)).toMatchObject({
+        data: { totalDeductions: 6.66, finalSalaryPaid: 93.34 },
+      });
+      const summaryCalls = prismaMock.salaryDeductionSummary.create.mock
+        .calls as unknown as Array<[{ data: Record<string, unknown> }]>;
+      expect(summaryCalls[0][0]).toMatchObject({
+        data: {
+          absenceDeduction: 3.33,
+          lateDeduction: 3.33,
+          totalDeductions: 6.66,
+          finalSalaryPaid: 93.34,
+        },
+      });
     });
 
     it('only sums adjustments from the payroll month being paid (Bug #1)', async () => {

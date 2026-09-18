@@ -1,5 +1,18 @@
 import {
+  payrollMoney,
+  payrollSum,
+} from '../../common/utils/payroll-money.util';
+import {
+  calculateVoucherAmounts,
+  readVoucherAmounts,
+} from '../../common/utils/voucher-calculation.util';
+import {
+  assertVoucherIdentityUnchanged,
+  assertVoucherReceiptIdentity,
+} from '../../common/utils/voucher-identity.util';
+import {
   ConflictException,
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -8,6 +21,7 @@ import {
   AdjustmentType as PrismaAdjustmentType,
   AttendanceStatus as PrismaAttendanceStatus,
   EnrollmentStatus,
+  Prisma,
   UserRole,
 } from '../../prisma/client';
 import { CustomFieldEntity } from '../../common/constants/custom-field-entities.constants';
@@ -16,6 +30,13 @@ import { CampusAccessService } from '../../common/services/campus-access.service
 import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
+import { runAuditedTransaction } from '../../common/utils/transaction.util';
+import { requestFingerprint } from '../../common/utils/request-fingerprint.util';
+import { normalizeCustomFieldValues } from '../../common/utils/custom-field-values.util';
+import {
+  reconcileFeeVoucher,
+  attachFeeVoucherBalances,
+} from '../../common/utils/fee-settlement.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ModuleKey } from '../../prisma/client';
 import {
@@ -85,24 +106,27 @@ export class FinanceService {
       dto.campusId,
     );
     const { customFields, ...salaryData } = dto;
-    const item = await this.prisma.staffSalary.create({
-      data: {
-        ...salaryData,
-        joiningDate: new Date(dto.joiningDate),
-        effectiveDate: new Date(dto.effectiveDate),
-      },
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.STAFF_SALARY,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.STAFF_SALARY,
+        values: customFields,
+        create: true,
+      },
+      (transaction) =>
+        transaction.staffSalary.create({
+          data: {
+            ...salaryData,
+            joiningDate: new Date(dto.joiningDate),
+            effectiveDate: new Date(dto.effectiveDate),
+          },
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.STAFF_SALARY,
@@ -185,25 +209,30 @@ export class FinanceService {
     );
 
     const { customFields, joiningDate, effectiveDate, ...salaryData } = dto;
-    const item = await this.prisma.staffSalary.update({
-      where: { id: salaryId },
-      data: {
-        ...salaryData,
-        ...(joiningDate ? { joiningDate: new Date(joiningDate) } : {}),
-        ...(effectiveDate ? { effectiveDate: new Date(effectiveDate) } : {}),
-      },
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         targetCampusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.STAFF_SALARY,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.STAFF_SALARY,
+        values: customFields,
+        create: false,
+      },
+      (transaction) =>
+        transaction.staffSalary.update({
+          where: { id: salaryId },
+          data: {
+            ...salaryData,
+            ...(joiningDate ? { joiningDate: new Date(joiningDate) } : {}),
+            ...(effectiveDate
+              ? { effectiveDate: new Date(effectiveDate) }
+              : {}),
+          },
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.STAFF_SALARY,
@@ -278,20 +307,23 @@ export class FinanceService {
       );
     }
     const { customFields, ...ruleData } = dto;
-    const item = await this.prisma.salaryDeductionRule.create({
-      data: ruleData,
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.SALARY_DEDUCTION_RULE,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.SALARY_DEDUCTION_RULE,
+        values: customFields,
+        create: true,
+      },
+      (transaction) =>
+        transaction.salaryDeductionRule.create({
+          data: ruleData,
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.SALARY_DEDUCTION_RULE,
@@ -407,23 +439,26 @@ export class FinanceService {
     );
     await this.assertSalaryAccess(dto.salaryId, dto.campusId, dto.userId);
     const { customFields, ...adjustmentData } = dto;
-    const item = await this.prisma.salaryAdjustment.create({
-      data: {
-        ...adjustmentData,
-        adjustedBy: currentUser.sub,
-      },
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.SALARY_ADJUSTMENT,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.SALARY_ADJUSTMENT,
+        values: customFields,
+        create: true,
+      },
+      (transaction) =>
+        transaction.salaryAdjustment.create({
+          data: {
+            ...adjustmentData,
+            adjustedBy: currentUser.sub,
+          },
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.SALARY_ADJUSTMENT,
@@ -564,58 +599,86 @@ export class FinanceService {
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
-    const breakdown = await this.buildPayrollBreakdown(
-      dto.userId,
-      dto.campusId,
-      salary.role,
-      dto.month,
-      dto.year,
-      Number(salary.baseSalary),
-      institutionId,
+    const { customFields } = dto;
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.SALARY_PAYMENT,
+        values: customFields,
+        create: true,
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+      async (transaction) => {
+        const currentSalary = await transaction.staffSalary.findUnique({
+          where: { id: dto.salaryId },
+        });
+        if (!currentSalary)
+          throw new NotFoundException('Salary record not found.');
+        if (
+          currentSalary.campusId !== dto.campusId ||
+          currentSalary.userId !== dto.userId
+        ) {
+          throw new ForbiddenException(
+            'Salary payment must match the selected salary record and campus.',
+          );
+        }
+        const breakdown = await this.buildPayrollBreakdown(
+          dto.userId,
+          dto.campusId,
+          currentSalary.role,
+          dto.month,
+          dto.year,
+          Number(currentSalary.baseSalary),
+          institutionId,
+          transaction,
+        );
+        if (
+          !Number.isFinite(breakdown.finalSalary) ||
+          breakdown.finalSalary < 0
+        ) {
+          throw new BadRequestException(
+            'Payroll deductions cannot produce a negative salary payment.',
+          );
+        }
+        const paymentData = dto;
+        const item = await transaction.salaryPayment.create({
+          data: {
+            userId: paymentData.userId,
+            salaryId: paymentData.salaryId,
+            campusId: paymentData.campusId,
+            month: paymentData.month,
+            year: paymentData.year,
+            baseSalaryAtPayment: currentSalary.baseSalary,
+            totalDeductions: breakdown.totalDeductions,
+            totalBonuses: breakdown.bonuses,
+            finalSalaryPaid: breakdown.finalSalary,
+            paymentDate: new Date(),
+            paidBy: currentUser.sub,
+          },
+        });
+
+        await transaction.salaryDeductionSummary.create({
+          data: {
+            salaryPaymentId: item.id,
+            userId: dto.userId,
+            campusId: dto.campusId,
+            month: dto.month,
+            year: dto.year,
+            absenceDeduction: breakdown.absenceDeduction,
+            lateDeduction: breakdown.lateDeduction,
+            halfDayDeduction: breakdown.halfDayDeduction,
+            leaveDeduction: breakdown.leaveDeduction,
+            manualDeductions: breakdown.manualDeductions,
+            bonuses: breakdown.bonuses,
+            totalDeductions: breakdown.totalDeductions,
+            finalSalaryPaid: breakdown.finalSalary,
+          },
+        });
+
+        return item;
+      },
     );
-
-    const { customFields, ...paymentData } = dto;
-    const item = await this.prisma.salaryPayment.create({
-      data: {
-        userId: paymentData.userId,
-        salaryId: paymentData.salaryId,
-        campusId: paymentData.campusId,
-        month: paymentData.month,
-        year: paymentData.year,
-        baseSalaryAtPayment: salary.baseSalary,
-        totalDeductions: breakdown.totalDeductions,
-        totalBonuses: breakdown.bonuses,
-        finalSalaryPaid: breakdown.finalSalary,
-        paymentDate: new Date(),
-        paidBy: currentUser.sub,
-      },
-    });
-
-    await this.prisma.salaryDeductionSummary.create({
-      data: {
-        salaryPaymentId: item.id,
-        userId: dto.userId,
-        campusId: dto.campusId,
-        month: dto.month,
-        year: dto.year,
-        absenceDeduction: breakdown.absenceDeduction,
-        lateDeduction: breakdown.lateDeduction,
-        halfDayDeduction: breakdown.halfDayDeduction,
-        leaveDeduction: breakdown.leaveDeduction,
-        manualDeductions: breakdown.manualDeductions,
-        bonuses: breakdown.bonuses,
-        totalDeductions: breakdown.totalDeductions,
-        finalSalaryPaid: breakdown.finalSalary,
-      },
-    });
-
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.SALARY_PAYMENT,
-      entityId: item.id,
-      values: customFields,
-    });
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.SALARY_PAYMENT,
@@ -776,18 +839,20 @@ export class FinanceService {
       dto.campusId,
     );
     const { customFields, ...bankData } = dto;
-    const item = await this.prisma.bankAccount.create({ data: bankData });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.BANK_ACCOUNT,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.BANK_ACCOUNT,
+        values: customFields,
+        create: true,
+      },
+      (transaction) => transaction.bankAccount.create({ data: bankData }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.BANK_ACCOUNT,
@@ -872,21 +937,24 @@ export class FinanceService {
     );
 
     const { customFields, ...bankData } = dto;
-    const item = await this.prisma.bankAccount.update({
-      where: { id: bankAccountId },
-      data: bankData,
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         targetCampusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.BANK_ACCOUNT,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.BANK_ACCOUNT,
+        values: customFields,
+        create: false,
+      },
+      (transaction) =>
+        transaction.bankAccount.update({
+          where: { id: bankAccountId },
+          data: bankData,
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.BANK_ACCOUNT,
@@ -968,25 +1036,30 @@ export class FinanceService {
         'A fee structure already exists for this class and campus.',
       );
     }
+    if (dto.feeBreakdown !== undefined)
+      calculateVoucherAmounts(dto.feeBreakdown, [], 0, 0);
     const { customFields, ...structureData } = dto;
-    const item = await this.prisma.feeStructure.create({
-      data: {
-        classId: structureData.classId,
-        campusId: structureData.campusId,
-        feeBreakdown: structureData.feeBreakdown,
-      },
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.FEE_STRUCTURE,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.FEE_STRUCTURE,
+        values: customFields,
+        create: true,
+      },
+      (transaction) =>
+        transaction.feeStructure.create({
+          data: {
+            classId: structureData.classId,
+            campusId: structureData.campusId,
+            feeBreakdown: structureData.feeBreakdown,
+          },
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.FEE_STRUCTURE,
@@ -1085,22 +1158,27 @@ export class FinanceService {
     );
     this.assertSameCampus(targetCampusId, classCampusId, 'class');
 
+    if (dto.feeBreakdown !== undefined)
+      calculateVoucherAmounts(dto.feeBreakdown, [], 0, 0);
     const { customFields, ...structureData } = dto;
-    const item = await this.prisma.feeStructure.update({
-      where: { id: feeStructureId },
-      data: structureData,
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         targetCampusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.FEE_STRUCTURE,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.FEE_STRUCTURE,
+        values: customFields,
+        create: false,
+      },
+      (transaction) =>
+        transaction.feeStructure.update({
+          where: { id: feeStructureId },
+          data: structureData,
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.FEE_STRUCTURE,
@@ -1164,23 +1242,26 @@ export class FinanceService {
       dto.studentId,
     );
     const { customFields, ...discountData } = dto;
-    const item = await this.prisma.studentDiscount.create({
-      data: {
-        ...discountData,
-        approvedBy: currentUser.sub,
-      },
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByStudent(
         dto.studentId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.STUDENT_DISCOUNT,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.STUDENT_DISCOUNT,
+        values: customFields,
+        create: true,
+      },
+      (transaction) =>
+        transaction.studentDiscount.create({
+          data: {
+            ...discountData,
+            approvedBy: currentUser.sub,
+          },
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.STUDENT_DISCOUNT,
@@ -1308,20 +1389,23 @@ export class FinanceService {
       this.assertSameCampus(dto.campusId, classCampusId, 'class');
     }
     const { customFields, ...fineRuleData } = dto;
-    const item = await this.prisma.studentFineRule.create({
-      data: fineRuleData,
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.STUDENT_FINE_RULE,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.STUDENT_FINE_RULE,
+        values: customFields,
+        create: true,
+      },
+      (transaction) =>
+        transaction.studentFineRule.create({
+          data: fineRuleData,
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.STUDENT_FINE_RULE,
@@ -1456,23 +1540,26 @@ export class FinanceService {
       );
     }
     const { customFields, ...fineData } = dto;
-    const item = await this.prisma.studentFine.create({
-      data: {
-        ...fineData,
-        fineStatus: 'PENDING',
-      },
-    });
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.STUDENT_FINE,
-      entityId: item.id,
-      values: customFields,
-    });
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.STUDENT_FINE,
+        values: customFields,
+        create: true,
+      },
+      (transaction) =>
+        transaction.studentFine.create({
+          data: {
+            ...fineData,
+            fineStatus: 'PENDING',
+          },
+        }),
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.STUDENT_FINE,
@@ -1671,46 +1758,41 @@ export class FinanceService {
       );
     }
 
-    const discount = await this.prisma.studentDiscount.findFirst({
-      where: { studentId: dto.studentId },
-      orderBy: { createdAt: 'desc' },
-    });
-    const fine = await this.prisma.studentFine.findFirst({
-      where: { studentId: dto.studentId, month: dto.month, year: dto.year },
-      orderBy: { createdAt: 'desc' },
-    });
-    const breakdown = structure.feeBreakdown as Record<string, number>;
-    const total = Object.values(breakdown).reduce(
-      (sum, value) => sum + Number(value),
-      0,
-    );
-    const discountAmount = Number(discount?.discountAmount ?? 0);
-    const fineAmount = Number(fine?.totalFineAmount ?? 0);
-    const lateFeeFine = Number(dto.lateFeeFine ?? 0);
     const { customFields, ...voucherData } = dto;
-    const item = await this.prisma.feeVoucher.create({
-      data: {
-        studentId: voucherData.studentId,
-        feeStructureId: voucherData.feeStructureId,
-        month: voucherData.month,
-        year: voucherData.year,
-        feeBreakdown: breakdown,
-        discountAmount,
-        fineAmount,
-        lateFeeFine,
-        finalAmountDue: total - discountAmount + fineAmount + lateFeeFine,
-        bankId: voucherData.bankId,
-        dueDate: new Date(voucherData.dueDate),
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId: studentInstitutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.FEE_VOUCHER,
+        values: customFields,
+        create: true,
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       },
-    });
-    const institutionId = studentInstitutionId;
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.FEE_VOUCHER,
-      entityId: item.id,
-      values: customFields,
-    });
+      async (transaction) => {
+        const amounts = await readVoucherAmounts(transaction, {
+          studentId: dto.studentId,
+          feeStructureId: dto.feeStructureId,
+          campusId: student.campusId,
+          month: dto.month,
+          year: dto.year,
+          lateFeeFine: dto.lateFeeFine ?? 0,
+          bankId: dto.bankId,
+        });
+        const item = await transaction.feeVoucher.create({
+          data: {
+            studentId: voucherData.studentId,
+            feeStructureId: voucherData.feeStructureId,
+            month: voucherData.month,
+            year: voucherData.year,
+            ...amounts,
+            bankId: voucherData.bankId,
+            dueDate: new Date(voucherData.dueDate),
+          },
+        });
+        const settlement = await reconcileFeeVoucher(transaction, item.id);
+        return { ...item, ...settlement };
+      },
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.FEE_VOUCHER,
@@ -1747,7 +1829,7 @@ export class FinanceService {
       orderBy: { createdAt: 'desc' },
     });
     const data = await this.entityCustomFieldsService.attachToItems(
-      items,
+      await attachFeeVoucherBalances(this.prisma, items),
       CustomFieldEntity.FEE_VOUCHER,
     );
     return { message: 'Fee vouchers retrieved successfully', data };
@@ -1779,7 +1861,7 @@ export class FinanceService {
       item.student.campusId,
     );
     const data = await this.entityCustomFieldsService.attachToItem(
-      item,
+      (await attachFeeVoucherBalances(this.prisma, [item]))[0],
       CustomFieldEntity.FEE_VOUCHER,
     );
     return { message: 'Fee voucher retrieved successfully', data };
@@ -1851,45 +1933,54 @@ export class FinanceService {
       'fee structure',
     );
 
-    const discount = await this.prisma.studentDiscount.findFirst({
-      where: { studentId },
-      orderBy: { createdAt: 'desc' },
-    });
-    const targetMonth = dto.month ?? existing.month;
-    const targetYear = dto.year ?? existing.year;
-    const fine = await this.prisma.studentFine.findFirst({
-      where: { studentId, month: targetMonth, year: targetYear },
-      orderBy: { createdAt: 'desc' },
-    });
-    const breakdown = structure.feeBreakdown as Record<string, number>;
-    const total = Object.values(breakdown).reduce(
-      (sum, value) => sum + Number(value),
-      0,
-    );
-    const discountAmount = Number(discount?.discountAmount ?? 0);
-    const fineAmount = Number(fine?.totalFineAmount ?? 0);
-    const lateFeeFine = Number(dto.lateFeeFine ?? existing.lateFeeFine ?? 0);
-
     const { customFields, dueDate, ...voucherData } = dto;
-    const item = await this.prisma.feeVoucher.update({
-      where: { id: voucherId },
-      data: {
-        ...voucherData,
-        feeBreakdown: breakdown,
-        discountAmount,
-        fineAmount,
-        lateFeeFine,
-        finalAmountDue: total - discountAmount + fineAmount + lateFeeFine,
-        ...(dueDate ? { dueDate: new Date(dueDate) } : {}),
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId: studentInstitutionId,
+        moduleKey: ModuleKey.FINANCE,
+        entityType: CustomFieldEntity.FEE_VOUCHER,
+        values: customFields,
+        create: false,
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       },
-    });
-    await this.entityCustomFieldsService.saveValues({
-      institutionId: studentInstitutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.FEE_VOUCHER,
-      entityId: item.id,
-      values: customFields,
-    });
+      async (transaction) => {
+        await assertVoucherIdentityUnchanged(transaction, voucherId, {
+          studentId: existing.studentId,
+          feeStructureId: existing.feeStructureId,
+          month: existing.month,
+          year: existing.year,
+        });
+        await assertVoucherReceiptIdentity(
+          transaction,
+          voucherId,
+          existing,
+          dto,
+        );
+        const currentVoucher = await transaction.feeVoucher.findUniqueOrThrow({
+          where: { id: voucherId },
+          select: { lateFeeFine: true, bankId: true },
+        });
+        const amounts = await readVoucherAmounts(transaction, {
+          studentId,
+          feeStructureId,
+          campusId: student.campusId,
+          month: dto.month ?? existing.month,
+          year: dto.year ?? existing.year,
+          lateFeeFine: dto.lateFeeFine ?? currentVoucher.lateFeeFine,
+          bankId: dto.bankId === undefined ? currentVoucher.bankId : dto.bankId,
+        });
+        const item = await transaction.feeVoucher.update({
+          where: { id: voucherId },
+          data: {
+            ...voucherData,
+            ...amounts,
+            ...(dueDate ? { dueDate: new Date(dueDate) } : {}),
+          },
+        });
+        const settlement = await reconcileFeeVoucher(transaction, item.id);
+        return { ...item, ...settlement };
+      },
+    );
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.FEE_VOUCHER,
@@ -1958,6 +2049,10 @@ export class FinanceService {
   }
 
   async createFeePayment(dto: CreateFeePaymentDto, currentUser: CurrentUser) {
+    if (!dto.requestKey)
+      throw new BadRequestException(
+        'A payment request key is required for safe retries.',
+      );
     await this.moduleAccessService.assertModuleEnabledForUser(
       currentUser,
       ModuleKey.FINANCE,
@@ -1966,6 +2061,8 @@ export class FinanceService {
       where: { id: dto.voucherId },
       select: {
         id: true,
+        studentId: true,
+        feeStructureId: true,
         month: true,
         year: true,
         student: {
@@ -1993,33 +2090,91 @@ export class FinanceService {
       );
     }
 
-    const { customFields, ...paymentData } = dto;
-    const item = await this.prisma.feePayment.create({
-      data: {
-        voucherId: paymentData.voucherId,
-        month: paymentData.month,
-        year: paymentData.year,
-        paidAmount: paymentData.paidAmount,
-        paymentMethod: paymentData.paymentMethod,
-        paymentDate: new Date(paymentData.paymentDate),
-        receivedBy: currentUser.sub,
-      },
-    });
-    await this.prisma.feeVoucher.update({
-      where: { id: dto.voucherId },
-      data: { status: 'PAID' },
-    });
-    const institutionId = voucher?.student.campus.institutionId;
-    if (!institutionId) {
+    const institutionId = voucher.student.campus.institutionId;
+    if (!institutionId)
       throw new NotFoundException('Institution not found for fee payment.');
+    if (
+      !Number.isFinite(dto.paidAmount) ||
+      dto.paidAmount <= 0 ||
+      new Prisma.Decimal(dto.paidAmount).decimalPlaces() > 2
+    ) {
+      throw new BadRequestException(
+        'Payment amount must be positive with at most two decimal places.',
+      );
     }
-    await this.entityCustomFieldsService.saveValues({
-      institutionId,
-      moduleKey: ModuleKey.FINANCE,
-      entityType: CustomFieldEntity.FEE_PAYMENT,
-      entityId: item.id,
-      values: customFields,
+    const { customFields, ...paymentData } = dto;
+    const fingerprint = requestFingerprint({
+      voucherId: dto.voucherId,
+      month: dto.month,
+      year: dto.year,
+      paidAmount: new Prisma.Decimal(dto.paidAmount).toFixed(2),
+      paymentMethod: dto.paymentMethod,
+      paymentDate: new Date(dto.paymentDate).toISOString(),
+      customFields: normalizeCustomFieldValues(customFields),
     });
+    const replay = await this.resolveFeePaymentReplay(
+      dto.requestKey,
+      fingerprint,
+    );
+    if (replay) {
+      return {
+        message: 'Fee payment already saved',
+        data: await this.entityCustomFieldsService.attachToItem(
+          replay,
+          CustomFieldEntity.FEE_PAYMENT,
+        ),
+      };
+    }
+    let item: Awaited<
+      ReturnType<Prisma.TransactionClient['feePayment']['create']>
+    >;
+    try {
+      item = await this.entityCustomFieldsService.saveRecord(
+        {
+          institutionId,
+          moduleKey: ModuleKey.FINANCE,
+          entityType: CustomFieldEntity.FEE_PAYMENT,
+          values: customFields,
+          create: true,
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        },
+        async (transaction) => {
+          await assertVoucherIdentityUnchanged(transaction, dto.voucherId, {
+            studentId: voucher.studentId,
+            feeStructureId: voucher.feeStructureId,
+            month: voucher.month,
+            year: voucher.year,
+          });
+          const item = await transaction.feePayment.create({
+            data: {
+              requestKey: dto.requestKey,
+              requestFingerprint: fingerprint,
+              voucherId: paymentData.voucherId,
+              month: paymentData.month,
+              year: paymentData.year,
+              paidAmount: paymentData.paidAmount,
+              paymentMethod: paymentData.paymentMethod,
+              paymentDate: new Date(paymentData.paymentDate),
+              receivedBy: currentUser.sub,
+            },
+          });
+          await reconcileFeeVoucher(transaction, dto.voucherId);
+          return item;
+        },
+      );
+    } catch (error) {
+      if (
+        !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+        error.code !== 'P2002'
+      )
+        throw error;
+      const concurrentReplay = await this.resolveFeePaymentReplay(
+        dto.requestKey,
+        fingerprint,
+      );
+      if (!concurrentReplay) throw error;
+      item = concurrentReplay;
+    }
     const data = await this.entityCustomFieldsService.attachToItem(
       item,
       CustomFieldEntity.FEE_PAYMENT,
@@ -2148,24 +2303,23 @@ export class FinanceService {
       currentUser,
       existing.voucher.student.campusId,
     );
-    await this.prisma.feePayment.update({
-      where: { id: paymentId },
-      data: {
-        deletedAt: new Date(),
-        deletedBy: currentUser.sub,
-        deleteReason: reason ?? null,
-        updatedBy: currentUser.sub,
+    await runAuditedTransaction(
+      this.prisma,
+      this.requestContext,
+      async (transaction) => {
+        await transaction.feePayment.update({
+          where: { id: paymentId },
+          data: {
+            deletedAt: new Date(),
+            deletedBy: currentUser.sub,
+            deleteReason: reason ?? null,
+            updatedBy: currentUser.sub,
+          },
+        });
+        await reconcileFeeVoucher(transaction, existing.voucherId, false);
       },
-    });
-    const remainingPayment = await this.prisma.feePayment.findFirst({
-      where: { voucherId: existing.voucherId },
-    });
-    if (!remainingPayment) {
-      await this.prisma.feeVoucher.update({
-        where: { id: existing.voucherId },
-        data: { status: 'PENDING' },
-      });
-    }
+      Prisma.TransactionIsolationLevel.Serializable,
+    );
 
     return {
       message: 'Fee payment moved to recycle bin successfully',
@@ -2176,6 +2330,23 @@ export class FinanceService {
         year: existing.year,
       },
     };
+  }
+
+  /** Replays only an identical active request; a removed receipt never authorizes a duplicate charge. */
+  private async resolveFeePaymentReplay(
+    requestKey: string,
+    fingerprint: string,
+  ) {
+    const payment = await this.prisma.feePayment.findFirst({
+      where: { requestKey, deletedAt: undefined },
+    });
+    if (!payment) return null;
+    if (payment.deletedAt || payment.requestFingerprint !== fingerprint) {
+      throw new ConflictException(
+        'This payment request was already used. Reload payments before creating another receipt.',
+      );
+    }
+    return payment;
   }
 
   private async assertSalaryAccess(
@@ -2202,8 +2373,11 @@ export class FinanceService {
     }
   }
 
-  private async resolvePerDayBasis(institutionId: string) {
-    const setting = await this.prisma.institutionSetting.findUnique({
+  private async resolvePerDayBasis(
+    institutionId: string,
+    client: Prisma.TransactionClient = this.prisma,
+  ) {
+    const setting = await client.institutionSetting.findUnique({
       where: {
         institutionId_key_activeScopeKey: {
           institutionId,
@@ -2245,27 +2419,34 @@ export class FinanceService {
     year: number,
     baseSalary: number,
     institutionId: string,
+    client: Prisma.TransactionClient = this.prisma,
   ): Promise<PayrollBreakdown> {
-    const adjustments = await this.prisma.salaryAdjustment.findMany({
+    const adjustments = await client.salaryAdjustment.findMany({
       where: { userId, campusId, month, year },
     });
-    const bonuses = adjustments
-      .filter((item) => item.adjustmentType === PrismaAdjustmentType.BONUS)
-      .reduce((sum, item) => sum + Number(item.amount), 0);
-    const manualDeductions = adjustments
-      .filter((item) => item.adjustmentType === PrismaAdjustmentType.DEDUCTION)
-      .reduce((sum, item) => sum + Number(item.amount), 0);
+    const bonuses = payrollSum(
+      adjustments
+        .filter((item) => item.adjustmentType === PrismaAdjustmentType.BONUS)
+        .map((item) => item.amount),
+    );
+    const manualDeductions = payrollSum(
+      adjustments
+        .filter(
+          (item) => item.adjustmentType === PrismaAdjustmentType.DEDUCTION,
+        )
+        .map((item) => item.amount),
+    );
 
-    const rule = await this.prisma.salaryDeductionRule.findFirst({
+    const rule = await client.salaryDeductionRule.findFirst({
       where: { campusId, role, deletedAt: null },
     });
 
-    const perDayBasis = await this.resolvePerDayBasis(institutionId);
+    const perDayBasis = await this.resolvePerDayBasis(institutionId, client);
     const dailyRate = baseSalary / perDayBasis;
 
     const periodStart = new Date(Date.UTC(year, month - 1, 1));
     const periodEnd = new Date(Date.UTC(year, month, 1));
-    const attendanceRecords = await this.prisma.attendance.findMany({
+    const attendanceRecords = await client.attendance.findMany({
       where: {
         userId,
         campusId,
@@ -2292,8 +2473,19 @@ export class FinanceService {
     // No configured rule for this campus/role means the institution hasn't
     // opted into attendance-based deductions yet — leave them at zero
     // rather than guessing at thresholds.
-    const excessDeduction = (count: number, allowed: number, percent: number) =>
-      Math.max(0, count - allowed) * dailyRate * (percent / 100);
+    /** Rounds the category total, retaining full precision in the daily rate calculation. */
+    const excessDeduction = (
+      count: number,
+      allowed: number,
+      percent: number,
+    ): number =>
+      payrollMoney(
+        new Prisma.Decimal(baseSalary)
+          .div(perDayBasis)
+          .times(Math.max(0, count - allowed))
+          .times(percent)
+          .div(100),
+      );
 
     const absenceDeduction = rule
       ? excessDeduction(
@@ -2324,10 +2516,14 @@ export class FinanceService {
         )
       : 0;
 
-    const attendanceDeductions =
-      absenceDeduction + lateDeduction + halfDayDeduction + leaveDeduction;
-    const totalDeductions = manualDeductions + attendanceDeductions;
-    const finalSalary = baseSalary + bonuses - totalDeductions;
+    const totalDeductions = payrollSum([
+      manualDeductions,
+      absenceDeduction,
+      lateDeduction,
+      halfDayDeduction,
+      leaveDeduction,
+    ]);
+    const finalSalary = payrollSum([baseSalary, bonuses, -totalDeductions]);
 
     return {
       baseSalary,

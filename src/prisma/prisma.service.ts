@@ -170,10 +170,12 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
             // before the mutation runs, since the pre-image is gone after.
             const willAudit =
               !shouldSkipAudit && !AUTO_AUDIT_EXCLUDED_MODELS.has(model);
+            const auditClient =
+              contextService.get('transactionClient') ?? service;
             const beforeSnapshot =
               willAudit && (operation === 'update' || operation === 'delete')
                 ? await PrismaService.fetchPreImage(
-                    service,
+                    auditClient,
                     contextService,
                     model,
                     nextArgs.where,
@@ -202,7 +204,7 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
             );
             const entityId = PrismaService.extractEntityId(result);
             const institutionId = await PrismaService.resolveAuditInstitutionId(
-              service,
+              auditClient,
               contextService,
               nextArgs,
               result,
@@ -220,7 +222,7 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
               : undefined;
 
             await contextService.runWith({ skipAudit: true }, async () => {
-              await service.auditLog.create({
+              await auditClient.auditLog.create({
                 data: {
                   userId: actor?.sub ?? null,
                   institutionId,
@@ -618,7 +620,7 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
   }
 
   private static async resolveAuditInstitutionId(
-    service: PrismaService,
+    service: Prisma.TransactionClient,
     contextService: RequestContextService,
     args: QueryArgs,
     result: unknown,
@@ -860,7 +862,7 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
    * miss should never take down the actual mutation it's describing.
    */
   private static async fetchPreImage(
-    service: PrismaService,
+    service: Prisma.TransactionClient,
     contextService: RequestContextService,
     model: string,
     where: unknown,

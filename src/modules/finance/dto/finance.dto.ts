@@ -25,7 +25,11 @@ export class CreateSalaryDto extends CustomFieldPayloadDto {
   @ApiProperty() @IsUUID() campusId!: string;
   @ApiProperty({ enum: UserRole }) @IsEnum(UserRole) role!: UserRole;
   @ApiProperty() @IsDateString() joiningDate!: string;
-  @ApiProperty() @IsNumber() baseSalary!: number;
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(99999999.99)
+  baseSalary!: number;
   @ApiProperty() @IsDateString() effectiveDate!: string;
   @ApiPropertyOptional({ enum: SalaryStatus })
   @IsOptional()
@@ -38,14 +42,30 @@ export class UpdateSalaryDto extends PartialType(CreateSalaryDto) {}
 export class CreateDeductionRuleDto extends CustomFieldPayloadDto {
   @ApiProperty() @IsUUID() campusId!: string;
   @ApiProperty({ enum: UserRole }) @IsEnum(UserRole) role!: UserRole;
-  @ApiProperty() @IsNumber() allowedAbsences!: number;
-  @ApiProperty() @IsNumber() absenceDeductionPercent!: number;
-  @ApiProperty() @IsNumber() allowedLates!: number;
-  @ApiProperty() @IsNumber() lateDeductionPercent!: number;
-  @ApiProperty() @IsNumber() allowedHalfDays!: number;
-  @ApiProperty() @IsNumber() halfDayDeductionPercent!: number;
-  @ApiProperty() @IsNumber() allowedLeaves!: number;
-  @ApiProperty() @IsNumber() leaveDeductionPercent!: number;
+  @ApiProperty() @IsInt() @Min(0) allowedAbsences!: number;
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  absenceDeductionPercent!: number;
+  @ApiProperty() @IsInt() @Min(0) allowedLates!: number;
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  lateDeductionPercent!: number;
+  @ApiProperty() @IsInt() @Min(0) allowedHalfDays!: number;
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  halfDayDeductionPercent!: number;
+  @ApiProperty() @IsInt() @Min(0) allowedLeaves!: number;
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  leaveDeductionPercent!: number;
 }
 
 export class SalaryAdjustmentDto extends CustomFieldPayloadDto {
@@ -55,7 +75,11 @@ export class SalaryAdjustmentDto extends CustomFieldPayloadDto {
   @ApiProperty({ enum: AdjustmentType })
   @IsEnum(AdjustmentType)
   adjustmentType!: AdjustmentType;
-  @ApiProperty() @IsNumber() amount!: number;
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(99999999.99)
+  amount!: number;
   @ApiProperty({
     description: 'Payroll month (1-12) this adjustment applies to.',
   })
@@ -82,8 +106,8 @@ export class SalaryPaymentDto extends CustomFieldPayloadDto {
   @ApiProperty() @IsUUID() userId!: string;
   @ApiProperty() @IsUUID() salaryId!: string;
   @ApiProperty() @IsUUID() campusId!: string;
-  @ApiProperty() @IsNumber() month!: number;
-  @ApiProperty() @IsNumber() year!: number;
+  @ApiProperty() @IsInt() @Min(1) @Max(12) month!: number;
+  @ApiProperty() @IsInt() @Min(2000) year!: number;
 }
 
 export class CreateBankAccountDto extends CustomFieldPayloadDto {
@@ -110,49 +134,88 @@ export class CreateStudentDiscountDto extends CustomFieldPayloadDto {
   @ApiProperty({ enum: DiscountType })
   @IsEnum(DiscountType)
   discountType!: DiscountType;
-  @ApiProperty() @IsNumber() discountAmount!: number;
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(99999999.99)
+  discountAmount!: number;
   @ApiPropertyOptional() @IsOptional() @IsString() remarks?: string;
 }
 
 export class CreateStudentFineRuleDto extends CustomFieldPayloadDto {
   @ApiProperty() @IsUUID() campusId!: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() classId?: string;
-  @ApiProperty() @IsNumber() allowedAbsences!: number;
-  @ApiProperty() @IsNumber() absenceFineAmount!: number;
-  @ApiProperty() @IsNumber() allowedLates!: number;
-  @ApiProperty() @IsNumber() lateFineAmount!: number;
-  @ApiProperty() @IsNumber() allowedHalfDays!: number;
-  @ApiProperty() @IsNumber() halfDayFineAmount!: number;
-  @ApiProperty() @IsNumber() allowedLeaves!: number;
-  @ApiProperty() @IsNumber() leaveFineAmount!: number;
+  @ApiProperty() @IsInt() @Min(0) allowedAbsences!: number;
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(99999999.99)
+  absenceFineAmount!: number;
+  @ApiProperty() @IsInt() @Min(0) allowedLates!: number;
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(99999999.99)
+  lateFineAmount!: number;
+  @ApiProperty() @IsInt() @Min(0) allowedHalfDays!: number;
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(99999999.99)
+  halfDayFineAmount!: number;
+  @ApiProperty() @IsInt() @Min(0) allowedLeaves!: number;
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(99999999.99)
+  leaveFineAmount!: number;
 }
 
 export class CreateStudentFineDto extends CustomFieldPayloadDto {
   @ApiProperty() @IsUUID() studentId!: string;
   @ApiProperty() @IsUUID() campusId!: string;
-  @ApiProperty() @IsNumber() month!: number;
-  @ApiProperty() @IsNumber() year!: number;
-  @ApiProperty() @IsNumber() totalFineAmount!: number;
+  @ApiProperty() @IsInt() @Min(1) @Max(12) month!: number;
+  @ApiProperty() @IsInt() @Min(2000) year!: number;
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(99999999.99)
+  totalFineAmount!: number;
   @ApiPropertyOptional() @IsOptional() @IsString() fineReason?: string;
 }
 
 export class CreateFeeVoucherDto extends CustomFieldPayloadDto {
   @ApiProperty() @IsUUID() studentId!: string;
   @ApiProperty() @IsUUID() feeStructureId!: string;
-  @ApiProperty() @IsNumber() month!: number;
-  @ApiProperty() @IsNumber() year!: number;
+  @ApiProperty() @IsInt() @Min(1) @Max(12) month!: number;
+  @ApiProperty() @IsInt() @Min(2000) year!: number;
   @ApiProperty() @IsDateString() dueDate!: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() bankId?: string;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() lateFeeFine?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(99999999.99)
+  lateFeeFine?: number;
 }
 
 export class UpdateFeeVoucherDto extends PartialType(CreateFeeVoucherDto) {}
 
 export class CreateFeePaymentDto extends CustomFieldPayloadDto {
+  @ApiProperty({
+    description:
+      'Stable UUID retained across retries of the same payment request.',
+  })
+  @IsUUID()
+  requestKey!: string;
   @ApiProperty() @IsUUID() voucherId!: string;
-  @ApiProperty() @IsNumber() month!: number;
-  @ApiProperty() @IsNumber() year!: number;
-  @ApiProperty() @IsNumber() paidAmount!: number;
+  @ApiProperty() @IsInt() @Min(1) @Max(12) month!: number;
+  @ApiProperty() @IsInt() @Min(2000) year!: number;
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  @Max(99999999.99)
+  paidAmount!: number;
   @ApiProperty({ enum: PaymentMethod })
   @IsEnum(PaymentMethod)
   paymentMethod!: PaymentMethod;

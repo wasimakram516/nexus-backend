@@ -103,6 +103,7 @@ enum FineStatus {
 
 enum VoucherStatus {
   PENDING
+  PARTIAL
   PAID
   OVERDUE
 }
@@ -214,23 +215,23 @@ model User {
 }
 
 model Institution {
-  id                     String                    @id @default(uuid()) @db.Uuid
+  id                     String                      @id @default(uuid()) @db.Uuid
   name                   String
   slug                   String
-  status                 InstitutionStatus         @default(ACTIVE)
-  deploymentMode         DeploymentMode            @default(SHARED_HOSTED) @map("deployment_mode")
-  primaryDomain          String?                   @map("primary_domain")
-  contactEmail           String?                   @map("contact_email")
-  contactPhone           String?                   @map("contact_phone")
+  status                 InstitutionStatus           @default(ACTIVE)
+  deploymentMode         DeploymentMode              @default(SHARED_HOSTED) @map("deployment_mode")
+  primaryDomain          String?                     @map("primary_domain")
+  contactEmail           String?                     @map("contact_email")
+  contactPhone           String?                     @map("contact_phone")
   notes                  String?
-  createdBy              String?                   @map("created_by") @db.Uuid
-  updatedBy              String?                   @map("updated_by") @db.Uuid
-  deletedAt              DateTime?                 @map("deleted_at") @db.Timestamptz(3)
-  deletedBy              String?                   @map("deleted_by") @db.Uuid
-  deleteReason           String?                   @map("delete_reason")
-  activeScopeKey         String                    @default("ACTIVE") @map("active_scope_key")
-  createdAt              DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt              DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy              String?                     @map("created_by") @db.Uuid
+  updatedBy              String?                     @map("updated_by") @db.Uuid
+  deletedAt              DateTime?                   @map("deleted_at") @db.Timestamptz(3)
+  deletedBy              String?                     @map("deleted_by") @db.Uuid
+  deleteReason           String?                     @map("delete_reason")
+  activeScopeKey         String                      @default("ACTIVE") @map("active_scope_key")
+  createdAt              DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
   users                  User[]
   campuses               Campus[]
   branding               InstitutionBranding?
@@ -246,14 +247,26 @@ model Institution {
   // M2 Phase 1 (decision #9): single pointer FK to the institution's active
   // session, matching the existing User.roleId -> Role "pointer to the one
   // active association" pattern rather than a boolean-flag-plus-index.
-  currentAcademicYearId  String?                   @map("current_academic_year_id") @db.Uuid
-  currentAcademicYear    AcademicYear?             @relation("InstitutionCurrentAcademicYear", fields: [currentAcademicYearId], references: [id], onDelete: SetNull)
+  currentAcademicYearId  String?                     @map("current_academic_year_id") @db.Uuid
+  currentAcademicYear    AcademicYear?               @relation("InstitutionCurrentAcademicYear", fields: [currentAcademicYearId], references: [id], onDelete: SetNull)
   // M2 Phase 3 (decision #25): Student.institutionId is now denormalized
   // directly onto Student (see below) so regNo uniqueness can be scoped per
   // institution at the DB level.
   students               Student[]
   // M3 (Notices track, decision #24).
   notices                Notice[]
+  // P0-7: IANA timezone (e.g. "Asia/Karachi"). Required — every institution
+  // must have one, existing rows backfilled (see the
+  // add_institution_campus_timezone_and_working_calendar migration).
+  // Campuses without their own override resolve through this field via
+  // TimezoneResolverService.
+  timezone               String                      @default("Asia/Karachi") @map("timezone")
+  // P0-6: institution-wide weekly working-days pattern (nullable — no row
+  // means "not configured yet," which WorkingDayResolverService resolves as
+  // fail-closed, i.e. zero working days, per the locked product decision).
+  workingCalendar        InstitutionWorkingCalendar?
+  // P0-6: one-off declared closures layered on top of the weekly pattern.
+  closureDates           InstitutionClosureDate[]
 
   @@unique([slug, activeScopeKey], map: "institution_slug_active_scope_unique")
   @@index([status])
@@ -358,6 +371,14 @@ model Campus {
   notices               Notice[]
   // M3 (Timetable M1 track, decision #26).
   periodSlots           PeriodSlot[]
+  // P0-7: optional per-campus override for institutions with campuses in a
+  // different city/timezone than the institution default. Null = "use
+  // Institution.timezone" (the common case). Validated as a real IANA zone
+  // at write time by TimezoneResolverService.assertValidTimezone.
+  timezone              String?                      @map("campus_timezone")
+  // P0-6: campus-specific closures layered on top of the institution-wide
+  // closure set.
+  closureDates          InstitutionClosureDate[]
 
   @@index([institutionId])
   @@map("campuses")
@@ -407,6 +428,85 @@ model InstitutionSetting {
 
   @@unique([institutionId, key, activeScopeKey], map: "institution_setting_unique")
   @@map("institution_settings")
+}
+
+/// P0-6: institution-wide weekly working-days pattern. One row per
+/// institution (not per campus — a campus-specific override, if ever
+/// needed, is deferred; nothing in the audit or FOCUS-AREAS requires it and
+/// speculative per-campus overrides would be scope creep here). Regional
+/// weekend patterns differ (Fri-Sat vs Sat-Sun vs Sun-only), which is why
+/// P0-6's own "Out of scope" note insists on explicit configuration rather
+/// than a guessed regional default. No row for an institution = fail
+/// closed (every day closed) in WorkingDayResolverService, a deliberate
+/// product decision (see P0-6-7-9-CORRECTIVE-DESIGN.md § 5.2 / § 11).
+model InstitutionWorkingCalendar {
+  id             String      @id @default(uuid()) @db.Uuid
+  institutionId  String      @unique @map("institution_id") @db.Uuid
+  /// Days of the week that ARE working days (inverse of "closed"). Stored
+  /// as an array of the existing DayOfWeek enum. An empty array is
+  /// rejected at the DTO level.
+  workingDays    DayOfWeek[] @map("working_days")
+  createdBy      String?     @map("created_by") @db.Uuid
+  updatedBy      String?     @map("updated_by") @db.Uuid
+  deletedAt      DateTime?   @map("deleted_at") @db.Timestamptz(3)
+  deletedBy      String?     @map("deleted_by") @db.Uuid
+  deleteReason   String?     @map("delete_reason")
+  activeScopeKey String      @default("ACTIVE") @map("active_scope_key")
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  institution    Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@map("institution_working_calendars")
+}
+
+/// P0-6: one-off declared closures (Eid, a local holiday, an unscheduled
+/// closure day) layered on top of the weekly pattern. Institution-scoped by
+/// default; optional campusId lets a single campus close independently
+/// without affecting siblings — same "institution default, campus can
+/// narrow further" shape as Institution/Campus timezone (§ 3 of the design
+/// doc), reused rather than reinvented.
+model InstitutionClosureDate {
+  id             String      @id @default(uuid()) @db.Uuid
+  institutionId  String      @map("institution_id") @db.Uuid
+  campusId       String?     @map("campus_id") @db.Uuid
+  date           DateTime    @db.Date
+  label          String
+  // Non-nullable sentinel companion to the nullable campusId — same
+  // periodKey/retakeKey pattern this schema already uses twice
+  // (Attendance, Exam) for the identical problem. Server-computed only,
+  // never client-supplied: the literal campusId string when set, else the
+  // fixed sentinel "INSTITUTION". Found during implementation review: the
+  // original @@unique([institutionId, campusId, date, activeScopeKey])
+  // put the nullable campusId directly in the index, so Postgres's
+  // NULL-is-distinct-from-every-other-NULL semantics meant two
+  // institution-wide closures (campusId = NULL) for the same date would
+  // NOT have collided — the exact trap this codebase's own Attendance/Exam
+  // comments warn about, reintroduced through a different door. This
+  // column is what actually delivers the "prevents duplicate
+  // institution-wide rows" guarantee the removed comment claimed but the
+  // old constraint didn't provide.
+  campusScopeKey String      @default("INSTITUTION") @map("campus_scope_key")
+  createdBy      String?     @map("created_by") @db.Uuid
+  updatedBy      String?     @map("updated_by") @db.Uuid
+  deletedAt      DateTime?   @map("deleted_at") @db.Timestamptz(3)
+  deletedBy      String?     @map("deleted_by") @db.Uuid
+  deleteReason   String?     @map("delete_reason")
+  activeScopeKey String      @default("ACTIVE") @map("active_scope_key")
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  institution    Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  campus         Campus?     @relation(fields: [campusId], references: [id], onDelete: Cascade)
+
+  // campusScopeKey (not the nullable campusId) is what goes in the unique
+  // constraint — see the field comment above. One institution-wide closure
+  // (campusScopeKey = "INSTITUTION") AND a separate per-campus closure
+  // (campusScopeKey = that campus's id) can still coexist deliberately for
+  // the same date (both apply; WorkingDayResolverService unions them),
+  // while two duplicate institution-wide rows, or two duplicate rows for
+  // the same campus, now genuinely collide.
+  @@unique([institutionId, campusScopeKey, date, activeScopeKey], map: "institution_closure_date_unique")
+  @@index([institutionId, date])
+  @@map("institution_closure_dates")
 }
 
 model InstitutionEntitlement {
@@ -1445,24 +1545,26 @@ model FeeVoucher {
 }
 
 model FeePayment {
-  id             String        @id @default(uuid()) @db.Uuid
-  voucherId      String        @map("voucher_id") @db.Uuid
-  month          Int
-  year           Int
-  paidAmount     Decimal       @map("paid_amount") @db.Decimal(10, 2)
-  paymentMethod  PaymentMethod @map("payment_method")
-  paymentDate    DateTime      @map("payment_date") @db.Timestamptz(3)
-  receivedBy     String?       @map("received_by") @db.Uuid
-  createdBy      String?       @map("created_by") @db.Uuid
-  updatedBy      String?       @map("updated_by") @db.Uuid
-  deletedAt      DateTime?     @map("deleted_at") @db.Timestamptz(3)
-  deletedBy      String?       @map("deleted_by") @db.Uuid
-  deleteReason   String?       @map("delete_reason")
-  activeScopeKey String        @default("ACTIVE") @map("active_scope_key")
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
-  voucher        FeeVoucher    @relation(fields: [voucherId], references: [id], onDelete: Cascade)
-  receivedByUser User?         @relation("FeePaymentReceivedBy", fields: [receivedBy], references: [id], onDelete: SetNull)
+  id                 String        @id @default(uuid()) @db.Uuid
+  requestKey         String?       @unique(map: "fee_payment_request_key_unique") @map("request_key") @db.Uuid
+  requestFingerprint String?       @map("request_fingerprint")
+  voucherId          String        @map("voucher_id") @db.Uuid
+  month              Int
+  year               Int
+  paidAmount         Decimal       @map("paid_amount") @db.Decimal(10, 2)
+  paymentMethod      PaymentMethod @map("payment_method")
+  paymentDate        DateTime      @map("payment_date") @db.Timestamptz(3)
+  receivedBy         String?       @map("received_by") @db.Uuid
+  createdBy          String?       @map("created_by") @db.Uuid
+  updatedBy          String?       @map("updated_by") @db.Uuid
+  deletedAt          DateTime?     @map("deleted_at") @db.Timestamptz(3)
+  deletedBy          String?       @map("deleted_by") @db.Uuid
+  deleteReason       String?       @map("delete_reason")
+  activeScopeKey     String        @default("ACTIVE") @map("active_scope_key")
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  voucher            FeeVoucher    @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  receivedByUser     User?         @relation("FeePaymentReceivedBy", fields: [receivedBy], references: [id], onDelete: SetNull)
 
   @@index([voucherId])
   @@map("fee_payments")

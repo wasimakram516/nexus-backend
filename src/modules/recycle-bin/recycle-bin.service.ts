@@ -7,6 +7,8 @@ import {
 import { AuditLogService } from '../../common/services/audit-log.service';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { RequestContextService } from '../../common/services/request-context.service';
+import { runAuditedTransaction } from '../../common/utils/transaction.util';
+import { reconcileFeeVoucher } from '../../common/utils/fee-settlement.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma, UserRole } from '../../prisma/client';
 import {
@@ -2833,21 +2835,38 @@ export class RecycleBinService {
       'Deleted fee voucher',
     );
     this.assertInstitutionScope(currentUser, institutionId);
-    const restored = await this.prisma.feeVoucher.update({
-      where: { id: voucherId, deletedAt: { not: null } },
-      data: { deletedAt: null, deletedBy: null, deleteReason: null },
-    });
-    await this.auditLogService.log(currentUser, {
-      action: 'FEE_VOUCHER_RESTORED',
-      entity: 'FeeVoucher',
-      entityId: voucherId,
-      institutionId,
-      metadata: {
-        studentId: item.studentId,
-        month: item.month,
-        year: item.year,
+    const restored = await runAuditedTransaction(
+      this.prisma,
+      this.requestContext,
+      async (transaction) => {
+        const voucher = await transaction.feeVoucher.update({
+          where: { id: voucherId, deletedAt: { not: null } },
+          data: { deletedAt: null, deletedBy: null, deleteReason: null },
+        });
+        const settlement = await reconcileFeeVoucher(
+          transaction,
+          voucherId,
+          false,
+        );
+        await this.auditLogService.log(
+          currentUser,
+          {
+            action: 'FEE_VOUCHER_RESTORED',
+            entity: 'FeeVoucher',
+            entityId: voucherId,
+            institutionId,
+            metadata: {
+              studentId: item.studentId,
+              month: item.month,
+              year: item.year,
+            },
+          },
+          transaction,
+        );
+        return { ...voucher, ...settlement };
       },
-    });
+      Prisma.TransactionIsolationLevel.Serializable,
+    );
     return { message: 'Fee voucher restored successfully', data: restored };
   }
 
@@ -2879,25 +2898,34 @@ export class RecycleBinService {
       'Deleted fee payment',
     );
     this.assertInstitutionScope(currentUser, institutionId);
-    const restored = await this.prisma.feePayment.update({
-      where: { id: paymentId, deletedAt: { not: null } },
-      data: { deletedAt: null, deletedBy: null, deleteReason: null },
-    });
-    await this.prisma.feeVoucher.update({
-      where: { id: item.voucherId },
-      data: { status: 'PAID' },
-    });
-    await this.auditLogService.log(currentUser, {
-      action: 'FEE_PAYMENT_RESTORED',
-      entity: 'FeePayment',
-      entityId: paymentId,
-      institutionId,
-      metadata: {
-        voucherId: item.voucherId,
-        month: item.month,
-        year: item.year,
+    const restored = await runAuditedTransaction(
+      this.prisma,
+      this.requestContext,
+      async (transaction) => {
+        const payment = await transaction.feePayment.update({
+          where: { id: paymentId, deletedAt: { not: null } },
+          data: { deletedAt: null, deletedBy: null, deleteReason: null },
+        });
+        await reconcileFeeVoucher(transaction, item.voucherId);
+        await this.auditLogService.log(
+          currentUser,
+          {
+            action: 'FEE_PAYMENT_RESTORED',
+            entity: 'FeePayment',
+            entityId: paymentId,
+            institutionId,
+            metadata: {
+              voucherId: item.voucherId,
+              month: item.month,
+              year: item.year,
+            },
+          },
+          transaction,
+        );
+        return payment;
       },
-    });
+      Prisma.TransactionIsolationLevel.Serializable,
+    );
     return { message: 'Fee payment restored successfully', data: restored };
   }
 
@@ -3980,31 +4008,39 @@ export class RecycleBinService {
       item.deletedAt!,
       institutionId,
     );
-    await this.requestContext.runWith({ allowHardDelete: true }, async () => {
-      await this.prisma.feePayment.delete({
-        where: { id: paymentId, deletedAt: { not: null } },
-      });
-      const remainingPayment = await this.prisma.feePayment.findFirst({
-        where: { voucherId: item.voucherId },
-      });
-      if (!remainingPayment) {
-        await this.prisma.feeVoucher.update({
-          where: { id: item.voucherId },
-          data: { status: 'PENDING' },
-        });
-      }
-    });
-    await this.auditLogService.log(currentUser, {
-      action: 'FEE_PAYMENT_PERMANENTLY_DELETED',
-      entity: 'FeePayment',
-      entityId: paymentId,
-      institutionId,
-      metadata: {
-        voucherId: item.voucherId,
-        month: item.month,
-        year: item.year,
-      },
-    });
+    await this.requestContext.runWith({ allowHardDelete: true }, () =>
+      runAuditedTransaction(
+        this.prisma,
+        this.requestContext,
+        async (transaction) => {
+          await transaction.feePayment.delete({
+            where: { id: paymentId, deletedAt: { not: null } },
+          });
+          const activeVoucher = await transaction.feeVoucher.findFirst({
+            where: { id: item.voucherId, deletedAt: null },
+            select: { id: true },
+          });
+          if (activeVoucher)
+            await reconcileFeeVoucher(transaction, item.voucherId, false);
+          await this.auditLogService.log(
+            currentUser,
+            {
+              action: 'FEE_PAYMENT_PERMANENTLY_DELETED',
+              entity: 'FeePayment',
+              entityId: paymentId,
+              institutionId,
+              metadata: {
+                voucherId: item.voucherId,
+                month: item.month,
+                year: item.year,
+              },
+            },
+            transaction,
+          );
+        },
+        Prisma.TransactionIsolationLevel.Serializable,
+      ),
+    );
     return {
       message: 'Fee payment permanently deleted successfully',
       data: { id: paymentId },

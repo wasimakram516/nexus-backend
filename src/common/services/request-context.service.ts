@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AsyncLocalStorage } from 'async_hooks';
 import { CurrentUser } from '../interfaces/current-user.interface';
+import type { Prisma } from '../../prisma/client';
 
 type RequestContextState = {
   requestId?: string;
@@ -8,6 +9,7 @@ type RequestContextState = {
   allowHardDelete?: boolean;
   skipAudit?: boolean;
   deleteReason?: string | null;
+  transactionClient?: Prisma.TransactionClient;
 };
 
 @Injectable()

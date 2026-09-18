@@ -23,6 +23,7 @@ describe('RecycleBinService', () => {
   };
 
   const prismaMock = {
+    $transaction: jest.fn(),
     user: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
@@ -160,6 +161,7 @@ describe('RecycleBinService', () => {
       count: jest.fn().mockResolvedValue(0),
     },
     feeVoucher: {
+      findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
@@ -167,6 +169,7 @@ describe('RecycleBinService', () => {
       count: jest.fn().mockResolvedValue(0),
     },
     feePayment: {
+      aggregate: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       update: jest.fn(),
@@ -212,6 +215,10 @@ describe('RecycleBinService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    prismaMock.$transaction.mockImplementation(
+      (callback: (transaction: Prisma.TransactionClient) => Promise<unknown>) =>
+        callback(prismaMock as unknown as Prisma.TransactionClient),
+    );
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -241,6 +248,32 @@ describe('RecycleBinService', () => {
     }).compile();
 
     service = moduleRef.get<RecycleBinService>(RecycleBinService);
+  });
+
+  it('restores a payment using active totals instead of forcing its voucher to paid', async () => {
+    prismaMock.feePayment.findFirst.mockResolvedValue({
+      voucherId: 'voucher-1',
+      month: 9,
+      year: 2026,
+      voucher: { student: { campus: { institutionId: 'institution-1' } } },
+    });
+    prismaMock.feePayment.update.mockResolvedValue({ id: 'payment-1' });
+    prismaMock.feeVoucher.findUnique.mockResolvedValue({
+      finalAmountDue: new Prisma.Decimal(100),
+      dueDate: new Date('2040-01-01'),
+    });
+    prismaMock.feePayment.aggregate.mockResolvedValue({
+      _sum: { paidAmount: new Prisma.Decimal(25) },
+    });
+    await service.restoreRecord(
+      adminUser,
+      RecycleBinEntity.FEE_PAYMENT,
+      'payment-1',
+    );
+    expect(prismaMock.feeVoucher.update).toHaveBeenCalledWith({
+      where: { id: 'voucher-1' },
+      data: { status: 'PARTIAL' },
+    });
   });
 
   it('lists soft-deleted users and campuses with deleted-by user details', async () => {

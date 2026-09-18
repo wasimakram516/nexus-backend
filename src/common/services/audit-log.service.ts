@@ -18,8 +18,9 @@ export class AuditLogService {
   async log(
     currentUser: CurrentUser | null | undefined,
     params: AuditLogParams,
+    transaction?: Prisma.TransactionClient,
   ) {
-    await this.prisma.auditLog.create({
+    await (transaction ?? this.prisma).auditLog.create({
       data: {
         userId: currentUser?.sub ?? null,
         institutionId:
