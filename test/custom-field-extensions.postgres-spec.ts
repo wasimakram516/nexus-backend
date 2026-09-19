@@ -20,9 +20,9 @@ import { UsersService } from '../src/modules/users/users.service';
  * proves — against a real PostgreSQL database, not a mock — that an invalid
  * custom-field value during create/update never leaves a partially written
  * core record for the four newest custom-field extensions (Notices,
- * PeriodSlot, Attendance, User). The 23 previously registered entities
- * already have this proof in transactions.postgres-spec.ts; these four were
- * added afterward and had no equivalent coverage.
+ * PeriodSlot, Attendance, User). transactions.postgres-spec.ts separately
+ * proves only the entities listed in the PostgreSQL proof summary of
+ * project-tracking/CUSTOM-FIELDS-ACCEPTANCE.md; it does not cover every entity.
  *
  * Run via `npm run test:postgres` — see test/POSTGRES-TESTS.md.
  */
@@ -310,6 +310,27 @@ describe('PostgreSQL custom-field extension rollback (M4.5 shared blocker #2)', 
     });
     expect(created.data).toMatchObject({
       customFields: { device: 'Biometric' },
+    });
+    const checkout = {
+      userId: staffAccount.id,
+      date: request.date,
+      checkOut: '2026-09-17T14:00:00.000Z',
+    };
+    await expect(
+      attendance.checkOut(actor, { ...checkout, customFields: { device: 42 } }),
+    ).rejects.toThrow('Device');
+    expect(
+      await prisma.attendance.findFirst({
+        where: { userId: staffAccount.id, campusId },
+      }),
+    ).toMatchObject({ checkOut: null });
+    const completed = await attendance.checkOut(actor, {
+      ...checkout,
+      customFields: { device: 'Exit gate' },
+    });
+    expect(completed.data).toMatchObject({
+      checkOut: new Date(checkout.checkOut),
+      customFields: { device: 'Exit gate' },
     });
   });
 

@@ -14,9 +14,25 @@ jobs:
     name: Lint, Type-check, Build, Test
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nexus_test
+          POSTGRES_PASSWORD: isolated-ci-test
+          POSTGRES_DB: nexus_audit_test
+        ports:
+          - 55439:5432
+        options: >-
+          --health-cmd "pg_isready -U nexus_test -d nexus_audit_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     env:
       NODE_ENV: test
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nexus_backend_nest
+      DATABASE_URL: postgresql://nexus_test:isolated-ci-test@127.0.0.1:55439/nexus_audit_test
+      TEST_DATABASE_URL: postgresql://nexus_test:isolated-ci-test@127.0.0.1:55439/nexus_audit_test
       JWT_ACCESS_SECRET: ci-test-access-secret-min-32-characters-long
       JWT_REFRESH_SECRET: ci-test-refresh-secret-min-32-characters-long
 
@@ -47,3 +63,9 @@ jobs:
 
       - name: Run tests
         run: npm run test:ci
+
+      - name: Apply migrations to isolated test database
+        run: npm run prisma:migrate:deploy
+
+      - name: Verify PostgreSQL rollback and concurrency
+        run: npm run test:postgres
