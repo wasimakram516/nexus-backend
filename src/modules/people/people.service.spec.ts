@@ -44,6 +44,7 @@ describe('PeopleService', () => {
       count: jest.fn(),
     },
     guardian: {
+      findMany: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
     },
@@ -205,6 +206,39 @@ describe('PeopleService', () => {
         admissionDate: '2026-01-01',
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('returns saved relationship values without replacing the link ID used for unlinking', async () => {
+    campusAccessServiceMock.getScopedCampusIds.mockResolvedValue(['campus-1']);
+    prismaMock.guardian.findMany.mockResolvedValue([
+      {
+        id: 'guardian-1',
+        students: [{ id: 'link-1', studentId: 'student-1' }],
+      },
+    ]);
+    entityCustomFieldsServiceMock.attachToItems
+      .mockResolvedValueOnce([
+        { id: 'student-1:guardian-1', customFields: { pickup: 'KEEP' } },
+      ])
+      .mockImplementationOnce((items: unknown) => Promise.resolve(items));
+    const result = await service.listGuardians(currentUser);
+    expect(result.data).toEqual([
+      {
+        id: 'guardian-1',
+        students: [
+          {
+            id: 'link-1',
+            studentId: 'student-1',
+            customFields: { pickup: 'KEEP' },
+          },
+        ],
+      },
+    ]);
+    expect(entityCustomFieldsServiceMock.attachToItems).toHaveBeenNthCalledWith(
+      1,
+      [{ id: 'student-1:guardian-1', studentId: 'student-1' }],
+      'student_guardian',
+    );
   });
 
   it('scopes student listing to accessible campuses for non-superadmins', async () => {

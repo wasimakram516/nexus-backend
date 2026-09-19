@@ -522,8 +522,27 @@ export class PeopleService {
         },
       },
     });
+    const links = await this.entityCustomFieldsService.attachToItems(
+      items.flatMap((guardian) =>
+        guardian.students.map((link) => ({
+          ...link,
+          id: `${link.studentId}:${guardian.id}`,
+        })),
+      ),
+      CustomFieldEntity.STUDENT_GUARDIAN,
+    );
+    const valuesByLink = new Map(
+      links.map((link) => [link.id, link.customFields]),
+    );
     const data = await this.entityCustomFieldsService.attachToItems(
-      items,
+      items.map((guardian) => ({
+        ...guardian,
+        students: guardian.students.map((link) => ({
+          ...link,
+          customFields:
+            valuesByLink.get(`${link.studentId}:${guardian.id}`) ?? {},
+        })),
+      })),
       CustomFieldEntity.GUARDIAN,
     );
     return { message: 'Guardians retrieved successfully', data };
