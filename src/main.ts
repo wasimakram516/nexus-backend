@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { APP_VALIDATION_PIPE_OPTIONS } from './common/constants/validation.constants';
 import { AppExceptionFilter } from './common/filters/app-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { AppLoggerService } from './common/services/app-logger.service';
@@ -30,14 +31,7 @@ async function bootstrap() {
   app.use(helmet());
   app.use(compression());
   app.use(cookieParser());
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      transform: true,
-      forbidNonWhitelisted: true,
-      transformOptions: { enableImplicitConversion: true },
-    }),
-  );
+  app.useGlobalPipes(new ValidationPipe(APP_VALIDATION_PIPE_OPTIONS));
   app.useGlobalFilters(new AppExceptionFilter(logger));
   app.useGlobalInterceptors(new ResponseInterceptor());
 

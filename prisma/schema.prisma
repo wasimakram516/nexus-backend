@@ -1644,3 +1644,38 @@ model Notice {
   @@index([sectionId])
   @@map("notices")
 }
+
+enum ContactInquiryStatus {
+  NEW
+  READ
+  ARCHIVED
+}
+
+// Public "Contact us" submissions, read by the superadmin platform console.
+// Platform-level entity: no institution scoping. No unique constraints, so no
+// activeScopeKey is needed (soft-deleted rows cannot collide with anything).
+// inquiryType is a validated string (see contact-inquiry.constants.ts) so the
+// list can evolve without a migration.
+model ContactInquiry {
+  id           String               @id @default(uuid()) @db.Uuid
+  name         String
+  email        String
+  organisation String?
+  inquiryType  String               @map("inquiry_type")
+  message      String
+  status       ContactInquiryStatus @default(NEW)
+  ipAddress    String?              @map("ip_address")
+  userAgent    String?              @map("user_agent")
+  readAt       DateTime?            @map("read_at") @db.Timestamptz(3)
+  createdBy    String?              @map("created_by") @db.Uuid
+  updatedBy    String?              @map("updated_by") @db.Uuid
+  deletedAt    DateTime?            @map("deleted_at") @db.Timestamptz(3)
+  deletedBy    String?              @map("deleted_by") @db.Uuid
+  deleteReason String?              @map("delete_reason")
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([status, createdAt])
+  @@index([createdAt])
+  @@map("contact_inquiries")
+}
