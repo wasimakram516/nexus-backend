@@ -112,8 +112,15 @@ export function validateCustomFieldValue(
     case CustomFieldInputType.IMAGE: {
       if (!isValidUploadValue(value)) invalid();
       const uploadRules = customFieldObject(definition.validation);
-      // Metadata-level rules only apply to an uploaded object — a bare
-      // external URL carries no size/format to check.
+      // External URLs cannot prove size or format. Restricted fields require
+      // uploaded metadata rather than silently bypassing the configured rules.
+      if (
+        typeof value === 'string' &&
+        ((Array.isArray(uploadRules.allowedFormats) &&
+          uploadRules.allowedFormats.length > 0) ||
+          typeof uploadRules.maxBytes === 'number')
+      )
+        invalid();
       if (value && typeof value === 'object' && !Array.isArray(value)) {
         const upload = value as { format?: unknown; bytes?: unknown };
         if (

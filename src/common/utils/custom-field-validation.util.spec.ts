@@ -123,6 +123,17 @@ describe('custom field value validation', () => {
         ),
       ).toThrow('invalid value');
     });
+    it.each([{ allowedFormats: ['pdf'] }, { maxBytes: 1024 }])(
+      'rejects metadata-free URLs when file rules are configured: %j',
+      (validation) => {
+        expect(() =>
+          validateCustomFieldValue(
+            { ...definition, inputType: 'FILE', validation },
+            'https://example.com/file.pdf',
+          ),
+        ).toThrow('invalid value');
+      },
+    );
 
     it('rejects a file exceeding the configured max size', () => {
       expect(() =>
