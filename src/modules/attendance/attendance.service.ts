@@ -80,6 +80,27 @@ export class AttendanceService {
     return this.userPermissionsService.can(currentUser, 'attendance', 'update');
   }
 
+  /** Returns only campus/timezone metadata under the same authorization as a punch. */
+  async getPunchContext(currentUser: CurrentUser, requestedUserId?: string) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.ATTENDANCE,
+    );
+    const userId = requestedUserId ?? currentUser.sub;
+    await this.assertAttendanceActor(currentUser, userId);
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+    });
+    this.assertAttendanceSubject(user.role);
+    const campusId = await this.resolveCampusId(userId, user.role);
+    await this.campusAccessService.assertCampusAccess(currentUser, campusId);
+    const timezone = await this.timezoneResolver.resolveForCampus(campusId);
+    return {
+      message: 'Attendance context retrieved successfully',
+      data: { campusId, timezone },
+    };
+  }
+
   async checkIn(currentUser: CurrentUser, dto: CheckInDto) {
     await this.moduleAccessService.assertModuleEnabledForUser(
       currentUser,
@@ -192,14 +213,32 @@ export class AttendanceService {
     threshold.setUTCMinutes(
       threshold.getUTCMinutes() - campus.earlyLeaveThreshold,
     );
-    const item = await this.prisma.attendance.update({
-      where: { id: record.id },
-      data: {
-        checkOut: new Date(dto.checkOut),
-        halfDay: new Date(dto.checkOut) < threshold,
+    const institutionId =
+      await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
+        campusId,
+      );
+    const item = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId,
+        moduleKey: ModuleKey.ATTENDANCE,
+        entityType: CustomFieldEntity.ATTENDANCE,
+        values: dto.customFields,
+        create: false,
       },
-    });
-    return { message: 'Check-out recorded successfully', data: item };
+      (transaction) =>
+        transaction.attendance.update({
+          where: { id: record.id },
+          data: {
+            checkOut: new Date(dto.checkOut),
+            halfDay: new Date(dto.checkOut) < threshold,
+          },
+        }),
+    );
+    const data = await this.entityCustomFieldsService.attachToItem(
+      item,
+      CustomFieldEntity.ATTENDANCE,
+    );
+    return { message: 'Check-out recorded successfully', data };
   }
 
   async markLeave(currentUser: CurrentUser, dto: MarkLeaveDto) {
@@ -314,12 +353,14 @@ export class AttendanceService {
 
     if (institutionId) {
       const timezone = await this.timezoneResolver.resolveForCampus(campusId);
-      const localDate = this.timezoneResolver.localDateString(timezone);
-      const localDayOfWeek = this.timezoneResolver.localDayOfWeek(timezone);
+      const localDayOfWeek = this.timezoneResolver.localDayOfWeek(
+        timezone,
+        this.timezoneResolver.zonedTimeToInstant(timezone, date, '12:00'),
+      );
       const isWorking = await this.workingDayResolver.isWorkingDay(
         institutionId,
         campusId,
-        localDate,
+        date,
         localDayOfWeek,
       );
       if (!isWorking) {
@@ -461,6 +502,28 @@ export class AttendanceService {
     const institutionId = await this.resolveInstitutionIdForCampus(
       periodSlot.campusId,
     );
+    if (institutionId) {
+      const timezone = await this.timezoneResolver.resolveForCampus(
+        periodSlot.campusId,
+      );
+      const weekday = this.timezoneResolver.localDayOfWeek(
+        timezone,
+        this.timezoneResolver.zonedTimeToInstant(timezone, date, '12:00'),
+      );
+      if (
+        !(await this.workingDayResolver.isWorkingDay(
+          institutionId,
+          periodSlot.campusId,
+          date,
+          weekday,
+        ))
+      ) {
+        return {
+          message: 'No absences generated — not a working day',
+          data: { count: 0 },
+        };
+      }
+    }
     const roster = await this.resolvePeriodRosterStudents(
       periodSlot,
       institutionId,

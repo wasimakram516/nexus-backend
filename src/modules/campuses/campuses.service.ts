@@ -103,6 +103,7 @@ export class CampusesService {
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.campus.findMany({
+        include: { institution: { select: { timezone: true } } },
         where,
         skip,
         take: query.limit,

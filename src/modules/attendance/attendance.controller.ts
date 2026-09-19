@@ -21,6 +21,7 @@ import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { AttendanceService } from './attendance.service';
 import {
   AutoAbsentDto,
+  AttendanceContextDto,
   BulkMarkAttendanceDto,
   CheckInDto,
   CheckOutDto,
@@ -36,6 +37,17 @@ import {
 @Controller('attendance')
 export class AttendanceController {
   constructor(private readonly attendanceService: AttendanceService) {}
+
+  /** Resolves the same authorized campus used by punch writes, including self-service. */
+  @Get('context')
+  @Version('1')
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.STAFF, UserRole.STUDENT)
+  getContext(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: AttendanceContextDto,
+  ) {
+    return this.attendanceService.getPunchContext(currentUser, query.userId);
+  }
 
   @Post('check-in')
   @Version('1')

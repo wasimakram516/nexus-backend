@@ -15,6 +15,9 @@ import { UserPermissionsService } from '../../common/services/user-permissions.s
 import { WorkingDayResolverService } from '../../common/services/working-day-resolver.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AttendanceService } from './attendance.service';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { CheckOutDto } from './dto/attendance.dto';
 
 describe('AttendanceService', () => {
   let service: AttendanceService;
@@ -159,6 +162,106 @@ describe('AttendanceService', () => {
     }).compile();
 
     service = moduleRef.get<AttendanceService>(AttendanceService);
+  });
+
+  it('refuses another user context before resolving campus metadata', async () => {
+    await expect(
+      service.getPunchContext(teacherUser, 'other-user'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(timezoneResolverMock.resolveForCampus).not.toHaveBeenCalled();
+  });
+
+  it('returns the authorized self-service campus timezone', async () => {
+    prismaMock.user.findUniqueOrThrow.mockResolvedValue({
+      role: UserRole.STAFF,
+    });
+    prismaMock.staffProfile.findUnique.mockResolvedValue({
+      campusId: 'campus-1',
+    });
+    prismaMock.staffProfile.findUniqueOrThrow.mockResolvedValue({
+      campusId: 'campus-1',
+    });
+    expect(await service.getPunchContext(teacherUser)).toMatchObject({
+      data: { campusId: 'campus-1', timezone: 'Asia/Karachi' },
+    });
+    expect(campusAccessServiceMock.assertCampusAccess).toHaveBeenCalledWith(
+      teacherUser,
+      'campus-1',
+    );
+  });
+
+  describe('checkout DTO under the application ValidationPipe options', () => {
+    // Mirrors src/main.ts exactly: whitelist + forbidNonWhitelisted + implicit conversion.
+    const pipeOptions = {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    } as const;
+    const base = {
+      userId: '11111111-1111-4111-8111-111111111111',
+      date: '2026-09-19',
+      checkOut: '2026-09-19T09:00:00.000Z',
+    };
+    const check = (payload: Record<string, unknown>) =>
+      validateSync(
+        plainToInstance(CheckOutDto, payload, {
+          enableImplicitConversion: true,
+        }),
+        pipeOptions,
+      );
+
+    it('accepts an empty customFields object', () => {
+      expect(check({ ...base, customFields: {} })).toEqual([]);
+    });
+
+    it('accepts a populated customFields object', () => {
+      expect(
+        check({ ...base, customFields: { device: 'gate', n: 0 } }),
+      ).toEqual([]);
+    });
+
+    it('accepts a payload without customFields', () => {
+      expect(check(base)).toEqual([]);
+    });
+
+    it('still rejects unknown properties and non-object customFields', () => {
+      expect(check({ ...base, bogus: 1 })).not.toEqual([]);
+      expect(check({ ...base, customFields: 'x' })).not.toEqual([]);
+    });
+  });
+
+  it('saves checkout and custom values through the shared atomic update', async () => {
+    prismaMock.user.findUniqueOrThrow.mockResolvedValue({
+      role: UserRole.STAFF,
+    });
+    prismaMock.staffProfile.findUnique.mockResolvedValue({
+      campusId: 'campus-1',
+    });
+    prismaMock.staffProfile.findUniqueOrThrow.mockResolvedValue({
+      campusId: 'campus-1',
+    });
+    prismaMock.attendance.findFirst.mockResolvedValue({ id: 'attendance-1' });
+    prismaMock.campus.findUniqueOrThrow.mockResolvedValue({
+      staffEndTime: '16:00',
+      earlyLeaveThreshold: 10,
+    });
+    prismaMock.attendance.update.mockResolvedValue({ id: 'attendance-1' });
+    await service.checkOut(teacherUser, {
+      userId: teacherUser.sub,
+      date: '2026-09-19',
+      checkOut: '2026-09-19T16:00:00.000Z',
+      customFields: { device: 'gate' },
+    });
+    expect(entityCustomFieldsServiceMock.saveRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: 'attendance',
+        create: false,
+        values: { device: 'gate' },
+      }),
+      expect.any(Function),
+    );
+    expect(prismaMock.attendance.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'attendance-1' } }),
+    );
   });
 
   it('blocks non-privileged users from viewing other users attendance', async () => {
@@ -916,6 +1019,27 @@ describe('AttendanceService', () => {
     });
 
     describe('markPeriodAbsentees', () => {
+      it('checks the requested period date and skips closure dates before reading the roster', async () => {
+        prismaMock.periodSlot.findFirst.mockResolvedValue({
+          id: 'period-1',
+          campusId: 'campus-1',
+        });
+        workingDayResolverMock.isWorkingDay.mockResolvedValue(false);
+        timezoneResolverMock.localDayOfWeek.mockReturnValue('SUNDAY');
+        const result = await service.markPeriodAbsentees(
+          'period-1',
+          '2026-06-14',
+        );
+        expect(workingDayResolverMock.isWorkingDay).toHaveBeenCalledWith(
+          'institution-1',
+          'campus-1',
+          '2026-06-14',
+          'SUNDAY',
+        );
+        expect(result.data.count).toBe(0);
+        expect(prismaMock.studentEnrollment.findMany).not.toHaveBeenCalled();
+        expect(prismaMock.attendance.createMany).not.toHaveBeenCalled();
+      });
       it('is idempotent: a second run creates no new rows once every roster student already has one', async () => {
         prismaMock.periodSlot.findFirst.mockResolvedValue({
           id: 'period-1',
@@ -1114,10 +1238,22 @@ describe('AttendanceService', () => {
 
       it('generates zero absences and skips roster queries entirely on a non-working day', async () => {
         workingDayResolverMock.isWorkingDay.mockResolvedValue(false);
+        timezoneResolverMock.localDayOfWeek.mockReturnValue('SUNDAY');
 
         const result = await service.markCampusAbsentees(
           'campus-1',
           '2026-06-14',
+        );
+        expect(workingDayResolverMock.isWorkingDay).toHaveBeenCalledWith(
+          'institution-1',
+          'campus-1',
+          '2026-06-14',
+          'SUNDAY',
+        );
+        expect(timezoneResolverMock.zonedTimeToInstant).toHaveBeenCalledWith(
+          'Asia/Karachi',
+          '2026-06-14',
+          '12:00',
         );
 
         expect(result).toEqual({

@@ -24,7 +24,11 @@ export class CheckInDto extends CustomFieldPayloadDto {
   @ApiPropertyOptional() @IsOptional() @IsString() remarks?: string;
 }
 
-export class CheckOutDto {
+export class AttendanceContextDto {
+  @ApiPropertyOptional() @IsOptional() @IsUUID() userId?: string;
+}
+
+export class CheckOutDto extends CustomFieldPayloadDto {
   @ApiProperty() @IsUUID() userId!: string;
   @ApiProperty() @IsDateString() date!: string;
   @ApiProperty() @IsDateString() checkOut!: string;
