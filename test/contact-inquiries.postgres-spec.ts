@@ -4,6 +4,7 @@ import { ContactInquiryStatus } from '../src/prisma/client';
 import { CurrentUser } from '../src/common/interfaces/current-user.interface';
 import { RequestContextService } from '../src/common/services/request-context.service';
 import { ContactInquiriesService } from '../src/modules/contact-inquiries/contact-inquiries.service';
+import { RealtimeGateway } from '../src/modules/realtime/realtime.gateway';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
@@ -29,7 +30,11 @@ describe('PostgreSQL contact inquiries', () => {
       throw new Error('Use an isolated loopback nexus_audit_test database');
     process.env.DATABASE_URL = connection;
     prisma = new PrismaService(context);
-    service = new ContactInquiriesService(prisma);
+    // Realtime delivery is covered by unit tests; here it is a no-op stub.
+    const realtime = {
+      emitDomainEvent: jest.fn(),
+    } as unknown as RealtimeGateway;
+    service = new ContactInquiriesService(prisma, realtime);
   });
 
   afterAll(async () => {

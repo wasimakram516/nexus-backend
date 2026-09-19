@@ -9,8 +9,9 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
-import { UserStatus } from '../../prisma/client';
+import { UserRole, UserStatus } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RESERVED_ROOM_PREFIX, SUPERADMIN_ROOM } from './realtime.constants';
 
 /** Reasonable upper bound on a room name — this isn't validating against a
  *  real naming convention (none exists yet, no domain events are wired),
@@ -18,8 +19,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 const MAX_ROOM_NAME_LENGTH = 200;
 
 @WebSocketGateway({
+  // Same origin policy as REST (main.ts). Read at import time from the real
+  // process env (Render); falls back to reflecting the origin like REST does.
   cors: {
-    origin: '*',
+    origin:
+      process.env.CORS_ORIGINS?.split(',').map((value) => value.trim()) ?? true,
     credentials: true,
   },
   namespace: '/realtime',
@@ -67,7 +71,7 @@ export class RealtimeGateway implements OnGatewayConnection {
       }
       const user = await this.prisma.user.findUnique({
         where: { id: payload.sub },
-        select: { id: true, status: true, deletedAt: true },
+        select: { id: true, status: true, deletedAt: true, role: true },
       });
       if (!user || user.deletedAt || user.status !== UserStatus.ACTIVE) {
         client.disconnect();
@@ -90,6 +94,11 @@ export class RealtimeGateway implements OnGatewayConnection {
       }
 
       (client.data as { user?: Record<string, unknown> }).user = payload;
+
+      // Server-side only: superadmins are auto-joined to the reserved room.
+      if (user.role === UserRole.SUPERADMIN) {
+        await client.join(SUPERADMIN_ROOM);
+      }
     } catch {
       client.disconnect();
     }
@@ -111,6 +120,10 @@ export class RealtimeGateway implements OnGatewayConnection {
       payload.room.length === 0 ||
       payload.room.length > MAX_ROOM_NAME_LENGTH
     ) {
+      client.emit('room:error', { message: 'Invalid room.' });
+      return;
+    }
+    if (payload.room.startsWith(RESERVED_ROOM_PREFIX)) {
       client.emit('room:error', { message: 'Invalid room.' });
       return;
     }

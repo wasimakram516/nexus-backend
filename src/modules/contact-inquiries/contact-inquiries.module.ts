@@ -4,10 +4,11 @@ import {
   ContactInquiriesAdminController,
   ContactInquiriesPublicController,
 } from './contact-inquiries.controller';
+import { RealtimeModule } from '../realtime/realtime.module';
 import { ContactInquiriesService } from './contact-inquiries.service';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, RealtimeModule],
   controllers: [
     ContactInquiriesPublicController,
     ContactInquiriesAdminController,

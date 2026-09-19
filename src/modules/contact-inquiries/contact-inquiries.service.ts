@@ -1,7 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ContactInquiryStatus, Prisma } from '../../prisma/client';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  INQUIRY_CREATED_EVENT,
+  SUPERADMIN_ROOM,
+} from '../realtime/realtime.constants';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
   CreateContactInquiryDto,
   ListContactInquiriesQueryDto,
@@ -9,7 +14,12 @@ import {
 
 @Injectable()
 export class ContactInquiriesService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(ContactInquiriesService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeGateway,
+  ) {}
 
   /**
    * Stores a public inquiry. A filled honeypot is silently dropped while
@@ -24,9 +34,14 @@ export class ContactInquiriesService {
   ) {
     const result = { message: 'Message received. Thank you.', data: null };
     if (dto.website && dto.website.trim().length > 0) {
+      // Never silent for us: a real visitor whose browser autofilled the hidden
+      // field would otherwise vanish without a trace.
+      this.logger.warn(
+        `Dropped inquiry: honeypot field was filled (ip=${meta.ipAddress ?? 'unknown'}, type=${dto.inquiryType})`,
+      );
       return result;
     }
-    await this.prisma.contactInquiry.create({
+    const created = await this.prisma.contactInquiry.create({
       data: {
         name: dto.name,
         email: dto.email,
@@ -37,7 +52,34 @@ export class ContactInquiriesService {
         userAgent: meta.userAgent?.slice(0, 500) ?? null,
       },
     });
+    this.notifySuperadmins(created);
     return result;
+  }
+
+  /**
+   * Best-effort live alert with a minimal payload (no email/message/IP).
+   * Never throws: a realtime failure must not affect the HTTP request.
+   * @param {{id: string, name: string, inquiryType: string, createdAt: Date}} row Stored inquiry.
+   * @returns {void}
+   */
+  private notifySuperadmins(row: {
+    id: string;
+    name: string;
+    inquiryType: string;
+    createdAt: Date;
+  }): void {
+    try {
+      this.realtime.emitDomainEvent(SUPERADMIN_ROOM, INQUIRY_CREATED_EVENT, {
+        id: row.id,
+        name: row.name,
+        inquiryType: row.inquiryType,
+        createdAt: row.createdAt,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Inquiry realtime emit failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /**

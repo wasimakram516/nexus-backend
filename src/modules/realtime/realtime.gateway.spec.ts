@@ -26,6 +26,7 @@ describe('RealtimeGateway', () => {
     id: 'user-1',
     status: UserStatus.ACTIVE,
     deletedAt: null,
+    role: 'ADMIN',
   };
 
   function makeClient(token?: string) {
@@ -148,6 +149,43 @@ describe('RealtimeGateway', () => {
 
       expect(client.disconnect).not.toHaveBeenCalled();
       expect((client.data as { user?: unknown }).user).toEqual(payload);
+    });
+  });
+
+  describe('superadmin room', () => {
+    it('auto-joins a SUPERADMIN to the reserved room', async () => {
+      jwtServiceMock.verifyAsync.mockResolvedValue({ sub: 'user-1' });
+      prismaMock.user.findUnique.mockResolvedValue({
+        ...activeUser,
+        role: 'SUPERADMIN',
+      });
+      const client = makeClient('valid-token');
+      await gateway.handleConnection(client);
+      expect(client.join).toHaveBeenCalledWith('platform:superadmin');
+    });
+
+    it('does not join a non-superadmin', async () => {
+      jwtServiceMock.verifyAsync.mockResolvedValue({ sub: 'user-1' });
+      const client = makeClient('valid-token');
+      await gateway.handleConnection(client);
+      expect(client.join).not.toHaveBeenCalled();
+    });
+
+    it('rejects a client room:join for any platform: room', () => {
+      const client = makeClient();
+      gateway.joinRoom(client, { room: 'platform:superadmin' });
+      expect(client.join).not.toHaveBeenCalled();
+      expect(client.emit).toHaveBeenCalledWith(
+        'room:error',
+        expect.any(Object),
+      );
+    });
+
+    it('emitDomainEvent targets the room', () => {
+      const emit = jest.fn();
+      gateway.server = { to: jest.fn().mockReturnValue({ emit }) } as never;
+      gateway.emitDomainEvent('r', 'e', { a: 1 });
+      expect(emit).toHaveBeenCalledWith('e', { a: 1 });
     });
   });
 

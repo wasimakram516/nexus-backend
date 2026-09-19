@@ -1,7 +1,8 @@
-import { NotFoundException } from '@nestjs/common';
+import { Logger, NotFoundException } from '@nestjs/common';
 import { ContactInquiryStatus } from '../../prisma/client';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { ContactInquiriesService } from './contact-inquiries.service';
 import { CreateContactInquiryDto } from './dto/contact-inquiry.dto';
 
@@ -21,6 +22,7 @@ describe('ContactInquiriesService', () => {
     },
     $transaction: jest.fn(),
   };
+  const emitMock = jest.fn();
   let service: ContactInquiriesService;
   const dto: CreateContactInquiryDto = {
     name: 'Ada',
@@ -34,7 +36,47 @@ describe('ContactInquiriesService', () => {
     jest.clearAllMocks();
     service = new ContactInquiriesService(
       prismaMock as unknown as PrismaService,
+      { emitDomainEvent: emitMock } as unknown as RealtimeGateway,
     );
+    prismaMock.contactInquiry.create.mockResolvedValue({
+      id: 'i-1',
+      name: 'Ada',
+      email: 'ada@example.com',
+      inquiryType: 'Other',
+      message: 'Hello',
+      ipAddress: '1.2.3.4',
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    });
+  });
+
+  it('emits once to the superadmin room with a minimal payload', async () => {
+    await service.create(dto, { ipAddress: '1.2.3.4' });
+    expect(emitMock).toHaveBeenCalledTimes(1);
+    expect(emitMock).toHaveBeenCalledWith(
+      'platform:superadmin',
+      'inquiry.created',
+      {
+        id: 'i-1',
+        name: 'Ada',
+        inquiryType: 'Other',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      },
+    );
+  });
+
+  it('does not emit when the honeypot drops the inquiry', async () => {
+    await service.create({ ...dto, website: 'spam' }, {});
+    expect(emitMock).not.toHaveBeenCalled();
+  });
+
+  it('still succeeds when the emit throws', async () => {
+    emitMock.mockImplementationOnce(() => {
+      throw new Error('socket down');
+    });
+    await expect(service.create(dto, {})).resolves.toEqual({
+      message: 'Message received. Thank you.',
+      data: null,
+    });
   });
 
   it('stores a valid inquiry with request metadata', async () => {
@@ -57,6 +99,17 @@ describe('ContactInquiriesService', () => {
     const res = await service.create({ ...dto, website: 'http://spam' }, {});
     expect(prismaMock.contactInquiry.create).not.toHaveBeenCalled();
     expect(res.message).toBe('Message received. Thank you.');
+  });
+
+  it('logs a warning when it drops a honeypot submission so drops are never invisible', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    await service.create(
+      { ...dto, website: 'http://spam' },
+      { ipAddress: '1.2.3.4' },
+    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('honeypot'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('1.2.3.4'));
+    warn.mockRestore();
   });
 
   it('lists with pagination and status filter', async () => {
