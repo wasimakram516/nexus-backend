@@ -100,12 +100,25 @@ export class SchedulerService {
     const failedCampusIds: string[] = [];
 
     for (const [institutionId, institutionCampuses] of campusesByInstitution) {
-      if (!(await this.isModuleEligible(institutionId, ModuleKey.ATTENDANCE))) {
+      let mode: Awaited<ReturnType<AttendanceService['resolveAttendanceMode']>>;
+      try {
+        if (!(await this.isModuleEligible(institutionId, ModuleKey.ATTENDANCE)))
+          continue;
+        mode =
+          await this.attendanceService.resolveAttendanceMode(institutionId);
+      } catch {
+        failedCampusIds.push(...institutionCampuses.map((campus) => campus.id));
+        this.logger.error(
+          `Auto-absent configuration failed for institution ${institutionId}`,
+        );
+        await this.logSafely({
+          action: 'ATTENDANCE_AUTO_ABSENT_FAILED',
+          entity: 'Attendance',
+          institutionId,
+          metadata: { stage: 'institution_configuration' },
+        });
         continue;
       }
-
-      const mode =
-        await this.attendanceService.resolveAttendanceMode(institutionId);
 
       for (const campus of institutionCampuses) {
         try {
@@ -132,7 +145,7 @@ export class SchedulerService {
             );
             processedCount += 1;
             if (result.data.count > 0) {
-              await this.auditLogService.log(null, {
+              await this.logSafely({
                 action: 'ATTENDANCE_AUTO_ABSENT',
                 entity: 'Attendance',
                 institutionId,
@@ -185,7 +198,7 @@ export class SchedulerService {
               );
             periodProcessedCount += 1;
             if (periodResult.data.count > 0) {
-              await this.auditLogService.log(null, {
+              await this.logSafely({
                 action: 'ATTENDANCE_AUTO_ABSENT_PERIOD',
                 entity: 'Attendance',
                 institutionId,
@@ -204,7 +217,7 @@ export class SchedulerService {
           this.logger.error(
             `Auto-absent sweep failed for campus ${campus.id} (institution ${institutionId}): ${message}`,
           );
-          await this.auditLogService.log(null, {
+          await this.logSafely({
             action: 'ATTENDANCE_AUTO_ABSENT_FAILED',
             entity: 'Attendance',
             institutionId,
@@ -313,7 +326,7 @@ export class SchedulerService {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(`Voucher-overdue chunk failed: ${message}`);
-        await this.auditLogService.log(null, {
+        await this.logSafely({
           action: 'FEE_VOUCHER_AUTO_OVERDUE_FAILED',
           entity: 'FeeVoucher',
           institutionId: null,
@@ -406,7 +419,7 @@ export class SchedulerService {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(`Subscription-lifecycle chunk failed: ${message}`);
-        await this.auditLogService.log(null, {
+        await this.logSafely({
           action: 'SUBSCRIPTION_AUTO_SUSPENDED_FAILED',
           entity: 'InstitutionSubscription',
           institutionId: null,
@@ -419,6 +432,19 @@ export class SchedulerService {
     this.logger.log(
       `Subscription-lifecycle job suspended ${totalSuspended} expired trial(s).`,
     );
+  }
+
+  /** Audit persistence (success or failure) must never starve subsequent institutions or chunks. */
+  private async logSafely(
+    entry: Parameters<AuditLogService['log']>[1],
+  ): Promise<void> {
+    try {
+      await this.auditLogService.log(null, entry);
+    } catch {
+      this.logger.error(
+        `Could not persist scheduler failure event ${entry.action}`,
+      );
+    }
   }
 
   private async isModuleEligible(institutionId: string, moduleKey: ModuleKey) {

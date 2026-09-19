@@ -109,6 +109,72 @@ describe('SchedulerService', () => {
   });
 
   describe('runAutoAbsentJob', () => {
+    it('continues to later institutions when configuration and failure auditing both fail', async () => {
+      prismaMock.campus.findMany.mockResolvedValue([
+        {
+          id: 'campus-1',
+          institutionId: 'institution-1',
+          staffEndTime: '17:00',
+          studentEndTime: '15:00',
+        },
+        {
+          id: 'campus-2',
+          institutionId: 'institution-2',
+          staffEndTime: '17:00',
+          studentEndTime: '15:00',
+        },
+      ]);
+      moduleAccessServiceMock.getInstitutionRuntimeConfig
+        .mockRejectedValueOnce(new Error('Configuration unavailable'))
+        .mockResolvedValue(activeRuntimeConfig);
+      auditLogServiceMock.log.mockRejectedValueOnce(
+        new Error('Audit unavailable'),
+      );
+      attendanceServiceMock.resolveAttendanceMode.mockResolvedValue('DAILY');
+      attendanceServiceMock.markCampusAbsentees.mockResolvedValue({
+        data: { count: 0 },
+      });
+      await expect(service.runAutoAbsentJob()).resolves.toBeUndefined();
+      expect(attendanceServiceMock.markCampusAbsentees).toHaveBeenCalledTimes(
+        1,
+      );
+      expect(attendanceServiceMock.markCampusAbsentees).toHaveBeenCalledWith(
+        'campus-2',
+        '2026-07-18',
+      );
+    });
+
+    it('continues when an institution attendance mode cannot be resolved', async () => {
+      prismaMock.campus.findMany.mockResolvedValue([
+        {
+          id: 'campus-1',
+          institutionId: 'institution-1',
+          staffEndTime: '17:00',
+          studentEndTime: '15:00',
+        },
+        {
+          id: 'campus-2',
+          institutionId: 'institution-2',
+          staffEndTime: '17:00',
+          studentEndTime: '15:00',
+        },
+      ]);
+      moduleAccessServiceMock.getInstitutionRuntimeConfig.mockResolvedValue(
+        activeRuntimeConfig,
+      );
+      attendanceServiceMock.resolveAttendanceMode
+        .mockRejectedValueOnce(new Error('Mode unavailable'))
+        .mockResolvedValue('DAILY');
+      attendanceServiceMock.markCampusAbsentees.mockResolvedValue({
+        data: { count: 0 },
+      });
+      await service.runAutoAbsentJob();
+      expect(attendanceServiceMock.markCampusAbsentees).toHaveBeenCalledWith(
+        'campus-2',
+        '2026-07-18',
+      );
+    });
+
     it('marks absentees for a campus whose cutoff has already passed, resolving timezone/date per campus', async () => {
       prismaMock.campus.findMany.mockResolvedValue([
         {
@@ -297,6 +363,50 @@ describe('SchedulerService', () => {
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() is intentionally typed `any` by @types/jest
           metadata: expect.objectContaining({ periodSlotId: 'period-1' }),
         }),
+      );
+    });
+
+    it('keeps sweeping period slots and later campuses when a success audit write fails', async () => {
+      prismaMock.campus.findMany.mockResolvedValue([
+        {
+          id: 'campus-1',
+          institutionId: 'institution-1',
+          staffEndTime: '17:00',
+          studentEndTime: '15:00',
+        },
+        {
+          id: 'campus-2',
+          institutionId: 'institution-1',
+          staffEndTime: '17:00',
+          studentEndTime: '15:00',
+        },
+      ]);
+      moduleAccessServiceMock.getInstitutionRuntimeConfig.mockResolvedValue(
+        activeRuntimeConfig,
+      );
+      attendanceServiceMock.resolveAttendanceMode.mockResolvedValue('PERIOD');
+      attendanceServiceMock.markCampusAbsentees.mockResolvedValue({
+        data: { count: 1 },
+      });
+      prismaMock.periodSlot.findMany.mockResolvedValue([
+        { id: 'period-1', endTime: '18:00' },
+      ]);
+      attendanceServiceMock.markPeriodAbsentees.mockResolvedValue({
+        data: { count: 1 },
+      });
+      for (let call = 0; call < 4; call += 1) {
+        auditLogServiceMock.log.mockRejectedValueOnce(
+          new Error('Audit unavailable'),
+        );
+      }
+
+      await expect(service.runAutoAbsentJob()).resolves.toBeUndefined();
+
+      expect(attendanceServiceMock.markCampusAbsentees).toHaveBeenCalledTimes(
+        2,
+      );
+      expect(attendanceServiceMock.markPeriodAbsentees).toHaveBeenCalledTimes(
+        2,
       );
     });
 
