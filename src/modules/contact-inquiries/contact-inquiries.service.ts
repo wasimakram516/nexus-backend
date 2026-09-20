@@ -22,8 +22,8 @@ export class ContactInquiriesService {
   ) {}
 
   /**
-   * Stores a public inquiry. A filled honeypot is silently dropped while
-   * returning the same success payload, so bots get no signal.
+   * Stores every public inquiry as NEW and alerts superadmins. Nothing is ever
+   * discarded.
    * @param {CreateContactInquiryDto} dto Validated submission.
    * @param {{ipAddress?: string, userAgent?: string}} meta Request metadata.
    * @returns {Promise<{message: string, data: null}>} Standard success payload.
@@ -33,14 +33,6 @@ export class ContactInquiriesService {
     meta: { ipAddress?: string; userAgent?: string },
   ) {
     const result = { message: 'Message received. Thank you.', data: null };
-    if (dto.website && dto.website.trim().length > 0) {
-      // Never silent for us: a real visitor whose browser autofilled the hidden
-      // field would otherwise vanish without a trace.
-      this.logger.warn(
-        `Dropped inquiry: honeypot field was filled (ip=${meta.ipAddress ?? 'unknown'}, type=${dto.inquiryType})`,
-      );
-      return result;
-    }
     const created = await this.prisma.contactInquiry.create({
       data: {
         name: dto.name,

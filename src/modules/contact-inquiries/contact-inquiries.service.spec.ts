@@ -1,4 +1,4 @@
-import { Logger, NotFoundException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { ContactInquiryStatus } from '../../prisma/client';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -64,11 +64,6 @@ describe('ContactInquiriesService', () => {
     );
   });
 
-  it('does not emit when the honeypot drops the inquiry', async () => {
-    await service.create({ ...dto, website: 'spam' }, {});
-    expect(emitMock).not.toHaveBeenCalled();
-  });
-
   it('still succeeds when the emit throws', async () => {
     emitMock.mockImplementationOnce(() => {
       throw new Error('socket down');
@@ -95,21 +90,18 @@ describe('ContactInquiriesService', () => {
     expect(res.data).toBeNull();
   });
 
-  it('silently drops honeypot submissions with the same success payload', async () => {
-    const res = await service.create({ ...dto, website: 'http://spam' }, {});
-    expect(prismaMock.contactInquiry.create).not.toHaveBeenCalled();
-    expect(res.message).toBe('Message received. Thank you.');
-  });
-
-  it('logs a warning when it drops a honeypot submission so drops are never invisible', async () => {
-    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
-    await service.create(
-      { ...dto, website: 'http://spam' },
-      { ipAddress: '1.2.3.4' },
-    );
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('honeypot'));
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('1.2.3.4'));
-    warn.mockRestore();
+  it('stores every submission as NEW (no status override) and returns the standard success payload', async () => {
+    const res = await service.create(dto, {});
+    expect(prismaMock.contactInquiry.create).toHaveBeenCalledTimes(1);
+    const data = (
+      prismaMock.contactInquiry.create.mock.calls[0] as [{ data: object }]
+    )[0].data;
+    expect(data).toMatchObject({ name: dto.name });
+    expect(data).not.toHaveProperty('status');
+    expect(res).toEqual({
+      message: 'Message received. Thank you.',
+      data: null,
+    });
   });
 
   it('lists with pagination and status filter', async () => {

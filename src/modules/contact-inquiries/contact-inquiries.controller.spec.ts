@@ -85,13 +85,10 @@ describe('ContactInquiries controllers', () => {
       ).resolves.toBeDefined();
     });
 
-    it('accepts the honeypot field so it reaches the service', async () => {
-      const out = (await validate(
-        CreateContactInquiryDto,
-        { ...valid, website: 'x' },
-        'body',
-      )) as CreateContactInquiryDto;
-      expect(out.website).toBe('x');
+    it('rejects unknown fields such as the removed website field', async () => {
+      await expect(
+        validate(CreateContactInquiryDto, { ...valid, website: 'x' }, 'body'),
+      ).rejects.toThrow();
     });
   });
 

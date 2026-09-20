@@ -58,14 +58,6 @@ export class CreateContactInquiryDto {
   @IsNotEmpty()
   @MaxLength(5000)
   message!: string;
-
-  @ApiPropertyOptional({
-    description: 'Honeypot. Must stay empty; bots that fill it are dropped.',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
-  website?: string;
 }
 
 export class ListContactInquiriesQueryDto {

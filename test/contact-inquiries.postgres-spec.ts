@@ -9,7 +9,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
  * Real-database proof for the contact inbox: an unauthenticated (no actor)
- * create audits without crashing, honeypot rows are never stored, and the
+ * create audits without crashing, and the
  * status / soft-delete / list-filter lifecycle works. Run via
  * `npm run test:postgres`; see test/POSTGRES-TESTS.md.
  */
@@ -53,9 +53,8 @@ describe('PostgreSQL contact inquiries', () => {
       { ipAddress: '203.0.113.9', userAgent: 'jest' },
     );
 
-  it('creates with no actor, audits it, and drops honeypot submissions', async () => {
+  it('creates with no actor and audits it', async () => {
     await submit();
-    await submit({ website: 'http://spam.example' });
 
     const rows = await prisma.contactInquiry.findMany({
       where: { email: `${marker}@example.com` },
