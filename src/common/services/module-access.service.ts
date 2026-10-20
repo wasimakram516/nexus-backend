@@ -180,6 +180,7 @@ export class ModuleAccessService {
             accentColorDark: institution.branding.accentColorDark,
             backgroundColorDark: institution.branding.backgroundColorDark,
             theme: institution.branding.theme,
+            colorOverrides: institution.branding.colorOverrides ?? null,
           }
         : null,
       settings,

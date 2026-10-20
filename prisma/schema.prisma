@@ -398,6 +398,8 @@ model InstitutionBranding {
   accentColorDark      String?     @map("accent_color_dark")
   backgroundColorDark  String?     @map("background_color_dark")
   theme                String?
+  /// Per-mode overrides for individual theme colors, keyed by token path. Only changed colors are stored.
+  colorOverrides       Json?       @map("color_overrides")
   createdBy            String?     @map("created_by") @db.Uuid
   updatedBy            String?     @map("updated_by") @db.Uuid
   deletedAt            DateTime?   @map("deleted_at") @db.Timestamptz(3)

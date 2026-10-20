@@ -23,6 +23,10 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { BillingCycle } from '../../../common/enums/domain.enums';
+import {
+  BrandingColorOverrides,
+  IsBrandingColorOverrides,
+} from '../../../common/validators/branding-color-overrides.validator';
 
 export class CreateInstitutionDto {
   @ApiProperty()
@@ -194,6 +198,16 @@ export class UpdateBrandingDto {
   @IsOptional()
   @IsString()
   theme?: string;
+
+  @ApiPropertyOptional({
+    type: 'object',
+    additionalProperties: true,
+    description:
+      'Per-mode theme color overrides, e.g. { "light": { "primary.main": "#1E3A8A" } }. Only changed colors are stored; null clears every override.',
+  })
+  @IsOptional()
+  @IsBrandingColorOverrides()
+  colorOverrides?: BrandingColorOverrides | null;
 }
 
 export class UpsertInstitutionSettingDto {

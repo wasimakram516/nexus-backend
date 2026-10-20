@@ -561,6 +561,39 @@ describe('PlatformService', () => {
       );
       expect(txMock.institutionBranding.upsert).not.toHaveBeenCalled();
     });
+
+    it('stores color overrides as given', async () => {
+      const colorOverrides = { light: { 'primary.main': '#1E3A8A' } };
+
+      await service.updateBranding('institution-1', { colorOverrides });
+
+      expect(txMock.institutionBranding.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: { colorOverrides },
+          create: { institutionId: 'institution-1', colorOverrides },
+        }),
+      );
+    });
+
+    it('clears every override with DbNull when colorOverrides is null', async () => {
+      await service.updateBranding('institution-1', { colorOverrides: null });
+
+      expect(txMock.institutionBranding.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: { colorOverrides: Prisma.DbNull },
+        }),
+      );
+    });
+
+    it('leaves stored overrides untouched when colorOverrides is omitted', async () => {
+      await service.updateBranding('institution-1', {
+        displayName: 'Nexus Academy',
+      });
+
+      expect(txMock.institutionBranding.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ update: { displayName: 'Nexus Academy' } }),
+      );
+    });
   });
 
   describe('upsertSettings', () => {

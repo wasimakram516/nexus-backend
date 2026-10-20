@@ -50,6 +50,7 @@ describe('ModuleAccessService', () => {
         secondaryColorDark: '#555555',
         accentColorDark: '#666666',
         theme: 'default',
+        colorOverrides: { light: { 'primary.dark': '#0A2540' } },
       },
       settings: [
         { key: 'brandingMode', value: { compact: true } },

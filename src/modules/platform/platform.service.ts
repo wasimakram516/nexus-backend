@@ -390,6 +390,21 @@ export class PlatformService {
   async updateBranding(institutionId: string, dto: UpdateBrandingDto) {
     await this.ensureInstitutionExists(institutionId);
 
+    // colorOverrides is a Json column: null must be written as DbNull (clear all
+    // overrides), and undefined must leave the stored value untouched.
+    const { colorOverrides, ...rest } = dto;
+    const brandingData = {
+      ...rest,
+      ...(colorOverrides === undefined
+        ? {}
+        : {
+            colorOverrides:
+              colorOverrides === null
+                ? Prisma.DbNull
+                : (colorOverrides as Prisma.InputJsonValue),
+          }),
+    };
+
     // Audited automatically by PrismaService (real before/after snapshot).
     const branding = await runAuditedTransaction(
       this.prisma,
@@ -407,7 +422,7 @@ export class PlatformService {
           ? tx.institutionBranding.update({
               where: { id: deletedBranding.id },
               data: {
-                ...dto,
+                ...brandingData,
                 deletedAt: null,
                 deletedBy: null,
                 deleteReason: null,
@@ -415,10 +430,10 @@ export class PlatformService {
             })
           : tx.institutionBranding.upsert({
               where: { institutionId },
-              update: dto,
+              update: brandingData,
               create: {
                 institutionId,
-                ...dto,
+                ...brandingData,
               },
             });
       },
