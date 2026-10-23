@@ -1,0 +1,696 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { CurrentUser } from '../../common/interfaces/current-user.interface';
+import { ModuleAccessService } from '../../common/services/module-access.service';
+import { RequestContextService } from '../../common/services/request-context.service';
+import { runAuditedTransaction } from '../../common/utils/transaction.util';
+import { ModuleKey, Prisma } from '../../prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
+import {
+  CreateExamTermDto,
+  CreateGradingScaleDto,
+  GradeBandInputDto,
+  UpdateExamTermDto,
+  UpdateGradingScaleDto,
+} from './dto/examinations.dto';
+
+/**
+ * Nested includes are not covered by the Prisma extension's soft-delete
+ * filter, so superseded (soft-deleted) bands must be excluded explicitly.
+ */
+const ACTIVE_BANDS_INCLUDE = {
+  bands: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' } },
+} as const;
+
+@Injectable()
+export class ExaminationsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly moduleAccessService: ModuleAccessService,
+    private readonly requestContext: RequestContextService,
+  ) {}
+
+  // ---------------------------------------------------------------------
+  // Grading scales
+  // ---------------------------------------------------------------------
+
+  /**
+   * Create a grading scale with its grade bands in one transaction.
+   *
+   * `institutionId` is always an explicit parameter (JWT-derived on the
+   * institution controller, path-derived on the superadmin platform mirror),
+   * same shape as `AcademicsService.createAcademicYear`.
+   *
+   * @param {string} institutionId - Target institution id.
+   * @param {CreateGradingScaleDto} dto - Scale name, description and bands.
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @returns {Promise<{message: string, data: object}>} The created scale with its ordered bands.
+   * @throws {NotFoundException} If the institution does not exist.
+   * @throws {BadRequestException} If the bands are invalid or overlap.
+   * @throws {ConflictException} If an active scale with the same name exists.
+   */
+  async createGradingScale(
+    institutionId: string,
+    dto: CreateGradingScaleDto,
+    currentUser: CurrentUser,
+  ) {
+    await this.assertInstitutionAndModule(institutionId, currentUser);
+    this.assertBandsValid(dto.bands);
+
+    try {
+      const data = await runAuditedTransaction(
+        this.prisma,
+        this.requestContext,
+        async (tx: Prisma.TransactionClient) => {
+          const created = await tx.gradingScale.create({
+            data: {
+              institutionId,
+              name: dto.name,
+              description: dto.description ?? null,
+            },
+          });
+          await this.createBands(tx, created.id, dto.bands);
+          return tx.gradingScale.findUniqueOrThrow({
+            where: { id: created.id },
+            include: ACTIVE_BANDS_INCLUDE,
+          });
+        },
+      );
+
+      return {
+        message: 'Grading scale created successfully',
+        data: { ...data, isCurrent: false },
+      };
+    } catch (error) {
+      this.rethrowUniqueConflict(error, 'grading scale');
+    }
+  }
+
+  /**
+   * List every grading scale of an institution, flagging the current one.
+   *
+   * @param {string} institutionId - Target institution id.
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @returns {Promise<{message: string, data: object[]}>} Scales with ordered bands.
+   */
+  async listGradingScales(institutionId: string, currentUser: CurrentUser) {
+    await this.assertInstitutionAndModule(institutionId, currentUser);
+
+    const [scales, institution] = await Promise.all([
+      this.prisma.gradingScale.findMany({
+        where: { institutionId },
+        include: ACTIVE_BANDS_INCLUDE,
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.institution.findUnique({
+        where: { id: institutionId },
+        select: { currentGradingScaleId: true },
+      }),
+    ]);
+
+    return {
+      message: 'Grading scales fetched successfully',
+      data: scales.map((scale) => ({
+        ...scale,
+        isCurrent: scale.id === institution?.currentGradingScaleId,
+      })),
+    };
+  }
+
+  /**
+   * Fetch one grading scale.
+   *
+   * @param {string} institutionId - Target institution id.
+   * @param {string} gradingScaleId - Scale id.
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @returns {Promise<{message: string, data: object}>} The scale with ordered bands.
+   * @throws {NotFoundException} If the scale does not exist in this institution.
+   */
+  async getGradingScale(
+    institutionId: string,
+    gradingScaleId: string,
+    currentUser: CurrentUser,
+  ) {
+    await this.assertInstitutionAndModule(institutionId, currentUser);
+    const scale = await this.findScaleOrThrow(institutionId, gradingScaleId);
+    const institution = await this.prisma.institution.findUnique({
+      where: { id: institutionId },
+      select: { currentGradingScaleId: true },
+    });
+
+    return {
+      message: 'Grading scale fetched successfully',
+      data: {
+        ...scale,
+        isCurrent: scale.id === institution?.currentGradingScaleId,
+      },
+    };
+  }
+
+  /**
+   * Partially update a grading scale. When `bands` is supplied it replaces
+   * the whole set atomically (existing bands are soft-deleted with a rotated
+   * `activeScopeKey` so their unique slots are freed).
+   *
+   * @param {string} institutionId - Target institution id.
+   * @param {string} gradingScaleId - Scale id.
+   * @param {UpdateGradingScaleDto} dto - Fields to change.
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @returns {Promise<{message: string, data: object}>} The updated scale.
+   * @throws {NotFoundException} If the scale does not exist in this institution.
+   * @throws {BadRequestException} If the new bands are invalid or overlap.
+   * @throws {ConflictException} If the rename collides with another scale.
+   */
+  async updateGradingScale(
+    institutionId: string,
+    gradingScaleId: string,
+    dto: UpdateGradingScaleDto,
+    currentUser: CurrentUser,
+  ) {
+    await this.assertInstitutionAndModule(institutionId, currentUser);
+    await this.findScaleOrThrow(institutionId, gradingScaleId);
+    if (dto.bands !== undefined) {
+      this.assertBandsValid(dto.bands);
+    }
+
+    try {
+      const data = await runAuditedTransaction(
+        this.prisma,
+        this.requestContext,
+        async (tx: Prisma.TransactionClient) => {
+          await tx.gradingScale.update({
+            where: { id: gradingScaleId },
+            data: {
+              name: dto.name,
+              description: dto.description,
+              updatedBy: currentUser.sub,
+            },
+          });
+
+          if (dto.bands !== undefined) {
+            await this.replaceBands(tx, gradingScaleId, currentUser, dto.bands);
+          }
+
+          return tx.gradingScale.findUniqueOrThrow({
+            where: { id: gradingScaleId },
+            include: ACTIVE_BANDS_INCLUDE,
+          });
+        },
+      );
+
+      const institution = await this.prisma.institution.findUnique({
+        where: { id: institutionId },
+        select: { currentGradingScaleId: true },
+      });
+
+      return {
+        message: 'Grading scale updated successfully',
+        data: {
+          ...data,
+          isCurrent: data.id === institution?.currentGradingScaleId,
+        },
+      };
+    } catch (error) {
+      this.rethrowUniqueConflict(error, 'grading scale');
+    }
+  }
+
+  /**
+   * Flip the institution's current grading scale pointer.
+   *
+   * @param {string} institutionId - Target institution id.
+   * @param {string} gradingScaleId - Scale to become current.
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @returns {Promise<{message: string, data: {id: string}}>} Confirmation payload.
+   * @throws {NotFoundException} If the scale does not exist in this institution.
+   */
+  async setCurrentGradingScale(
+    institutionId: string,
+    gradingScaleId: string,
+    currentUser: CurrentUser,
+  ) {
+    await this.assertInstitutionAndModule(institutionId, currentUser);
+    await this.findScaleOrThrow(institutionId, gradingScaleId);
+
+    await this.prisma.institution.update({
+      where: { id: institutionId },
+      data: { currentGradingScaleId: gradingScaleId },
+    });
+
+    return {
+      message: 'Current grading scale updated successfully',
+      data: { id: gradingScaleId },
+    };
+  }
+
+  /**
+   * Soft-delete a grading scale. Blocked while it is the institution's
+   * current scale, so new exams always have a resolvable default.
+   *
+   * @param {string} institutionId - Target institution id.
+   * @param {string} gradingScaleId - Scale id.
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} [reason] - Optional recycle-bin delete reason.
+   * @returns {Promise<{message: string, data: object}>} The deleted record's identifying fields.
+   * @throws {NotFoundException} If the scale does not exist in this institution.
+   * @throws {ConflictException} If this is the institution's current scale.
+   */
+  async deleteGradingScale(
+    institutionId: string,
+    gradingScaleId: string,
+    currentUser: CurrentUser,
+    reason?: string,
+  ) {
+    await this.assertInstitutionAndModule(institutionId, currentUser);
+    const existing = await this.findScaleOrThrow(institutionId, gradingScaleId);
+
+    const institution = await this.prisma.institution.findUnique({
+      where: { id: institutionId },
+      select: { currentGradingScaleId: true },
+    });
+    if (institution?.currentGradingScaleId === gradingScaleId) {
+      throw new ConflictException(
+        "This is the institution's current grading scale. Switch the current grading scale before deleting this one.",
+      );
+    }
+
+    await this.prisma.gradingScale.update({
+      where: { id: gradingScaleId },
+      data: this.softDeleteData(gradingScaleId, currentUser, reason),
+    });
+
+    return {
+      message: 'Grading scale moved to recycle bin successfully',
+      data: { id: existing.id, name: existing.name },
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // Exam terms
+  // ---------------------------------------------------------------------
+
+  /**
+   * Create an exam term inside one academic year of the institution.
+   *
+   * @param {string} institutionId - Target institution id.
+   * @param {CreateExamTermDto} dto - Term fields.
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @returns {Promise<{message: string, data: object}>} The created term.
+   * @throws {NotFoundException} If the institution or academic year does not exist in it.
+   * @throws {BadRequestException} If the date range is inverted.
+   * @throws {ConflictException} If the year already has an active term with this name.
+   */
+  async createExamTerm(
+    institutionId: string,
+    dto: CreateExamTermDto,
+    currentUser: CurrentUser,
+  ) {
+    await this.assertInstitutionAndModule(institutionId, currentUser);
+    await this.assertAcademicYearInInstitution(
+      institutionId,
+      dto.academicYearId,
+    );
+    this.assertDateRange(dto.startDate, dto.endDate);
+
+    try {
+      const data = await this.prisma.examTerm.create({
+        data: {
+          institutionId,
+          academicYearId: dto.academicYearId,
+          name: dto.name,
+          weight: dto.weight,
+          sortOrder: dto.sortOrder,
+          startDate: dto.startDate ? new Date(dto.startDate) : null,
+          endDate: dto.endDate ? new Date(dto.endDate) : null,
+          createdBy: currentUser.sub,
+        },
+      });
+      return { message: 'Exam term created successfully', data };
+    } catch (error) {
+      this.rethrowUniqueConflict(error, 'exam term');
+    }
+  }
+
+  /**
+   * List an institution's exam terms, optionally for one academic year.
+   *
+   * @param {string} institutionId - Target institution id.
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} [academicYearId] - Optional academic year filter.
+   * @returns {Promise<{message: string, data: object[]}>} Terms ordered by sort order then name.
+   */
+  async listExamTerms(
+    institutionId: string,
+    currentUser: CurrentUser,
+    academicYearId?: string,
+  ) {
+    await this.assertInstitutionAndModule(institutionId, currentUser);
+
+    const data = await this.prisma.examTerm.findMany({
+      where: { institutionId, ...(academicYearId ? { academicYearId } : {}) },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+    return { message: 'Exam terms fetched successfully', data };
+  }
+
+  /**
+   * Fetch one exam term.
+   *
+   * @param {string} institutionId - Target institution id.
+   * @param {string} examTermId - Term id.
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @returns {Promise<{message: string, data: object}>} The term.
+   * @throws {NotFoundException} If the term does not exist in this institution.
+   */
+  async getExamTerm(
+    institutionId: string,
+    examTermId: string,
+    currentUser: CurrentUser,
+  ) {
+    await this.assertInstitutionAndModule(institutionId, currentUser);
+    const data = await this.findTermOrThrow(institutionId, examTermId);
+    return { message: 'Exam term fetched successfully', data };
+  }
+
+  /**
+   * Partially update an exam term. The academic year cannot be changed
+   * once created, since exams and results hang off the (year, term) pair.
+   *
+   * @param {string} institutionId - Target institution id.
+   * @param {string} examTermId - Term id.
+   * @param {UpdateExamTermDto} dto - Fields to change.
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @returns {Promise<{message: string, data: object}>} The updated term.
+   * @throws {NotFoundException} If the term does not exist in this institution.
+   * @throws {BadRequestException} If the academic year is changed or the date range is inverted.
+   * @throws {ConflictException} If the rename collides with another term in the year.
+   */
+  async updateExamTerm(
+    institutionId: string,
+    examTermId: string,
+    dto: UpdateExamTermDto,
+    currentUser: CurrentUser,
+  ) {
+    await this.assertInstitutionAndModule(institutionId, currentUser);
+    const existing = await this.findTermOrThrow(institutionId, examTermId);
+
+    if (dto.academicYearId && dto.academicYearId !== existing.academicYearId) {
+      throw new BadRequestException(
+        "An exam term's academic year cannot be changed. Create a new term in the other year instead.",
+      );
+    }
+    this.assertDateRange(
+      dto.startDate ?? existing.startDate?.toISOString(),
+      dto.endDate ?? existing.endDate?.toISOString(),
+    );
+
+    try {
+      const data = await this.prisma.examTerm.update({
+        where: { id: examTermId },
+        data: {
+          name: dto.name,
+          weight: dto.weight,
+          sortOrder: dto.sortOrder,
+          startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+          endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+          updatedBy: currentUser.sub,
+        },
+      });
+      return { message: 'Exam term updated successfully', data };
+    } catch (error) {
+      this.rethrowUniqueConflict(error, 'exam term');
+    }
+  }
+
+  /**
+   * Soft-delete an exam term.
+   *
+   * @param {string} institutionId - Target institution id.
+   * @param {string} examTermId - Term id.
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} [reason] - Optional recycle-bin delete reason.
+   * @returns {Promise<{message: string, data: object}>} The deleted record's identifying fields.
+   * @throws {NotFoundException} If the term does not exist in this institution.
+   */
+  async deleteExamTerm(
+    institutionId: string,
+    examTermId: string,
+    currentUser: CurrentUser,
+    reason?: string,
+  ) {
+    await this.assertInstitutionAndModule(institutionId, currentUser);
+    const existing = await this.findTermOrThrow(institutionId, examTermId);
+
+    await this.prisma.examTerm.update({
+      where: { id: examTermId },
+      data: this.softDeleteData(examTermId, currentUser, reason),
+    });
+
+    return {
+      message: 'Exam term moved to recycle bin successfully',
+      data: { id: existing.id, name: existing.name },
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------
+
+  /**
+   * Validate a band set: each band must have min <= max, grades must be
+   * unique, and no two percentage ranges may overlap. Gaps are allowed (a
+   * percentage in a gap resolves to "Ungraded" at read time). Done at the
+   * service layer because the schema does not use range-exclusion
+   * constraints (no btree_gist extension).
+   *
+   * @param {GradeBandInputDto[]} bands - Incoming bands.
+   * @returns {void}
+   * @throws {BadRequestException} Naming the offending band(s).
+   */
+  private assertBandsValid(bands: GradeBandInputDto[]): void {
+    const seen = new Set<string>();
+    for (const band of bands) {
+      if (band.minPercentage > band.maxPercentage) {
+        throw new BadRequestException(
+          `Grade "${band.grade}": the minimum percentage cannot be greater than the maximum.`,
+        );
+      }
+      const key = band.grade.trim().toLowerCase();
+      if (seen.has(key)) {
+        throw new BadRequestException(
+          `Grade "${band.grade}" appears more than once in this scale.`,
+        );
+      }
+      seen.add(key);
+    }
+
+    const ordered = [...bands].sort(
+      (a, b) => a.minPercentage - b.minPercentage,
+    );
+    for (let index = 1; index < ordered.length; index += 1) {
+      const previous = ordered[index - 1];
+      const current = ordered[index];
+      if (current.minPercentage <= previous.maxPercentage) {
+        throw new BadRequestException(
+          `Grades "${previous.grade}" and "${current.grade}" have overlapping percentage ranges.`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Map validated band inputs to insertable rows, defaulting the display
+   * order to the input order.
+   *
+   * @param {string} gradingScaleId - Parent scale id.
+   * @param {GradeBandInputDto[]} bands - Validated bands.
+   * @returns {Prisma.GradeBandUncheckedCreateInput[]} Rows ready for create.
+   */
+  private toBandRows(
+    gradingScaleId: string,
+    bands: GradeBandInputDto[],
+  ): Prisma.GradeBandUncheckedCreateInput[] {
+    return bands.map((band, index) => ({
+      gradingScaleId,
+      grade: band.grade.trim(),
+      minPercentage: band.minPercentage,
+      maxPercentage: band.maxPercentage,
+      remarks: band.remarks ?? null,
+      sortOrder: band.sortOrder ?? index,
+    }));
+  }
+
+  /**
+   * Replace all bands of a scale: existing rows are soft-deleted with a
+   * rotated `activeScopeKey` (freeing the `[scale, grade]` unique slot),
+   * then the incoming set is inserted. Same approach as
+   * `AcademicsService.replaceCampusOverrides`.
+   *
+   * @param {Prisma.TransactionClient} tx - Active transaction client.
+   * @param {string} gradingScaleId - Parent scale id.
+   * @param {CurrentUser} currentUser - Recorded as the deleter of superseded rows.
+   * @param {GradeBandInputDto[]} bands - Full replacement set.
+   * @returns {Promise<void>}
+   */
+  private async replaceBands(
+    tx: Prisma.TransactionClient,
+    gradingScaleId: string,
+    currentUser: CurrentUser,
+    bands: GradeBandInputDto[],
+  ): Promise<void> {
+    const existing = await tx.gradeBand.findMany({
+      where: { gradingScaleId },
+      select: { id: true },
+    });
+
+    await Promise.all(
+      existing.map((row) =>
+        tx.gradeBand.update({
+          where: { id: row.id },
+          data: {
+            deletedAt: new Date(),
+            deletedBy: currentUser.sub,
+            deleteReason: 'Superseded by grading scale update',
+            updatedBy: currentUser.sub,
+            activeScopeKey: `REPLACED-${row.id}`,
+          },
+        }),
+      ),
+    );
+
+    await this.createBands(tx, gradingScaleId, bands);
+  }
+
+  /**
+   * Insert bands one row at a time. `createMany` is not audited by the
+   * Prisma audit extension, and a scale holds only a handful of bands, so
+   * per-row `create` keeps every band in the audit trail at negligible cost.
+   *
+   * @param {Prisma.TransactionClient} tx - Active transaction client.
+   * @param {string} gradingScaleId - Parent scale id.
+   * @param {GradeBandInputDto[]} bands - Validated bands.
+   * @returns {Promise<void>}
+   */
+  private async createBands(
+    tx: Prisma.TransactionClient,
+    gradingScaleId: string,
+    bands: GradeBandInputDto[],
+  ): Promise<void> {
+    for (const data of this.toBandRows(gradingScaleId, bands)) {
+      await tx.gradeBand.create({ data });
+    }
+  }
+
+  /**
+   * Build the data for a soft delete. The `activeScopeKey` is rotated to
+   * `DELETED:{id}` so the record's name stops occupying the unique index; a
+   * plain `deletedAt` update would leave the key as `ACTIVE` and block reuse
+   * of the name forever. Restoring resets the key (see the Prisma
+   * extension's update stamping).
+   *
+   * @param {string} id - Record being deleted.
+   * @param {CurrentUser} currentUser - Recorded as the deleter.
+   * @param {string} [reason] - Optional delete reason.
+   * @returns {{deletedAt: Date, deletedBy: string, deleteReason: string | null, updatedBy: string, activeScopeKey: string}}
+   */
+  private softDeleteData(
+    id: string,
+    currentUser: CurrentUser,
+    reason?: string,
+  ) {
+    return {
+      deletedAt: new Date(),
+      deletedBy: currentUser.sub,
+      deleteReason: reason ?? null,
+      updatedBy: currentUser.sub,
+      activeScopeKey: `DELETED:${id}`,
+    };
+  }
+
+  private assertDateRange(startDate?: string, endDate?: string): void {
+    if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
+      throw new BadRequestException(
+        'The start date must not be after the end date.',
+      );
+    }
+  }
+
+  private async assertAcademicYearInInstitution(
+    institutionId: string,
+    academicYearId: string,
+  ): Promise<void> {
+    const year = await this.prisma.academicYear.findUnique({
+      where: { id: academicYearId },
+      select: { institutionId: true },
+    });
+    if (!year || year.institutionId !== institutionId) {
+      throw new NotFoundException('Academic year not found.');
+    }
+  }
+
+  private async findScaleOrThrow(
+    institutionId: string,
+    gradingScaleId: string,
+  ) {
+    const scale = await this.prisma.gradingScale.findUnique({
+      where: { id: gradingScaleId },
+      include: ACTIVE_BANDS_INCLUDE,
+    });
+    if (!scale || scale.institutionId !== institutionId) {
+      throw new NotFoundException('Grading scale not found.');
+    }
+    return scale;
+  }
+
+  private async findTermOrThrow(institutionId: string, examTermId: string) {
+    const term = await this.prisma.examTerm.findUnique({
+      where: { id: examTermId },
+    });
+    if (!term || term.institutionId !== institutionId) {
+      throw new NotFoundException('Exam term not found.');
+    }
+    return term;
+  }
+
+  /**
+   * Verify the institution exists and the Examinations module is enabled
+   * for the caller, before any other work.
+   *
+   * @param {string} institutionId - Institution id to verify.
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @returns {Promise<void>}
+   * @throws {NotFoundException} If the institution does not exist.
+   */
+  private async assertInstitutionAndModule(
+    institutionId: string,
+    currentUser: CurrentUser,
+  ): Promise<void> {
+    const institution = await this.prisma.institution.findUnique({
+      where: { id: institutionId },
+      select: { id: true },
+    });
+    if (!institution) {
+      throw new NotFoundException('Institution not found.');
+    }
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.EXAMINATIONS,
+    );
+  }
+
+  private rethrowUniqueConflict(error: unknown, label: string): never {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      throw new ConflictException(
+        `An active ${label} with this name already exists.`,
+      );
+    }
+    throw error;
+  }
+}

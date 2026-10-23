@@ -19,6 +19,13 @@ import { UserRole } from '../../common/enums/domain.enums';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
+import {
+  CreateExamTermDto,
+  CreateGradingScaleDto,
+  UpdateExamTermDto,
+  UpdateGradingScaleDto,
+} from '../examinations/dto/examinations.dto';
+import { ExaminationsService } from '../examinations/examinations.service';
 import { AcademicsService } from '../academics/academics.service';
 import {
   CreateAcademicYearDto,
@@ -64,6 +71,7 @@ export class PlatformController {
     private readonly academicsService: AcademicsService,
     private readonly noticesService: NoticesService,
     private readonly attendanceCalendarService: AttendanceCalendarService,
+    private readonly examinationsService: ExaminationsService,
   ) {}
 
   @Post('plans')
@@ -406,6 +414,221 @@ export class PlatformController {
     return this.academicsService.deleteAcademicYear(
       institutionId,
       academicYearId,
+      currentUser,
+      dto.reason,
+    );
+  }
+
+  @Post('institutions/:institutionId/grading-scales')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Create a grading scale',
+    description:
+      'Superadmin escape hatch to create a grading scale for any institution. Institution admins use POST /examinations/grading-scales instead.',
+  })
+  createGradingScale(
+    @Param('institutionId') institutionId: string,
+    @Body() dto: CreateGradingScaleDto,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.examinationsService.createGradingScale(
+      institutionId,
+      dto,
+      currentUser,
+    );
+  }
+
+  @Get('institutions/:institutionId/grading-scales')
+  @Version('1')
+  @ApiOperation({
+    summary: 'List grading scales',
+    description:
+      'Returns grading scales for an institution from the platform scope.',
+  })
+  listGradingScales(
+    @Param('institutionId') institutionId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.examinationsService.listGradingScales(
+      institutionId,
+      currentUser,
+    );
+  }
+
+  @Get('institutions/:institutionId/grading-scales/:gradingScaleId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get a grading scale',
+    description: 'Returns one grading scale for inspection or editing.',
+  })
+  getGradingScale(
+    @Param('institutionId') institutionId: string,
+    @Param('gradingScaleId') gradingScaleId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.examinationsService.getGradingScale(
+      institutionId,
+      gradingScaleId,
+      currentUser,
+    );
+  }
+
+  @Patch('institutions/:institutionId/grading-scales/:gradingScaleId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Update a grading scale',
+    description:
+      'Updates an existing grading scale while preserving the institution scope.',
+  })
+  updateGradingScale(
+    @Param('institutionId') institutionId: string,
+    @Param('gradingScaleId') gradingScaleId: string,
+    @Body() dto: UpdateGradingScaleDto,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.examinationsService.updateGradingScale(
+      institutionId,
+      gradingScaleId,
+      dto,
+      currentUser,
+    );
+  }
+
+  @Patch(
+    'institutions/:institutionId/grading-scales/:gradingScaleId/set-current',
+  )
+  @Version('1')
+  @ApiOperation({
+    summary: 'Set the current grading scale',
+    description:
+      "Superadmin escape hatch to flip any institution's current grading scale pointer.",
+  })
+  setCurrentGradingScale(
+    @Param('institutionId') institutionId: string,
+    @Param('gradingScaleId') gradingScaleId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.examinationsService.setCurrentGradingScale(
+      institutionId,
+      gradingScaleId,
+      currentUser,
+    );
+  }
+
+  @Delete('institutions/:institutionId/grading-scales/:gradingScaleId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Soft-delete a grading scale',
+    description:
+      'Moves a grading scale to the recycle bin instead of permanently removing it immediately.',
+  })
+  deleteGradingScale(
+    @Param('institutionId') institutionId: string,
+    @Param('gradingScaleId') gradingScaleId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: DeleteRecordDto,
+  ) {
+    return this.examinationsService.deleteGradingScale(
+      institutionId,
+      gradingScaleId,
+      currentUser,
+      dto.reason,
+    );
+  }
+
+  @Post('institutions/:institutionId/exam-terms')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Create an exam term',
+    description:
+      'Superadmin escape hatch to create an exam term for any institution. Institution admins use POST /examinations/exam-terms instead.',
+  })
+  createExamTerm(
+    @Param('institutionId') institutionId: string,
+    @Body() dto: CreateExamTermDto,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.examinationsService.createExamTerm(
+      institutionId,
+      dto,
+      currentUser,
+    );
+  }
+
+  @Get('institutions/:institutionId/exam-terms')
+  @Version('1')
+  @ApiOperation({
+    summary: 'List exam terms',
+    description:
+      'Returns exam terms for an institution from the platform scope, optionally for one academic year.',
+  })
+  listExamTerms(
+    @Param('institutionId') institutionId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query('academicYearId') academicYearId?: string,
+  ) {
+    return this.examinationsService.listExamTerms(
+      institutionId,
+      currentUser,
+      academicYearId,
+    );
+  }
+
+  @Get('institutions/:institutionId/exam-terms/:examTermId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get an exam term',
+    description: 'Returns one exam term for inspection or editing.',
+  })
+  getExamTerm(
+    @Param('institutionId') institutionId: string,
+    @Param('examTermId') examTermId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.examinationsService.getExamTerm(
+      institutionId,
+      examTermId,
+      currentUser,
+    );
+  }
+
+  @Patch('institutions/:institutionId/exam-terms/:examTermId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Update an exam term',
+    description:
+      'Updates an existing exam term while preserving the institution scope.',
+  })
+  updateExamTerm(
+    @Param('institutionId') institutionId: string,
+    @Param('examTermId') examTermId: string,
+    @Body() dto: UpdateExamTermDto,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.examinationsService.updateExamTerm(
+      institutionId,
+      examTermId,
+      dto,
+      currentUser,
+    );
+  }
+
+  @Delete('institutions/:institutionId/exam-terms/:examTermId')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Soft-delete an exam term',
+    description:
+      'Moves an exam term to the recycle bin instead of permanently removing it immediately.',
+  })
+  deleteExamTerm(
+    @Param('institutionId') institutionId: string,
+    @Param('examTermId') examTermId: string,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: DeleteRecordDto,
+  ) {
+    return this.examinationsService.deleteExamTerm(
+      institutionId,
+      examTermId,
       currentUser,
       dto.reason,
     );

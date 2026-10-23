@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AcademicsModule } from '../academics/academics.module';
 import { AttendanceCalendarModule } from '../attendance-calendar/attendance-calendar.module';
 import { AuthModule } from '../auth/auth.module';
+import { ExaminationsModule } from '../examinations/examinations.module';
 import { NoticesModule } from '../notices/notices.module';
 import { RolesModule } from '../roles/roles.module';
 import { InstitutionConfigController } from './institution-config.controller';
@@ -18,6 +19,7 @@ import { SignupService } from './signup.service';
     AcademicsModule,
     NoticesModule,
     AttendanceCalendarModule,
+    ExaminationsModule,
   ],
   controllers: [
     PlatformPublicController,

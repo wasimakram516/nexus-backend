@@ -229,6 +229,22 @@ export const PERMISSION_CATALOG: readonly PermissionFeatureDef[] = [
     actions: ALL_ACTIONS,
   },
 
+  // Exams (M4, see M4-EXAMS-RESULTS-DESIGN.md § 6). Catalog keys name the
+  // resource, not the module. Later phases add exams / exam_subjects /
+  // exam_results alongside these.
+  {
+    key: 'grading_scales',
+    label: 'Grading Scales',
+    module: ModuleKey.EXAMINATIONS,
+    actions: ALL_ACTIONS,
+  },
+  {
+    key: 'exam_terms',
+    label: 'Exam Terms',
+    module: ModuleKey.EXAMINATIONS,
+    actions: ALL_ACTIONS,
+  },
+
   // Administrative — not gated by a plan module
   { key: 'users', label: 'Users', module: null, actions: ALL_ACTIONS },
   {

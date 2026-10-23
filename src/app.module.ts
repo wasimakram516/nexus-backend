@@ -29,6 +29,7 @@ import { UploadModule } from './modules/upload/upload.module';
 import { SchedulerModule } from './modules/scheduler/scheduler.module';
 import { NoticesModule } from './modules/notices/notices.module';
 import { TimetableModule } from './modules/timetable/timetable.module';
+import { ExaminationsModule } from './modules/examinations/examinations.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { TimetableModule } from './modules/timetable/timetable.module';
     SchedulerModule,
     NoticesModule,
     TimetableModule,
+    ExaminationsModule,
   ],
   providers: [
     AppLoggerService,
