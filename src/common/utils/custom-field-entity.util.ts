@@ -45,6 +45,8 @@ export const CUSTOM_FIELD_ENTITY_MODULES: Record<
   // rather than adding a new ModuleKey enum value (a schema migration) for
   // a single entity.
   user: ModuleKey.PEOPLE,
+  exam_term: ModuleKey.EXAMINATIONS,
+  exam: ModuleKey.EXAMINATIONS,
 };
 
 export const CUSTOM_FIELD_ENTITY_FEATURES: Record<
@@ -79,6 +81,8 @@ export const CUSTOM_FIELD_ENTITY_FEATURES: Record<
   period_slot: 'period_slots',
   attendance: 'attendance',
   user: 'users',
+  exam_term: 'exam_terms',
+  exam: 'exams',
 };
 
 /** Prevents definitions from being assigned to modules their record services never load. */

@@ -29,6 +29,9 @@ export const CustomFieldEntity = {
   PERIOD_SLOT: 'period_slot',
   ATTENDANCE: 'attendance',
   USER: 'user',
+  // M4 (Exams). ExamResult and GradingScale are deliberately not registered.
+  EXAM_TERM: 'exam_term',
+  EXAM: 'exam',
 } as const;
 
 export type CustomFieldEntityType =

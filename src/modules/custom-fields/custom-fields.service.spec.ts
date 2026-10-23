@@ -43,6 +43,12 @@ describe('CustomFieldsService', () => {
     periodSlot: {
       findUnique: jest.fn(),
     },
+    exam: {
+      findUnique: jest.fn(),
+    },
+    examTerm: {
+      findUnique: jest.fn(),
+    },
     attendance: {
       findUnique: jest.fn(),
     },
@@ -904,6 +910,7 @@ describe('CustomFieldsService', () => {
       },
       { entityType: CustomFieldEntity.PERIOD_SLOT, delegate: 'periodSlot' },
       { entityType: CustomFieldEntity.ATTENDANCE, delegate: 'attendance' },
+      { entityType: CustomFieldEntity.EXAM, delegate: 'exam' },
     ];
 
     it.each(cases)(
@@ -947,6 +954,51 @@ describe('CustomFieldsService', () => {
         ).resolves.toBeDefined();
       },
     );
+
+    it('resolves EXAM_TERM access through its institution, with no campus check', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-term',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.EXAMINATIONS,
+        entityType: CustomFieldEntity.EXAM_TERM,
+        fieldKey: 'venue',
+        label: 'Venue',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.examTerm.findUnique.mockResolvedValueOnce({
+        institutionId: 'institution-2',
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-term',
+          entityId: 'term-1',
+          value: 'Hall A',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      prismaMock.examTerm.findUnique.mockResolvedValueOnce({
+        institutionId: 'institution-1',
+      });
+      prismaMock.customFieldValue.upsert.mockResolvedValue({
+        id: 'value-1',
+        entityId: 'term-1',
+        definition: { id: 'definition-term' },
+      });
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-term',
+          entityId: 'term-1',
+          value: 'Hall A',
+        }),
+      ).resolves.toMatchObject({
+        message: 'Custom field value saved successfully',
+      });
+    });
 
     // CLASS/SECTION/SUBJECT reshape a nested level/class lookup into the
     // same { campusId, campus } shape before delegating — worth a dedicated

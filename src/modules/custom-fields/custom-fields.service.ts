@@ -988,6 +988,32 @@ export class CustomFieldsService {
           }),
         );
         return;
+      case CustomFieldEntity.EXAM:
+        await this.assertCampusScopedEntityAccess(
+          currentUser,
+          institutionId,
+          await this.prisma.exam.findUnique({
+            where: { id: entityId },
+            select: {
+              campusId: true,
+              campus: { select: { institutionId: true } },
+            },
+          }),
+        );
+        return;
+      case CustomFieldEntity.EXAM_TERM: {
+        // Exam terms are institution-wide, so scope by institution only.
+        const item = await this.prisma.examTerm.findUnique({
+          where: { id: entityId },
+          select: { institutionId: true },
+        });
+        if (!item || item.institutionId !== institutionId) {
+          throw new ForbiddenException(
+            'You can only manage custom field values for accessible entities.',
+          );
+        }
+        return;
+      }
       case CustomFieldEntity.USER: {
         // A user profile is institution-wide, not campus-scoped (unlike
         // every other person-shaped entity above) — resolved through
