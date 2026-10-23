@@ -141,71 +141,77 @@ export class ExamResultsService {
     const roster = await this.resolveRoster(paper, dto.sectionId);
     this.validateEntries(dto.entries, roster, paper.maxMarks);
 
-    const saved = await runAuditedTransaction(
-      this.prisma,
-      this.requestContext,
-      async (transaction) => {
-        const existing = await transaction.examResult.findMany({
-          where: {
-            examSubjectId,
-            studentId: { in: dto.entries.map((entry) => entry.studentId) },
-          },
-        });
-        const byStudent = new Map(existing.map((row) => [row.studentId, row]));
-        let written = 0;
+    const saved = await this.retryOnDuplicate(() =>
+      runAuditedTransaction(
+        this.prisma,
+        this.requestContext,
+        async (transaction) => {
+          const existing = await transaction.examResult.findMany({
+            where: {
+              examSubjectId,
+              studentId: { in: dto.entries.map((entry) => entry.studentId) },
+            },
+          });
+          const byStudent = new Map(
+            existing.map((row) => [row.studentId, row]),
+          );
+          let written = 0;
 
-        for (const entry of dto.entries) {
-          const isAbsent = entry.isAbsent ?? false;
-          const marksObtained = isAbsent ? null : (entry.marksObtained ?? null);
-          const current = byStudent.get(entry.studentId);
+          for (const entry of dto.entries) {
+            const isAbsent = entry.isAbsent ?? false;
+            const marksObtained = isAbsent
+              ? null
+              : (entry.marksObtained ?? null);
+            const current = byStudent.get(entry.studentId);
 
-          if (!current) {
-            await transaction.examResult.create({
+            if (!current) {
+              await transaction.examResult.create({
+                data: {
+                  examSubjectId,
+                  studentId: entry.studentId,
+                  sectionId: dto.sectionId,
+                  marksObtained,
+                  isAbsent,
+                  remarks: entry.remarks?.trim() || null,
+                  createdBy: currentUser.sub,
+                },
+              });
+              written += 1;
+              continue;
+            }
+
+            // Omitted keeps the saved remark; an empty string clears it.
+            const remarks =
+              entry.remarks === undefined
+                ? current.remarks
+                : entry.remarks.trim() || null;
+            const unchanged =
+              current.isAbsent === isAbsent &&
+              (current.marksObtained === null
+                ? null
+                : Number(current.marksObtained)) === marksObtained &&
+              current.remarks === remarks &&
+              current.sectionId === dto.sectionId;
+            if (unchanged) continue;
+
+            await transaction.examResult.update({
+              where: { id: current.id },
               data: {
-                examSubjectId,
-                studentId: entry.studentId,
-                sectionId: dto.sectionId,
                 marksObtained,
                 isAbsent,
-                remarks: entry.remarks?.trim() || null,
-                createdBy: currentUser.sub,
+                remarks,
+                sectionId: dto.sectionId,
+                updatedBy: currentUser.sub,
               },
             });
             written += 1;
-            continue;
           }
-
-          // Omitted keeps the saved remark; an empty string clears it.
-          const remarks =
-            entry.remarks === undefined
-              ? current.remarks
-              : entry.remarks.trim() || null;
-          const unchanged =
-            current.isAbsent === isAbsent &&
-            (current.marksObtained === null
-              ? null
-              : Number(current.marksObtained)) === marksObtained &&
-            current.remarks === remarks &&
-            current.sectionId === dto.sectionId;
-          if (unchanged) continue;
-
-          await transaction.examResult.update({
-            where: { id: current.id },
-            data: {
-              marksObtained,
-              isAbsent,
-              remarks,
-              sectionId: dto.sectionId,
-              updatedBy: currentUser.sub,
-            },
-          });
-          written += 1;
-        }
-        return written;
-      },
-      // Serializable, so two people saving the same new student at once
-      // cannot both insert: the loser retries and updates instead.
-      Prisma.TransactionIsolationLevel.Serializable,
+          return written;
+        },
+        // Serializable, so two people saving the same new student at once
+        // cannot both insert: the loser retries and updates instead.
+        Prisma.TransactionIsolationLevel.Serializable,
+      ),
     );
 
     return {
@@ -253,6 +259,32 @@ export class ExamResultsService {
         : [];
     });
     return { message: 'Failing students fetched successfully', data };
+  }
+
+  /**
+   * Re-runs a save that lost a race to another save of the same student. The
+   * database may report that race as a unique-constraint error instead of a
+   * serialization failure; on the second attempt the row exists, so the save
+   * updates it.
+   *
+   * @param {() => Promise<T>} save - One whole save attempt.
+   * @returns {Promise<T>} The result of the first attempt that succeeds.
+   * @throws {ConflictException} If it still collides after three attempts.
+   */
+  private async retryOnDuplicate<T>(save: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await save();
+      } catch (error) {
+        const duplicate =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002';
+        if (!duplicate) throw error;
+      }
+    }
+    throw new ConflictException(
+      'These marks were being saved by someone else at the same moment. Reload and try again.',
+    );
   }
 
   /** Marks may be written on a draft, or on a published exam that is unlocked. */

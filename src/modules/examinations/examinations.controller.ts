@@ -23,11 +23,13 @@ import {
   CreateExamTermDto,
   CreateGradingScaleDto,
   CreateRetakeExamDto,
+  ExamsForMeQueryDto,
   ListExamsQueryDto,
   UpdateExamDto,
   UpdateExamTermDto,
   UpdateGradingScaleDto,
 } from './dto/examinations.dto';
+import { ExamPrintablesService } from './exam-printables.service';
 import { ExaminationsService } from './examinations.service';
 
 @ApiTags('Examinations')
@@ -35,7 +37,10 @@ import { ExaminationsService } from './examinations.service';
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('examinations')
 export class ExaminationsController {
-  constructor(private readonly examinationsService: ExaminationsService) {}
+  constructor(
+    private readonly examinationsService: ExaminationsService,
+    private readonly printablesService: ExamPrintablesService,
+  ) {}
 
   @Post('grading-scales')
   @Version('1')
@@ -274,6 +279,26 @@ export class ExaminationsController {
     @Query() query: ListExamsQueryDto,
   ) {
     return this.examinationsService.listExams(currentUser, query);
+  }
+
+  // Declared before `exams/:id`, otherwise Nest matches "for-me" as the id.
+  // No permission decorator: every student and guardian needs it, and it only
+  // ever returns the caller's own (or their wards') exams.
+  @Get('exams/for-me')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get my exams',
+    description:
+      "The exams of the caller's own class, or of every ward's class for a guardian, each with its datesheet and whether results are published.",
+  })
+  getExamsForMe(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Query() query: ExamsForMeQueryDto,
+  ) {
+    return this.printablesService.getExamsForMe(
+      currentUser,
+      query.academicYearId,
+    );
   }
 
   @Get('exams/:id')

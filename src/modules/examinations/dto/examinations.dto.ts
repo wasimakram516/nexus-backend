@@ -336,3 +336,34 @@ export class BulkExamResultsDto {
   @Type(() => ExamResultEntryDto)
   entries!: ExamResultEntryDto[];
 }
+
+export class ClassResultSummaryQueryDto {
+  @ApiPropertyOptional({
+    description:
+      'Limit the rows to one section. Positions still use the whole class.',
+  })
+  @IsOptional()
+  @IsUUID()
+  sectionId?: string;
+}
+
+export class ReportCardsQueryDto {
+  @ApiProperty({ description: 'The class whose report cards are wanted.' })
+  @IsUUID()
+  classId!: string;
+
+  @ApiPropertyOptional({ description: 'Limit to one section of the class.' })
+  @IsOptional()
+  @IsUUID()
+  sectionId?: string;
+}
+
+export class ExamsForMeQueryDto {
+  @ApiPropertyOptional({
+    description:
+      "An academic year. Defaults to the institution's current year.",
+  })
+  @IsOptional()
+  @IsUUID()
+  academicYearId?: string;
+}

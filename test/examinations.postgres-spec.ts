@@ -3,14 +3,20 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { CurrentUser } from '../src/common/interfaces/current-user.interface';
 import { AuditLogService } from '../src/common/services/audit-log.service';
 import { CampusAccessService } from '../src/common/services/campus-access.service';
 import { EntityCustomFieldsService } from '../src/common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../src/common/services/module-access.service';
+import { PrintableMetaService } from '../src/common/services/printable-meta.service';
+import { UserPermissionsService } from '../src/common/services/user-permissions.service';
 import { RequestContextService } from '../src/common/services/request-context.service';
 import { RetakeExamType } from '../src/modules/examinations/dto/examinations.dto';
+import { ExamPrintablesService } from '../src/modules/examinations/exam-printables.service';
+import { ExamReportCardsService } from '../src/modules/examinations/exam-report-cards.service';
+import { ExamResultsViewService } from '../src/modules/examinations/exam-results-view.service';
 import { ExamResultsService } from '../src/modules/examinations/exam-results.service';
 import { ExamSubjectsService } from '../src/modules/examinations/exam-subjects.service';
 import { ExaminationsService } from '../src/modules/examinations/examinations.service';
@@ -36,6 +42,9 @@ describe('PostgreSQL examinations setup', () => {
   let service: ExaminationsService;
   let papers: ExamSubjectsService;
   let results: ExamResultsService;
+  let view: ExamResultsViewService;
+  let printables: ExamPrintablesService;
+  let reportCards: ExamReportCardsService;
   let institutionId: string;
   let academicYearId: string;
 
@@ -84,6 +93,31 @@ describe('PostgreSQL examinations setup', () => {
       new ModuleAccessService(prisma),
       new CampusAccessService(prisma),
       context,
+    );
+    const moduleAccess = new ModuleAccessService(prisma);
+    const campusAccess = new CampusAccessService(prisma);
+    const permissions = new UserPermissionsService(prisma);
+    view = new ExamResultsViewService(
+      prisma,
+      moduleAccess,
+      campusAccess,
+      permissions,
+    );
+    printables = new ExamPrintablesService(
+      prisma,
+      moduleAccess,
+      campusAccess,
+      permissions,
+      new PrintableMetaService(prisma),
+      view,
+    );
+    reportCards = new ExamReportCardsService(
+      prisma,
+      moduleAccess,
+      campusAccess,
+      permissions,
+      new PrintableMetaService(prisma),
+      view,
     );
 
     const institution = await prisma.institution.create({
@@ -1206,6 +1240,570 @@ describe('PostgreSQL examinations setup', () => {
           entries: [{ studentId: ayeshaId, marksObtained: 81 }],
         }),
       ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('results, printables and report cards', () => {
+    let campusId: string;
+    let classId: string;
+    let sectionA: string;
+    let sectionB: string;
+    let mathsId: string;
+    let scienceId: string;
+    let yearId: string;
+    let term1Exam: string;
+    let term2Exam: string;
+    let draftExam: string;
+    let retakeExam: string;
+    let mathsPaper1: string;
+    let mathsPaper2: string;
+    let ayeshaId: string;
+    let bilalId: string;
+    let saraId: string;
+    let ayeshaUser: CurrentUser;
+    let strangerUser: CurrentUser;
+    let guardianUser: CurrentUser;
+
+    const newStudent = async (
+      name: string,
+      regNo: string,
+      section: string,
+      cls = classId,
+    ) => {
+      const user = await prisma.user.create({
+        data: {
+          institutionId,
+          name,
+          email: `${randomUUID()}@example.test`,
+          passwordHash: 'unused-test-value',
+          role: 'STUDENT',
+        },
+      });
+      const student = await prisma.student.create({
+        data: {
+          userId: user.id,
+          institutionId,
+          regNo,
+          dob: new Date('2012-01-01'),
+          gender: 'FEMALE',
+          campusId,
+          admissionDate: new Date('2026-04-01'),
+        },
+      });
+      await prisma.studentEnrollment.create({
+        data: {
+          studentId: student.id,
+          academicYearId: yearId,
+          campusId,
+          classId: cls,
+          sectionId: section,
+        },
+      });
+      return {
+        studentId: student.id,
+        caller: {
+          sub: user.id,
+          email: user.email,
+          role: UserRole.STUDENT,
+          institutionId,
+        } as CurrentUser,
+      };
+    };
+
+    const mark = (
+      paperId: string,
+      section: string,
+      rows: Array<[string, number]>,
+    ) =>
+      results.bulkSave(superadmin, paperId, {
+        sectionId: section,
+        entries: rows.map(([studentId, marksObtained]) => ({
+          studentId,
+          marksObtained,
+        })),
+      });
+
+    beforeAll(async () => {
+      const year = await prisma.academicYear.create({
+        data: {
+          institutionId,
+          name: 'Report year',
+          startDate: new Date('2026-08-01'),
+          endDate: new Date('2027-06-30'),
+        },
+      });
+      yearId = year.id;
+      const campus = await prisma.campus.create({
+        data: {
+          institutionId,
+          name: 'Report campus',
+          location: 'Test',
+          studentStartTime: '08:00',
+          studentEndTime: '14:00',
+          staffStartTime: '08:00',
+          staffEndTime: '14:00',
+          lateThreshold: 10,
+          earlyLeaveThreshold: 10,
+        },
+      });
+      campusId = campus.id;
+      const level = await prisma.level.create({
+        data: { name: 'Report level', campusId },
+      });
+      classId = (
+        await prisma.academicClass.create({
+          data: { name: 'Report class', levelId: level.id },
+        })
+      ).id;
+      const otherClassId = (
+        await prisma.academicClass.create({
+          data: { name: 'Other report class', levelId: level.id },
+        })
+      ).id;
+      const otherSection = (
+        await prisma.section.create({
+          data: { name: 'Z', classId: otherClassId },
+        })
+      ).id;
+      sectionA = (await prisma.section.create({ data: { name: 'A', classId } }))
+        .id;
+      sectionB = (await prisma.section.create({ data: { name: 'B', classId } }))
+        .id;
+      mathsId = (
+        await prisma.subject.create({ data: { name: 'Maths', classId } })
+      ).id;
+      scienceId = (
+        await prisma.subject.create({ data: { name: 'Science', classId } })
+      ).id;
+
+      ayeshaId = await (async () => {
+        const made = await newStudent('Ayesha', 'RC-1', sectionA);
+        ayeshaUser = made.caller;
+        return made.studentId;
+      })();
+      bilalId = (await newStudent('Bilal', 'RC-2', sectionA)).studentId;
+      saraId = (await newStudent('Sara', 'RC-3', sectionB)).studentId;
+      strangerUser = (
+        await newStudent('Stranger', 'RC-9', otherSection, otherClassId)
+      ).caller;
+
+      // A guardian linked to Sara only.
+      const guardianAccount = await prisma.user.create({
+        data: {
+          institutionId,
+          name: 'Guardian',
+          email: `${randomUUID()}@example.test`,
+          passwordHash: 'unused-test-value',
+          role: 'GUARDIAN',
+        },
+      });
+      const guardian = await prisma.guardian.create({
+        data: {
+          userId: guardianAccount.id,
+          campusId,
+          relation: 'MOTHER',
+        },
+      });
+      await prisma.studentGuardian.create({
+        data: { studentId: saraId, guardianId: guardian.id },
+      });
+      guardianUser = {
+        sub: guardianAccount.id,
+        email: guardianAccount.email,
+        role: UserRole.GUARDIAN,
+        institutionId,
+      };
+
+      const scale = dataOf(
+        await service.createGradingScale(
+          institutionId,
+          {
+            name: 'Report scale',
+            bands: bands(
+              ['A', 80, 100],
+              ['B', 60, 79.99],
+              ['C', 40, 59.99],
+              ['F', 0, 39.99],
+            ),
+          },
+          superadmin,
+        ),
+      );
+      await service.setCurrentGradingScale(institutionId, scale.id, superadmin);
+
+      const term1 = dataOf(
+        await service.createExamTerm(
+          institutionId,
+          { academicYearId: yearId, name: 'Term 1', weight: 1, sortOrder: 1 },
+          superadmin,
+        ),
+      );
+      const term2 = dataOf(
+        await service.createExamTerm(
+          institutionId,
+          { academicYearId: yearId, name: 'Term 2', weight: 2, sortOrder: 2 },
+          superadmin,
+        ),
+      );
+      const term3 = dataOf(
+        await service.createExamTerm(
+          institutionId,
+          { academicYearId: yearId, name: 'Term 3', weight: 1, sortOrder: 3 },
+          superadmin,
+        ),
+      );
+
+      term1Exam = dataOf(
+        await service.createExam(superadmin, {
+          classId,
+          examTermId: term1.id,
+          name: 'Term 1 Exam',
+        }),
+      ).id;
+      term2Exam = dataOf(
+        await service.createExam(superadmin, {
+          classId,
+          examTermId: term2.id,
+          name: 'Term 2 Exam',
+        }),
+      ).id;
+      draftExam = dataOf(
+        await service.createExam(superadmin, {
+          classId,
+          examTermId: term3.id,
+          name: 'Term 3 Exam',
+        }),
+      ).id;
+
+      mathsPaper1 = dataOf(
+        await papers.createExamSubject(superadmin, {
+          examId: term1Exam,
+          subjectId: mathsId,
+          maxMarks: 100,
+          passingMarks: 40,
+          examDate: '2026-12-02',
+          startTime: '09:00',
+          endTime: '11:00',
+          room: 'A-1',
+        }),
+      ).id;
+      const sciencePaper1 = dataOf(
+        await papers.createExamSubject(superadmin, {
+          examId: term1Exam,
+          subjectId: scienceId,
+          maxMarks: 50,
+          passingMarks: 20,
+          examDate: '2026-12-01',
+          startTime: '10:00',
+          endTime: '12:00',
+        }),
+      ).id;
+      mathsPaper2 = dataOf(
+        await papers.createExamSubject(superadmin, {
+          examId: term2Exam,
+          subjectId: mathsId,
+          maxMarks: 100,
+          passingMarks: 40,
+          examDate: '2027-03-01',
+        }),
+      ).id;
+      await papers.createExamSubject(superadmin, {
+        examId: draftExam,
+        subjectId: mathsId,
+        maxMarks: 100,
+        passingMarks: 40,
+      });
+
+      await mark(mathsPaper1, sectionA, [
+        [ayeshaId, 80],
+        [bilalId, 30],
+      ]);
+      await mark(mathsPaper1, sectionB, [[saraId, 60]]);
+      await mark(sciencePaper1, sectionA, [
+        [ayeshaId, 40],
+        [bilalId, 10],
+      ]);
+      await mark(sciencePaper1, sectionB, [[saraId, 30]]);
+      await mark(mathsPaper2, sectionA, [
+        [ayeshaId, 90],
+        [bilalId, 50],
+      ]);
+      await mark(mathsPaper2, sectionB, [[saraId, 70]]);
+
+      await service.publishExam(superadmin, term1Exam);
+      await service.publishExam(superadmin, term2Exam);
+
+      // Bilal retakes maths only.
+      retakeExam = dataOf(
+        await service.createRetakeExam(superadmin, term1Exam, {
+          examType: RetakeExamType.RETAKE,
+          name: 'Term 1 Maths Retake',
+        }),
+      ).id;
+      const retakePaper = dataOf(
+        await papers.createExamSubject(superadmin, {
+          examId: retakeExam,
+          subjectId: mathsId,
+          maxMarks: 100,
+          passingMarks: 40,
+        }),
+      ).id;
+      await mark(retakePaper, sectionA, [[bilalId, 60]]);
+      await service.publishExam(superadmin, retakeExam);
+    });
+
+    it('ranks the class and each section from the exam itself', async () => {
+      const summary = dataOf(await view.getClassSummary(superadmin, term1Exam));
+      const byName = Object.fromEntries(
+        summary.students.map((s) => [s.name, s]),
+      );
+
+      expect(byName.Ayesha).toMatchObject({
+        positionInClass: 1,
+        classSize: 3,
+        positionInSection: 1,
+        sectionSize: 2,
+      });
+      expect(byName.Sara).toMatchObject({
+        positionInClass: 2,
+        positionInSection: 1,
+        sectionSize: 1,
+      });
+      expect(byName.Bilal).toMatchObject({
+        positionInClass: 3,
+        positionInSection: 2,
+      });
+      expect(byName.Ayesha.outcome).toMatchObject({
+        percentage: 80,
+        grade: 'A',
+        status: 'PASS',
+      });
+      expect(byName.Bilal.outcome).toMatchObject({ status: 'FAIL' });
+    });
+
+    it('never lets a later retake change what the original exam shows', async () => {
+      const summary = dataOf(await view.getClassSummary(superadmin, term1Exam));
+      const bilal = summary.students.find((s) => s.name === 'Bilal')!;
+
+      expect(
+        bilal.outcome.subjects.find((s) => s.subjectName === 'Maths')
+          ?.marksObtained,
+      ).toBe(30);
+    });
+
+    it('covers only the students who sat a retake exam', async () => {
+      const summary = dataOf(
+        await view.getClassSummary(superadmin, retakeExam),
+      );
+
+      expect(summary.students.map((s) => s.name)).toEqual(['Bilal']);
+    });
+
+    it('lets a student read only their own published result, with no other student in it', async () => {
+      const own = dataOf(
+        await view.getStudentSummary(ayeshaUser, term1Exam, ayeshaId),
+      );
+      expect(own.result).toMatchObject({ positionInClass: 1, classSize: 3 });
+      expect(JSON.stringify(own)).not.toMatch(/Bilal|Sara/);
+
+      await expect(
+        view.getStudentSummary(ayeshaUser, term1Exam, bilalId),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        view.getClassSummary(ayeshaUser, term1Exam),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        view.getStudentSummary(ayeshaUser, draftExam, ayeshaId),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('shows a guardian their own ward and no one else', async () => {
+      await expect(
+        view.getStudentSummary(guardianUser, term1Exam, saraId),
+      ).resolves.toBeDefined();
+      await expect(
+        view.getStudentSummary(guardianUser, term1Exam, ayeshaId),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('serves the datesheet in date order, to a student of the class even for a draft, and not to another class', async () => {
+      const sheet = dataOf(
+        await printables.getDatesheet(ayeshaUser, term1Exam),
+      );
+      expect(sheet.papers.map((p) => p.subjectName)).toEqual([
+        'Science',
+        'Maths',
+      ]);
+      expect(sheet.exam).toMatchObject({
+        className: 'Report class',
+        termName: 'Term 1',
+      });
+      expect(sheet.printMeta).toMatchObject({ documentType: 'DATESHEET' });
+
+      await expect(
+        printables.getDatesheet(ayeshaUser, draftExam),
+      ).resolves.toBeDefined();
+      await expect(
+        printables.getDatesheet(strangerUser, term1Exam),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('builds an admit card for a student and a batch for a section', async () => {
+      const card = dataOf(
+        await printables.getAdmitCard(ayeshaUser, term1Exam, ayeshaId),
+      );
+      expect(card.student).toMatchObject({
+        name: 'Ayesha',
+        regNo: 'RC-1',
+        className: 'Report class',
+        sectionName: 'A',
+      });
+      expect(card.papers).toHaveLength(2);
+      expect(card.printMeta).toMatchObject({ documentType: 'ADMIT_CARD' });
+      await expect(
+        printables.getAdmitCard(ayeshaUser, term1Exam, bilalId),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      const batch = dataOf(
+        await printables.getAdmitCards(superadmin, term1Exam, sectionA),
+      );
+      expect(batch.cards.map((c) => c.student.name)).toEqual([
+        'Ayesha',
+        'Bilal',
+      ]);
+      await expect(
+        printables.getAdmitCards(ayeshaUser, term1Exam),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('lists my exams for a student and for a guardian, flagging what is published', async () => {
+      const mine = dataOf(await printables.getExamsForMe(ayeshaUser, yearId));
+      const byName = Object.fromEntries(mine.map((e) => [e.name, e]));
+
+      expect(byName['Term 1 Exam']).toMatchObject({
+        resultsPublished: true,
+        studentName: 'Ayesha',
+      });
+      expect(byName['Term 3 Exam']).toMatchObject({ resultsPublished: false });
+      expect(byName['Term 1 Maths Retake']).toMatchObject({
+        examType: 'RETAKE',
+        originalExamId: term1Exam,
+      });
+      expect(byName['Term 1 Exam'].datesheet.map((p) => p.subjectName)).toEqual(
+        ['Science', 'Maths'],
+      );
+
+      const wards = dataOf(
+        await printables.getExamsForMe(guardianUser, yearId),
+      );
+      expect(new Set(wards.map((e) => e.studentName))).toEqual(
+        new Set(['Sara']),
+      );
+
+      const staffView = dataOf(
+        await printables.getExamsForMe(superadmin, yearId),
+      );
+      expect(staffView).toEqual([]);
+    });
+
+    it('puts a published retake mark on the report card and keeps the original beside it', async () => {
+      const card = dataOf(
+        await reportCards.getReportCard(superadmin, bilalId, yearId),
+      );
+      const term1 = card.terms.find((t) => t.term.name === 'Term 1')!;
+      const maths = term1.outcome.subjects.find(
+        (s) => s.subjectName === 'Maths',
+      )!;
+
+      expect(maths).toMatchObject({
+        marksObtained: 60,
+        isRetake: true,
+        retakeExamId: retakeExam,
+        retakeExamType: 'RETAKE',
+        originalMarksObtained: 30,
+        originalPercentage: 30,
+        originalGrade: 'F',
+      });
+      // 60 + 10 over 150 now, not 30 + 10.
+      expect(term1.outcome.percentage).toBeCloseTo(46.67, 2);
+      // Position still comes from the exam's own literal marks (26.67%, third).
+      expect(term1.positionInClass).toBe(3);
+    });
+
+    it('leaves a draft exam off the report card and weights the annual figures by term', async () => {
+      const bilal = dataOf(
+        await reportCards.getReportCard(superadmin, bilalId, yearId),
+      );
+      expect(bilal.terms.map((t) => t.term.name)).toEqual(['Term 1', 'Term 2']);
+
+      const maths = bilal.annual!.subjects.find(
+        (s) => s.subjectName === 'Maths',
+      )!;
+      // (60 x 1 + 50 x 2) / 3.
+      expect(maths.percentage).toBeCloseTo(53.33, 2);
+      // (46.67 x 1 + 50 x 2) / 3.
+      expect(bilal.annual!.percentage).toBeCloseTo(48.89, 2);
+      // Science is 20% for the year against a 40% pass line.
+      expect(bilal.annual).toMatchObject({
+        isOverallPass: false,
+        status: 'FAIL',
+      });
+
+      const ayesha = dataOf(
+        await reportCards.getReportCard(superadmin, ayeshaId, yearId),
+      );
+      expect(ayesha.annual).toMatchObject({
+        percentage: 86.67,
+        grade: 'A',
+        isOverallPass: true,
+      });
+    });
+
+    it("lets a student print their own report card but not a classmate's", async () => {
+      await expect(
+        reportCards.getReportCard(ayeshaUser, ayeshaId, yearId),
+      ).resolves.toBeDefined();
+      await expect(
+        reportCards.getReportCard(ayeshaUser, bilalId, yearId),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('computes a section batch of report cards once with the print header', async () => {
+      const batch = dataOf(
+        await reportCards.getReportCards(superadmin, yearId, classId, sectionA),
+      );
+
+      expect(batch.cards.map((c) => c.student.name)).toEqual([
+        'Ayesha',
+        'Bilal',
+      ]);
+      expect(batch.printMeta).toMatchObject({ documentType: 'REPORT_CARD' });
+      await expect(
+        reportCards.getReportCards(ayeshaUser, yearId, classId),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('switches the pass rule when the institution changes its exams setting', async () => {
+      await prisma.institutionSetting.create({
+        data: {
+          institutionId,
+          key: 'exams',
+          value: { passPolicy: 'AGGREGATE', aggregatePassPercentage: 40 },
+        },
+      });
+
+      const bilal = dataOf(
+        await reportCards.getReportCard(superadmin, bilalId, yearId),
+      );
+      expect(bilal.passPolicy).toBe('AGGREGATE');
+      expect(bilal.annual).toMatchObject({
+        isOverallPass: true,
+        status: 'PASS',
+      });
+      const summary = dataOf(await view.getClassSummary(superadmin, term1Exam));
+      expect(
+        summary.students.find((s) => s.name === 'Bilal')?.outcome.status,
+      ).toBe('FAIL');
     });
   });
 });

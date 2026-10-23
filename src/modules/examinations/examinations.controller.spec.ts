@@ -1,6 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { UserRole } from '../../prisma/client';
+import { ExamPrintablesService } from './exam-printables.service';
 import { ExaminationsController } from './examinations.controller';
 import { ExaminationsService } from './examinations.service';
 
@@ -26,6 +27,8 @@ describe('ExaminationsController', () => {
     deleteExamTerm: jest.fn(),
   };
 
+  const printablesMock = { getExamsForMe: jest.fn() };
+
   const currentUser: CurrentUser = {
     sub: 'admin-1',
     email: 'admin@nexus.test',
@@ -44,6 +47,7 @@ describe('ExaminationsController', () => {
     jest.clearAllMocks();
     controller = new ExaminationsController(
       serviceMock as unknown as ExaminationsService,
+      printablesMock as unknown as ExamPrintablesService,
     );
   });
 
@@ -89,6 +93,24 @@ describe('ExaminationsController', () => {
       'term-1',
       currentUser,
       'typo',
+    );
+  });
+
+  it('declares exams/for-me before exams/:id so it is not read as an id', () => {
+    const order = Object.getOwnPropertyNames(ExaminationsController.prototype);
+
+    expect(order.indexOf('getExamsForMe')).toBeGreaterThan(-1);
+    expect(order.indexOf('getExamsForMe')).toBeLessThan(
+      order.indexOf('getExam'),
+    );
+  });
+
+  it('serves my exams through the printables service with the chosen year', () => {
+    void controller.getExamsForMe(currentUser, { academicYearId: 'year-1' });
+
+    expect(printablesMock.getExamsForMe).toHaveBeenCalledWith(
+      currentUser,
+      'year-1',
     );
   });
 

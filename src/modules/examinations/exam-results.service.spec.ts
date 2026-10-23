@@ -9,7 +9,7 @@ import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
-import { ModuleKey, UserRole } from '../../prisma/client';
+import { ModuleKey, Prisma, UserRole } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExamResultsService } from './exam-results.service';
 
@@ -345,6 +345,48 @@ describe('ExamResultsService', () => {
           data: expect.objectContaining({ remarks: 'Keep me' }) as never,
         }),
       );
+    });
+
+    it('retries a save that collides with a simultaneous save of the same student', async () => {
+      const duplicate = new Prisma.PrismaClientKnownRequestError('dup', {
+        code: 'P2002',
+        clientVersion: 'test',
+      });
+      prismaMock.$transaction
+        .mockRejectedValueOnce(duplicate)
+        .mockImplementationOnce((callback: (client: typeof tx) => unknown) =>
+          callback(tx),
+        );
+
+      const { data } = await save([
+        { studentId: 's-ayesha', marksObtained: 70 },
+      ]);
+
+      expect(prismaMock.$transaction).toHaveBeenCalledTimes(2);
+      expect(data.saved).toBe(1);
+    });
+
+    it('gives a clear conflict if it keeps colliding', async () => {
+      prismaMock.$transaction.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('dup', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(
+        save([{ studentId: 's-ayesha', marksObtained: 70 }]),
+      ).rejects.toThrow(/saved by someone else at the same moment/);
+      expect(prismaMock.$transaction).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not retry an unrelated database error', async () => {
+      prismaMock.$transaction.mockRejectedValue(new Error('connection lost'));
+
+      await expect(
+        save([{ studentId: 's-ayesha', marksObtained: 70 }]),
+      ).rejects.toThrow('connection lost');
+      expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
     });
 
     it('rejects marks above the maximum, naming the student', async () => {
