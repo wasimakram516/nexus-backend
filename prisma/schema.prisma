@@ -206,6 +206,7 @@ model User {
   approvedDiscounts   StudentDiscount[]  @relation("StudentDiscountApprovedBy")
   adjustedSalaries    SalaryAdjustment[] @relation("SalaryAdjustmentAdjustedBy")
   auditLogs           AuditLog[]
+  publishedExams      Exam[]             @relation("ExamPublishedBy")
 
   @@unique([email, activeScopeKey], map: "user_email_active_scope_unique")
   @@unique([identifier, activeScopeKey], map: "user_identifier_active_scope_unique")
@@ -385,6 +386,7 @@ model Campus {
   // P0-6: campus-specific closures layered on top of the institution-wide
   // closure set.
   closureDates          InstitutionClosureDate[]
+  exams                 Exam[]
 
   @@index([institutionId])
   @@map("campuses")
@@ -714,6 +716,8 @@ model AcademicClass {
   notices         Notice[]
   // M3 (Timetable M1 track, decision #26).
   periodSlots     PeriodSlot[]
+  // M4 Phase 2.
+  exams           Exam[]
 
   @@index([levelId])
   @@index([createdAt])
@@ -796,6 +800,7 @@ model AcademicYear {
   studentHistory         StudentHistory[]
   // M4 Phase 1.
   examTerms              ExamTerm[]
+  exams                  Exam[]
 
   @@unique([institutionId, name, activeScopeKey], map: "academic_year_name_unique")
   @@index([institutionId])
@@ -1710,6 +1715,7 @@ model GradingScale {
   institution            Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   bands                  GradeBand[]
   currentForInstitutions Institution[] @relation("InstitutionCurrentGradingScale")
+  exams                  Exam[]
 
   @@unique([institutionId, name, activeScopeKey], map: "grading_scale_name_unique")
   @@index([institutionId])
@@ -1764,9 +1770,74 @@ model ExamTerm {
 
   institution  Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  exams        Exam[]
 
   @@unique([institutionId, academicYearId, name, activeScopeKey], map: "exam_term_unique")
   @@index([institutionId])
   @@index([academicYearId])
   @@map("exam_terms")
+}
+
+
+enum ExamStatus {
+  DRAFT
+  PUBLISHED
+}
+
+// M4 Phase 2. Retake / improvement / supplementary sittings are first-class
+// Exam rows, created only through POST /examinations/exams/:id/retakes.
+enum ExamType {
+  REGULAR
+  RETAKE
+  IMPROVEMENT
+  SUPPLEMENTARY
+}
+
+// M4 Phase 2. A class-scoped exam inside one ExamTerm. campusId and
+// academicYearId are denormalized server-side from classId / examTermId.
+// retakeKey is a non-nullable companion to (examType, originalExamId) so the
+// unique index below never contains a nullable column (Postgres treats NULLs
+// as distinct). It is server-computed: "REGULAR" for a regular exam,
+// "{examType}:{originalExamId}" for a retake-type exam.
+model Exam {
+  id                 String     @id @default(uuid()) @db.Uuid
+  examTermId         String     @map("exam_term_id") @db.Uuid
+  academicYearId     String     @map("academic_year_id") @db.Uuid
+  campusId           String     @map("campus_id") @db.Uuid
+  classId            String     @map("class_id") @db.Uuid
+  name               String
+  gradingScaleId     String     @map("grading_scale_id") @db.Uuid
+  status             ExamStatus @default(DRAFT)
+  examType           ExamType   @default(REGULAR) @map("exam_type")
+  originalExamId     String?    @map("original_exam_id") @db.Uuid
+  retakeKey          String     @default("REGULAR") @map("retake_key")
+  unlockedForEditing Boolean    @default(false) @map("unlocked_for_editing")
+  publishedAt        DateTime?  @map("published_at") @db.Timestamptz(3)
+  publishedBy        String?    @map("published_by") @db.Uuid
+  createdBy          String?    @map("created_by") @db.Uuid
+  updatedBy          String?    @map("updated_by") @db.Uuid
+  deletedAt          DateTime?  @map("deleted_at") @db.Timestamptz(3)
+  deletedBy          String?    @map("deleted_by") @db.Uuid
+  deleteReason       String?    @map("delete_reason")
+  activeScopeKey     String     @default("ACTIVE") @map("active_scope_key")
+  createdAt          DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  examTerm        ExamTerm      @relation(fields: [examTermId], references: [id], onDelete: Cascade)
+  academicYear    AcademicYear  @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  campus          Campus        @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  class           AcademicClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  gradingScale    GradingScale  @relation(fields: [gradingScaleId], references: [id], onDelete: Cascade)
+  publishedByUser User?         @relation("ExamPublishedBy", fields: [publishedBy], references: [id], onDelete: SetNull)
+  originalExam    Exam?         @relation("ExamRetakes", fields: [originalExamId], references: [id], onDelete: Cascade)
+  retakes         Exam[]        @relation("ExamRetakes")
+
+  @@unique([classId, examTermId, retakeKey, activeScopeKey], map: "exam_class_term_retake_unique")
+  @@index([academicYearId])
+  @@index([campusId])
+  @@index([classId])
+  @@index([examTermId])
+  @@index([gradingScaleId])
+  @@index([originalExamId])
+  @@map("exams")
 }
