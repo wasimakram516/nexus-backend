@@ -205,6 +205,18 @@ export class ExamSubjectsService {
         'The marks of a published exam are locked. Ask an admin to unlock the exam first.',
       );
     }
+    if (dto.maxMarks !== undefined && dto.maxMarks < Number(item.maxMarks)) {
+      // Counted before writing, so the error can say how many marks would
+      // end up above the new maximum.
+      const above = await this.prisma.examResult.count({
+        where: { examSubjectId: id, marksObtained: { gt: dto.maxMarks } },
+      });
+      if (above > 0) {
+        throw new ConflictException(
+          `${above} student${above === 1 ? ' has' : 's have'} marks above ${dto.maxMarks}. Correct those marks before lowering the maximum.`,
+        );
+      }
+    }
     this.assertMarks(
       dto.maxMarks ?? Number(item.maxMarks),
       dto.passingMarks ?? Number(item.passingMarks),

@@ -261,6 +261,15 @@ export const PERMISSION_CATALOG: readonly PermissionFeatureDef[] = [
     actions: ALL_ACTIONS,
   },
 
+  // Marks are entered as one sheet per paper, so, like attendance, there is
+  // no separate create action: update covers entering and correcting marks.
+  {
+    key: 'exam_results',
+    label: 'Exam Results',
+    module: ModuleKey.EXAMINATIONS,
+    actions: ['read', 'update'],
+  },
+
   // Administrative — not gated by a plan module
   { key: 'users', label: 'Users', module: null, actions: ALL_ACTIONS },
   {

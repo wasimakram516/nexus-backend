@@ -7,8 +7,10 @@ import {
 import { Type } from 'class-transformer';
 import { CustomFieldPayloadDto } from '../../../common/dto/custom-field-payload.dto';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsIn,
@@ -283,4 +285,54 @@ export class ListExamSubjectsQueryDto {
   @IsOptional()
   @IsUUID()
   examId?: string;
+}
+
+export class ExamResultsQueryDto {
+  @ApiProperty({ description: 'The section whose students are listed.' })
+  @IsUUID()
+  sectionId!: string;
+}
+
+export class ExamResultEntryDto {
+  @ApiProperty()
+  @IsUUID()
+  studentId!: string;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Marks out of the paper maximum. Null or omitted clears the mark. Must be empty when the student is absent.',
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(9999.99)
+  marksObtained?: number | null;
+
+  @ApiPropertyOptional({
+    description: 'True when the student did not sit this paper.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  isAbsent?: boolean;
+
+  @ApiPropertyOptional({ description: 'Teacher remark for this paper.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  remarks?: string;
+}
+
+export class BulkExamResultsDto {
+  @ApiProperty()
+  @IsUUID()
+  sectionId!: string;
+
+  @ApiProperty({ type: [ExamResultEntryDto] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => ExamResultEntryDto)
+  entries!: ExamResultEntryDto[];
 }

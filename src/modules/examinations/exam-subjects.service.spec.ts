@@ -27,6 +27,7 @@ describe('ExamSubjectsService', () => {
   const prismaMock = {
     exam: { findUnique: jest.fn() },
     subject: { findUnique: jest.fn() },
+    examResult: { count: jest.fn() },
     examSubject: {
       count: jest.fn(),
       findMany: jest.fn(),
@@ -342,6 +343,58 @@ describe('ExamSubjectsService', () => {
       await expect(
         service.updateExamSubject(currentUser, 'paper-1', { endTime: '09:00' }),
       ).rejects.toThrow(/end time must be after/);
+    });
+  });
+
+  describe('lowering the maximum marks', () => {
+    beforeEach(() => {
+      prismaMock.examSubject.update.mockResolvedValue({ id: 'paper-1' });
+    });
+
+    it('is blocked, with a count, while students already have marks above the new maximum', async () => {
+      prismaMock.examResult.count.mockResolvedValue(3);
+
+      await expect(
+        service.updateExamSubject(currentUser, 'paper-1', {
+          maxMarks: 60,
+          passingMarks: 20,
+        }),
+      ).rejects.toThrow(/3 students have marks above 60/);
+      expect(prismaMock.examResult.count).toHaveBeenCalledWith({
+        where: { examSubjectId: 'paper-1', marksObtained: { gt: 60 } },
+      });
+      expect(prismaMock.examSubject.update).not.toHaveBeenCalled();
+    });
+
+    it('uses the singular for one student', async () => {
+      prismaMock.examResult.count.mockResolvedValue(1);
+
+      await expect(
+        service.updateExamSubject(currentUser, 'paper-1', {
+          maxMarks: 60,
+          passingMarks: 20,
+        }),
+      ).rejects.toThrow(/1 student has marks above 60/);
+    });
+
+    it('goes ahead when no mark would exceed the new maximum', async () => {
+      prismaMock.examResult.count.mockResolvedValue(0);
+
+      await expect(
+        service.updateExamSubject(currentUser, 'paper-1', {
+          maxMarks: 60,
+          passingMarks: 20,
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('does not look at results when the maximum is raised or unchanged', async () => {
+      await service.updateExamSubject(currentUser, 'paper-1', {
+        maxMarks: 150,
+      });
+      await service.updateExamSubject(currentUser, 'paper-1', { room: 'D-4' });
+
+      expect(prismaMock.examResult.count).not.toHaveBeenCalled();
     });
   });
 

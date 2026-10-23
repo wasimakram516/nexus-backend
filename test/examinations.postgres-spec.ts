@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { CurrentUser } from '../src/common/interfaces/current-user.interface';
 import { AuditLogService } from '../src/common/services/audit-log.service';
 import { CampusAccessService } from '../src/common/services/campus-access.service';
@@ -7,6 +11,7 @@ import { EntityCustomFieldsService } from '../src/common/services/entity-custom-
 import { ModuleAccessService } from '../src/common/services/module-access.service';
 import { RequestContextService } from '../src/common/services/request-context.service';
 import { RetakeExamType } from '../src/modules/examinations/dto/examinations.dto';
+import { ExamResultsService } from '../src/modules/examinations/exam-results.service';
 import { ExamSubjectsService } from '../src/modules/examinations/exam-subjects.service';
 import { ExaminationsService } from '../src/modules/examinations/examinations.service';
 import { UserRole } from '../src/prisma/client';
@@ -30,6 +35,7 @@ describe('PostgreSQL examinations setup', () => {
   let prisma: PrismaService;
   let service: ExaminationsService;
   let papers: ExamSubjectsService;
+  let results: ExamResultsService;
   let institutionId: string;
   let academicYearId: string;
 
@@ -73,11 +79,21 @@ describe('PostgreSQL examinations setup', () => {
       new CampusAccessService(prisma),
       new EntityCustomFieldsService(prisma, context),
     );
+    results = new ExamResultsService(
+      prisma,
+      new ModuleAccessService(prisma),
+      new CampusAccessService(prisma),
+      context,
+    );
 
     const institution = await prisma.institution.create({
       data: { name: 'Exams setup test', slug: randomUUID() },
     });
     institutionId = institution.id;
+    // Non-superadmin callers (teachers) are subject to module entitlements.
+    await prisma.institutionEntitlement.create({
+      data: { institutionId, moduleKey: 'EXAMINATIONS', isEnabled: true },
+    });
     // Workflow actions stamp publishedBy, which is a foreign key to users.
     await prisma.user.create({
       data: {
@@ -820,6 +836,376 @@ describe('PostgreSQL examinations setup', () => {
           passingMarks: 30,
         }),
       ).resolves.toBeDefined();
+    });
+  });
+
+  describe('marks entry', () => {
+    let campusId: string;
+    let classId: string;
+    let sectionId: string;
+    let otherSectionId: string;
+    let paperId: string;
+    let examId: string;
+    let ayeshaId: string;
+    let bilalId: string;
+    let saraId: string;
+    let teacher: CurrentUser;
+    let staffProfileId: string;
+    let subjectId: string;
+
+    const newStudent = async (name: string, regNo: string, section: string) => {
+      const user = await prisma.user.create({
+        data: {
+          institutionId,
+          name,
+          email: `${randomUUID()}@example.test`,
+          passwordHash: 'unused-test-value',
+          role: 'STUDENT',
+        },
+      });
+      const student = await prisma.student.create({
+        data: {
+          userId: user.id,
+          institutionId,
+          regNo,
+          dob: new Date('2012-01-01'),
+          gender: 'FEMALE',
+          campusId,
+          admissionDate: new Date('2026-04-01'),
+        },
+      });
+      await prisma.studentEnrollment.create({
+        data: {
+          studentId: student.id,
+          academicYearId,
+          campusId,
+          classId,
+          sectionId: section,
+        },
+      });
+      return student.id;
+    };
+
+    beforeAll(async () => {
+      const campus = await prisma.campus.create({
+        data: {
+          institutionId,
+          name: 'Marks campus',
+          location: 'Test',
+          studentStartTime: '08:00',
+          studentEndTime: '14:00',
+          staffStartTime: '08:00',
+          staffEndTime: '14:00',
+          lateThreshold: 10,
+          earlyLeaveThreshold: 10,
+        },
+      });
+      campusId = campus.id;
+      const level = await prisma.level.create({
+        data: { name: 'Marks level', campusId },
+      });
+      classId = (
+        await prisma.academicClass.create({
+          data: { name: 'Marks class', levelId: level.id },
+        })
+      ).id;
+      sectionId = (
+        await prisma.section.create({ data: { name: 'A', classId } })
+      ).id;
+      otherSectionId = (
+        await prisma.section.create({ data: { name: 'B', classId } })
+      ).id;
+      subjectId = (
+        await prisma.subject.create({ data: { name: 'Marks maths', classId } })
+      ).id;
+
+      ayeshaId = await newStudent('Ayesha', 'M-1', sectionId);
+      bilalId = await newStudent('Bilal', 'M-2', sectionId);
+      saraId = await newStudent('Sara', 'M-3', otherSectionId);
+
+      const scale = await service.createGradingScale(
+        institutionId,
+        { name: 'Marks scale', bands: bands(['Pass', 0, 100]) },
+        superadmin,
+      );
+      await service.setCurrentGradingScale(
+        institutionId,
+        dataOf(scale).id,
+        superadmin,
+      );
+      const term = await service.createExamTerm(
+        institutionId,
+        { academicYearId, name: 'Marks term' },
+        superadmin,
+      );
+      examId = dataOf(
+        await service.createExam(superadmin, {
+          classId,
+          examTermId: dataOf(term).id,
+          name: 'Marks exam',
+        }),
+      ).id;
+      paperId = dataOf(
+        await papers.createExamSubject(superadmin, {
+          examId,
+          subjectId,
+          maxMarks: 100,
+          passingMarks: 40,
+        }),
+      ).id;
+
+      const teacherUser = await prisma.user.create({
+        data: {
+          institutionId,
+          name: 'Teacher',
+          email: `${randomUUID()}@example.test`,
+          passwordHash: 'unused-test-value',
+          role: 'STAFF',
+        },
+      });
+      staffProfileId = (
+        await prisma.staffProfile.create({
+          data: {
+            userId: teacherUser.id,
+            employmentType: 'TEACHING',
+            designation: 'Teacher',
+            gender: 'FEMALE',
+            campusId,
+            joiningDate: new Date('2025-01-01'),
+          },
+        })
+      ).id;
+      // The people service creates this assignment with a staff profile.
+      await prisma.userCampus.create({
+        data: { userId: teacherUser.id, campusId },
+      });
+      teacher = {
+        sub: teacherUser.id,
+        email: teacherUser.email,
+        role: UserRole.STAFF,
+        institutionId,
+      };
+    });
+
+    it('lists only the chosen section, ordered by name, and rejects a section of another class', async () => {
+      const grid = dataOf(
+        await results.getResults(superadmin, paperId, sectionId),
+      );
+      expect(grid.students.map((s) => s.name)).toEqual(['Ayesha', 'Bilal']);
+      expect(grid.students.every((s) => s.result === null)).toBe(true);
+
+      const foreignClass = await prisma.academicClass.create({
+        data: {
+          name: 'Foreign',
+          levelId: (
+            await prisma.level.findFirstOrThrow({ where: { campusId } })
+          ).id,
+        },
+      });
+      const foreignSection = await prisma.section.create({
+        data: { name: 'Z', classId: foreignClass.id },
+      });
+      await expect(
+        results.getResults(superadmin, paperId, foreignSection.id),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('saves marks, then reports an identical resave as unchanged', async () => {
+      const first = dataOf(
+        await results.bulkSave(superadmin, paperId, {
+          sectionId,
+          entries: [
+            { studentId: ayeshaId, marksObtained: 82.5, remarks: 'Great' },
+            { studentId: bilalId, isAbsent: true },
+          ],
+        }),
+      );
+      expect(first).toEqual({ saved: 2, unchanged: 0 });
+
+      const again = dataOf(
+        await results.bulkSave(superadmin, paperId, {
+          sectionId,
+          entries: [
+            { studentId: ayeshaId, marksObtained: 82.5 },
+            { studentId: bilalId, isAbsent: true },
+          ],
+        }),
+      );
+      expect(again).toEqual({ saved: 0, unchanged: 2 });
+
+      const grid = dataOf(
+        await results.getResults(superadmin, paperId, sectionId),
+      );
+      expect(grid.students[0].result).toMatchObject({
+        marksObtained: 82.5,
+        remarks: 'Great',
+        isAbsent: false,
+      });
+      expect(grid.students[1].result).toMatchObject({
+        marksObtained: null,
+        isAbsent: true,
+      });
+    });
+
+    it('audits each change under the student institution, with before and after values', async () => {
+      await results.bulkSave(superadmin, paperId, {
+        sectionId,
+        entries: [{ studentId: ayeshaId, marksObtained: 90 }],
+      });
+
+      const row = await prisma.examResult.findFirstOrThrow({
+        where: { examSubjectId: paperId, studentId: ayeshaId },
+      });
+      const audit = await prisma.auditLog.findMany({
+        where: { entity: 'ExamResult', entityId: row.id },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(audit.length).toBeGreaterThanOrEqual(2);
+      expect(
+        audit.every((entry) => entry.institutionId === institutionId),
+      ).toBe(true);
+      expect(JSON.stringify(audit[audit.length - 1].before)).toContain('82.5');
+      expect(JSON.stringify(audit[audit.length - 1].after)).toContain('90');
+    });
+
+    it('rejects out-of-range marks, marks with an absence, and a student of another section, writing nothing', async () => {
+      await expect(
+        results.bulkSave(superadmin, paperId, {
+          sectionId,
+          entries: [{ studentId: ayeshaId, marksObtained: 101 }],
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        results.bulkSave(superadmin, paperId, {
+          sectionId,
+          entries: [{ studentId: ayeshaId, marksObtained: 50, isAbsent: true }],
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        results.bulkSave(superadmin, paperId, {
+          sectionId,
+          entries: [{ studentId: saraId, marksObtained: 50 }],
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(
+        await prisma.examResult.count({
+          where: { examSubjectId: paperId, studentId: saraId },
+        }),
+      ).toBe(0);
+    });
+
+    it('lets two people save the same new student at once without an error', async () => {
+      const outcomes = await Promise.allSettled([
+        results.bulkSave(superadmin, paperId, {
+          sectionId: otherSectionId,
+          entries: [{ studentId: saraId, marksObtained: 60 }],
+        }),
+        results.bulkSave(superadmin, paperId, {
+          sectionId: otherSectionId,
+          entries: [{ studentId: saraId, marksObtained: 70 }],
+        }),
+      ]);
+
+      expect(outcomes.every((o) => o.status === 'fulfilled')).toBe(true);
+      expect(
+        await prisma.examResult.count({
+          where: { examSubjectId: paperId, studentId: saraId },
+        }),
+      ).toBe(1);
+    });
+
+    it('only lets a teacher save marks for a section they are assigned to teach', async () => {
+      await expect(
+        results.bulkSave(teacher, paperId, {
+          sectionId,
+          entries: [{ studentId: ayeshaId, marksObtained: 71 }],
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      await prisma.teacherSubject.create({
+        data: { staffProfileId, classId, subjectId, sectionId, campusId },
+      });
+      await expect(
+        results.bulkSave(teacher, paperId, {
+          sectionId,
+          entries: [{ studentId: ayeshaId, marksObtained: 71 }],
+        }),
+      ).resolves.toBeDefined();
+      // Assigned to section A only.
+      await expect(
+        results.bulkSave(teacher, paperId, {
+          sectionId: otherSectionId,
+          entries: [{ studentId: saraId, marksObtained: 71 }],
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('lists students who failed or were absent, and not those who passed', async () => {
+      await results.bulkSave(superadmin, paperId, {
+        sectionId,
+        entries: [
+          { studentId: ayeshaId, marksObtained: 39.99 },
+          { studentId: bilalId, isAbsent: true },
+        ],
+      });
+
+      const failing = dataOf(
+        await results.getFailingStudents(superadmin, paperId, sectionId),
+      );
+      expect(failing.map((s) => s.name)).toEqual(['Ayesha', 'Bilal']);
+
+      await results.bulkSave(superadmin, paperId, {
+        sectionId,
+        entries: [{ studentId: ayeshaId, marksObtained: 40 }],
+      });
+      expect(
+        dataOf(
+          await results.getFailingStudents(superadmin, paperId, sectionId),
+        ).map((s) => s.name),
+      ).toEqual(['Bilal']);
+    });
+
+    it('blocks lowering the maximum below existing marks, with a count', async () => {
+      await results.bulkSave(superadmin, paperId, {
+        sectionId,
+        entries: [{ studentId: ayeshaId, marksObtained: 75 }],
+      });
+
+      await expect(
+        papers.updateExamSubject(superadmin, paperId, {
+          maxMarks: 60,
+          passingMarks: 20,
+        }),
+      ).rejects.toThrow(/2 students have marks above 60/);
+    });
+
+    it('locks marks once published and allows corrections only while unlocked', async () => {
+      await service.publishExam(superadmin, examId);
+      await expect(
+        results.bulkSave(superadmin, paperId, {
+          sectionId,
+          entries: [{ studentId: ayeshaId, marksObtained: 80 }],
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(
+        dataOf(await results.getResults(superadmin, paperId, sectionId)).locked,
+      ).toBe(true);
+
+      await service.unlockExam(superadmin, examId);
+      await expect(
+        results.bulkSave(superadmin, paperId, {
+          sectionId,
+          entries: [{ studentId: ayeshaId, marksObtained: 80 }],
+        }),
+      ).resolves.toBeDefined();
+      await service.relockExam(superadmin, examId);
+      await expect(
+        results.bulkSave(superadmin, paperId, {
+          sectionId,
+          entries: [{ studentId: ayeshaId, marksObtained: 81 }],
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
     });
   });
 });
