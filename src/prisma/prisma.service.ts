@@ -69,6 +69,7 @@ type AuditReferenceIds = Partial<{
   definitionId: string;
   planId: string;
   gradingScaleId: string;
+  examId: string;
 }>;
 
 @Injectable()
@@ -654,6 +655,7 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
         'definitionId',
         'planId',
         'gradingScaleId',
+        'examId',
       ];
 
       for (const key of keys) {
@@ -823,6 +825,19 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
       );
       if (user?.institutionId) {
         return user.institutionId;
+      }
+    }
+
+    // M4: ExamSubject carries no campus of its own, only its parent exam.
+    if (refs.examId) {
+      const exam = await fetchWithinContext(() =>
+        service.exam.findUnique({
+          where: { id: refs.examId! },
+          select: { campus: { select: { institutionId: true } } },
+        }),
+      );
+      if (exam?.campus.institutionId) {
+        return exam.campus.institutionId;
       }
     }
 
