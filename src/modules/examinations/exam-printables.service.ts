@@ -214,6 +214,7 @@ export class ExamPrintablesService {
         .map((exam) => ({
           id: exam.id,
           name: exam.name,
+          academicYearId: exam.academicYearId,
           examTermName: exam.examTerm.name,
           examType: exam.examType,
           originalExamId: exam.originalExamId,

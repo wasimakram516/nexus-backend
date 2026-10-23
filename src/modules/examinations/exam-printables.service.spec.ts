@@ -282,6 +282,7 @@ describe('ExamPrintablesService', () => {
       name: `Exam ${id}`,
       classId,
       status: 'PUBLISHED',
+      academicYearId: 'year-now',
       examType: 'REGULAR',
       originalExamId: null,
       examTerm: { name: 'Term 1', sortOrder: 1 },
@@ -323,6 +324,7 @@ describe('ExamPrintablesService', () => {
       expect(data).toHaveLength(1);
       expect(data[0]).toMatchObject({
         id: 'e1',
+        academicYearId: 'year-now',
         examTermName: 'Term 1',
         resultsPublished: true,
         studentId: 's-ayesha',
