@@ -31,6 +31,7 @@ export enum RecycleBinEntity {
   GRADING_SCALE = 'grading-scale',
   EXAM_TERM = 'exam-term',
   EXAM = 'exam',
+  EXAM_SUBJECT = 'exam-subject',
 }
 
 export class ListRecycleBinQueryDto extends PaginationQueryDto {

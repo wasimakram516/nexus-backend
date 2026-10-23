@@ -57,7 +57,8 @@ type ChildModelKey =
   | 'studentEnrollment'
   | 'periodSlot'
   | 'examTerm'
-  | 'exam';
+  | 'exam'
+  | 'examSubject';
 
 interface CountableDelegate {
   count(args: { where: Record<string, unknown> }): Promise<number>;
@@ -285,6 +286,18 @@ const ENTITY_CASCADE_CHILDREN: Partial<
   // assertNoActiveDescendants() because retakes form a chain, never a cycle.
   [RecycleBinEntity.EXAM]: [
     { entity: RecycleBinEntity.EXAM, model: 'exam', fkField: 'originalExamId' },
+    {
+      entity: RecycleBinEntity.EXAM_SUBJECT,
+      model: 'examSubject',
+      fkField: 'examId',
+    },
+  ],
+  [RecycleBinEntity.SUBJECT]: [
+    {
+      entity: RecycleBinEntity.EXAM_SUBJECT,
+      model: 'examSubject',
+      fkField: 'subjectId',
+    },
   ],
   [RecycleBinEntity.SALARY]: [
     {
@@ -356,6 +369,7 @@ export class RecycleBinService {
       gradingScaleItems,
       examTermItems,
       examItems,
+      examSubjectItems,
     ] = await Promise.all([
       query.entity && query.entity !== RecycleBinEntity.USER
         ? Promise.resolve<RecycleBinItem[]>([])
@@ -441,6 +455,9 @@ export class RecycleBinService {
       query.entity && query.entity !== RecycleBinEntity.EXAM
         ? Promise.resolve<RecycleBinItem[]>([])
         : this.listDeletedExams(institutionId, query.search),
+      query.entity && query.entity !== RecycleBinEntity.EXAM_SUBJECT
+        ? Promise.resolve<RecycleBinItem[]>([])
+        : this.listDeletedExamSubjects(institutionId, query.search),
     ]);
 
     const combinedItems = [
@@ -472,6 +489,7 @@ export class RecycleBinService {
       ...gradingScaleItems,
       ...examTermItems,
       ...examItems,
+      ...examSubjectItems,
     ].sort(
       (left, right) => right.deletedAt.getTime() - left.deletedAt.getTime(),
     );
@@ -659,6 +677,10 @@ export class RecycleBinService {
         return await this.restoreExam(currentUser, recordId);
       }
 
+      if (entity === RecycleBinEntity.EXAM_SUBJECT) {
+        return await this.restoreExamSubject(currentUser, recordId);
+      }
+
       if (entity === RecycleBinEntity.PERIOD_SLOT) {
         return await this.restorePeriodSlot(currentUser, recordId);
       }
@@ -777,6 +799,10 @@ export class RecycleBinService {
 
     if (entity === RecycleBinEntity.EXAM) {
       return this.permanentlyDeleteExam(currentUser, recordId);
+    }
+
+    if (entity === RecycleBinEntity.EXAM_SUBJECT) {
+      return this.permanentlyDeleteExamSubject(currentUser, recordId);
     }
 
     if (entity === RecycleBinEntity.PERIOD_SLOT) {
@@ -1967,6 +1993,48 @@ export class RecycleBinService {
     }));
   }
 
+  private async listDeletedExamSubjects(
+    institutionId: string | null,
+    search?: string,
+  ): Promise<RecycleBinItem[]> {
+    const items = await this.prisma.examSubject.findMany({
+      where: {
+        deletedAt: { not: null },
+        ...(institutionId ? { exam: { campus: { institutionId } } } : {}),
+        ...(search
+          ? { subject: { name: { contains: search, mode: 'insensitive' } } }
+          : {}),
+      },
+      select: {
+        id: true,
+        examId: true,
+        subject: { select: { name: true } },
+        exam: {
+          select: { name: true, campus: { select: { institutionId: true } } },
+        },
+        deletedAt: true,
+        deletedBy: true,
+        deleteReason: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { deletedAt: 'desc' },
+    });
+    return items.map((item) => ({
+      entity: RecycleBinEntity.EXAM_SUBJECT,
+      id: item.id,
+      label: item.subject.name,
+      subtitle: `Exam paper · ${item.exam.name}`,
+      institutionId: item.exam.campus.institutionId,
+      deletedAt: item.deletedAt!,
+      deletedBy: item.deletedBy,
+      deleteReason: item.deleteReason,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      metadata: { subject: item.subject.name, examId: item.examId },
+    }));
+  }
+
   private async listDeletedStudentEnrollments(
     institutionId: string | null,
     search?: string,
@@ -2467,6 +2535,63 @@ export class RecycleBinService {
       metadata: { name: item.name },
     });
     return { message: 'Exam restored successfully', data: restored };
+  }
+
+  private async restoreExamSubject(
+    currentUser: CurrentUser,
+    examSubjectId: string,
+  ) {
+    const item = await this.prisma.examSubject.findFirst({
+      where: { id: examSubjectId, deletedAt: { not: null } },
+      select: {
+        id: true,
+        examId: true,
+        subjectId: true,
+        subject: { select: { name: true } },
+        exam: {
+          select: {
+            status: true,
+            campus: { select: { institutionId: true } },
+          },
+        },
+      },
+    });
+    if (!item) throw new NotFoundException('Deleted exam paper not found.');
+    this.assertInstitutionScope(currentUser, item.exam.campus.institutionId!);
+    // A deleted exam or subject is hidden by the default filter, so a missing
+    // parent here means it is still in the recycle bin.
+    const [exam, subject] = await Promise.all([
+      this.prisma.exam.findUnique({
+        where: { id: item.examId },
+        select: { id: true, status: true },
+      }),
+      this.prisma.subject.findUnique({
+        where: { id: item.subjectId },
+        select: { id: true },
+      }),
+    ]);
+    if (!exam || !subject) {
+      throw new ConflictException(
+        "Restore the paper's exam and subject first.",
+      );
+    }
+    if (exam.status !== 'DRAFT') {
+      throw new ConflictException(
+        'Papers can only be restored into an exam that is still a draft.',
+      );
+    }
+    const restored = await this.prisma.examSubject.update({
+      where: { id: examSubjectId, deletedAt: { not: null } },
+      data: { deletedAt: null, deletedBy: null, deleteReason: null },
+    });
+    await this.auditLogService.log(currentUser, {
+      action: 'EXAM_SUBJECT_RESTORED',
+      entity: 'ExamSubject',
+      entityId: examSubjectId,
+      institutionId: item.exam.campus.institutionId,
+      metadata: { subject: item.subject.name },
+    });
+    return { message: 'Exam paper restored successfully', data: restored };
   }
 
   private async restoreStudentEnrollment(
@@ -3441,6 +3566,44 @@ export class RecycleBinService {
     return {
       message: 'Exam permanently deleted successfully',
       data: { id: examId },
+    };
+  }
+
+  private async permanentlyDeleteExamSubject(
+    currentUser: CurrentUser,
+    examSubjectId: string,
+  ) {
+    const item = await this.prisma.examSubject.findFirst({
+      where: { id: examSubjectId, deletedAt: { not: null } },
+      select: {
+        deletedAt: true,
+        subject: { select: { name: true } },
+        exam: { select: { campus: { select: { institutionId: true } } } },
+      },
+    });
+    if (!item) throw new NotFoundException('Deleted exam paper not found.');
+    this.assertInstitutionScope(currentUser, item.exam.campus.institutionId!);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.EXAM_SUBJECT,
+      examSubjectId,
+      item.deletedAt!,
+      item.exam.campus.institutionId,
+    );
+    await this.requestContext.runWith({ allowHardDelete: true }, async () => {
+      await this.prisma.examSubject.delete({
+        where: { id: examSubjectId, deletedAt: { not: null } },
+      });
+    });
+    await this.auditLogService.log(currentUser, {
+      action: 'EXAM_SUBJECT_PERMANENTLY_DELETED',
+      entity: 'ExamSubject',
+      entityId: examSubjectId,
+      institutionId: item.exam.campus.institutionId,
+      metadata: { subject: item.subject.name },
+    });
+    return {
+      message: 'Exam paper permanently deleted successfully',
+      data: { id: examSubjectId },
     };
   }
 

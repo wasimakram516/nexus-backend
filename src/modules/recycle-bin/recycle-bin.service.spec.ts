@@ -90,6 +90,7 @@ describe('RecycleBinService', () => {
     subject: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
       count: jest.fn().mockResolvedValue(0),
@@ -213,6 +214,13 @@ describe('RecycleBinService', () => {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
       findUnique: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
+    },
+    examSubject: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
       count: jest.fn().mockResolvedValue(0),
@@ -3068,6 +3076,143 @@ describe('RecycleBinService', () => {
         ),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(prismaMock.gradingScale.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('exam papers (M4 phase 3)', () => {
+    const longAgo = () => {
+      const date = new Date();
+      date.setUTCDate(date.getUTCDate() - 31);
+      return date;
+    };
+    const deletedPaper = {
+      id: 'paper-1',
+      examId: 'exam-1',
+      subjectId: 'subject-1',
+      subject: { name: 'Mathematics' },
+      exam: { status: 'DRAFT', campus: { institutionId: 'institution-1' } },
+    };
+
+    it('lists deleted papers labelled with the subject and exam', async () => {
+      prismaMock.examSubject.findMany.mockResolvedValueOnce([
+        {
+          id: 'paper-1',
+          examId: 'exam-1',
+          subject: { name: 'Mathematics' },
+          exam: {
+            name: 'First Term',
+            campus: { institutionId: 'institution-1' },
+          },
+          deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+          deletedBy: 'admin-1',
+          deleteReason: null,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-05-06T09:00:00.000Z'),
+        },
+      ]);
+
+      const result = await service.listDeletedItems(adminUser, {
+        page: 1,
+        limit: 10,
+        entity: RecycleBinEntity.EXAM_SUBJECT,
+      });
+
+      expect(result.data.items).toEqual([
+        expect.objectContaining({
+          entity: RecycleBinEntity.EXAM_SUBJECT,
+          label: 'Mathematics',
+          subtitle: 'Exam paper · First Term',
+        }),
+      ]);
+    });
+
+    it('restores a paper into a draft exam whose subject is active', async () => {
+      prismaMock.examSubject.findFirst.mockResolvedValue(deletedPaper);
+      prismaMock.exam.findUnique.mockResolvedValue({
+        id: 'exam-1',
+        status: 'DRAFT',
+      });
+      prismaMock.subject.findUnique.mockResolvedValue({ id: 'subject-1' });
+      prismaMock.examSubject.update.mockResolvedValue({ id: 'paper-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.EXAM_SUBJECT,
+        'paper-1',
+      );
+
+      expect(result.message).toBe('Exam paper restored successfully');
+    });
+
+    it('refuses to restore a paper into a published exam', async () => {
+      prismaMock.examSubject.findFirst.mockResolvedValue(deletedPaper);
+      prismaMock.exam.findUnique.mockResolvedValue({
+        id: 'exam-1',
+        status: 'PUBLISHED',
+      });
+      prismaMock.subject.findUnique.mockResolvedValue({ id: 'subject-1' });
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.EXAM_SUBJECT,
+          'paper-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prismaMock.examSubject.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses to restore a paper while its exam or subject is still deleted', async () => {
+      prismaMock.examSubject.findFirst.mockResolvedValue(deletedPaper);
+      prismaMock.exam.findUnique.mockResolvedValue(null);
+      prismaMock.subject.findUnique.mockResolvedValue({ id: 'subject-1' });
+
+      await expect(
+        service.restoreRecord(
+          adminUser,
+          RecycleBinEntity.EXAM_SUBJECT,
+          'paper-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('permanently deletes a paper once eligible', async () => {
+      prismaMock.examSubject.findFirst.mockResolvedValue({
+        deletedAt: longAgo(),
+        subject: { name: 'Mathematics' },
+        exam: { campus: { institutionId: 'institution-1' } },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.EXAM_SUBJECT,
+        'paper-1',
+      );
+
+      expect(prismaMock.examSubject.delete).toHaveBeenCalledWith({
+        where: { id: 'paper-1', deletedAt: { not: null } },
+      });
+      expect(result.message).toBe(
+        'Exam paper permanently deleted successfully',
+      );
+    });
+
+    it('blocks purging an exam while an active paper still belongs to it', async () => {
+      prismaMock.exam.findFirst.mockResolvedValue({
+        name: 'First Term',
+        deletedAt: longAgo(),
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.examSubject.count.mockResolvedValueOnce(1);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.EXAM,
+          'exam-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prismaMock.exam.delete).not.toHaveBeenCalled();
     });
   });
 });
