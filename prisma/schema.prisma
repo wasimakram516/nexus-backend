@@ -249,6 +249,12 @@ model Institution {
   // active association" pattern rather than a boolean-flag-plus-index.
   currentAcademicYearId  String?                     @map("current_academic_year_id") @db.Uuid
   currentAcademicYear    AcademicYear?               @relation("InstitutionCurrentAcademicYear", fields: [currentAcademicYearId], references: [id], onDelete: SetNull)
+  // M4 Phase 1: single pointer FK to the institution's current grading scale,
+  // same shape as currentAcademicYearId above.
+  currentGradingScaleId  String?                     @map("current_grading_scale_id") @db.Uuid
+  currentGradingScale    GradingScale?               @relation("InstitutionCurrentGradingScale", fields: [currentGradingScaleId], references: [id], onDelete: SetNull)
+  gradingScales          GradingScale[]
+  examTerms              ExamTerm[]
   // M2 Phase 3 (decision #25): Student.institutionId is now denormalized
   // directly onto Student (see below) so regNo uniqueness can be scoped per
   // institution at the DB level.
@@ -788,6 +794,8 @@ model AcademicYear {
   // scoped to this session.
   enrollments            StudentEnrollment[]
   studentHistory         StudentHistory[]
+  // M4 Phase 1.
+  examTerms              ExamTerm[]
 
   @@unique([institutionId, name, activeScopeKey], map: "academic_year_name_unique")
   @@index([institutionId])
@@ -1680,4 +1688,85 @@ model ContactInquiry {
   @@index([status, createdAt])
   @@index([createdAt])
   @@map("contact_inquiries")
+}
+
+// M4 Phase 1. Institution-configurable grading policy (decision #3). Bands are
+// real child rows, matching StudentFineRule / SalaryDeductionRule. One scale is
+// marked current per institution via Institution.currentGradingScaleId.
+model GradingScale {
+  id             String    @id @default(uuid()) @db.Uuid
+  institutionId  String    @map("institution_id") @db.Uuid
+  name           String
+  description    String?
+  createdBy      String?   @map("created_by") @db.Uuid
+  updatedBy      String?   @map("updated_by") @db.Uuid
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedBy      String?   @map("deleted_by") @db.Uuid
+  deleteReason   String?   @map("delete_reason")
+  activeScopeKey String    @default("ACTIVE") @map("active_scope_key")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  institution            Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  bands                  GradeBand[]
+  currentForInstitutions Institution[] @relation("InstitutionCurrentGradingScale")
+
+  @@unique([institutionId, name, activeScopeKey], map: "grading_scale_name_unique")
+  @@index([institutionId])
+  @@map("grading_scales")
+}
+
+// Child of GradingScale, replaced wholesale via the parent's create/update
+// payload. No standalone delete route, so no RecycleBinEntity entry.
+model GradeBand {
+  id             String    @id @default(uuid()) @db.Uuid
+  gradingScaleId String    @map("grading_scale_id") @db.Uuid
+  grade          String
+  minPercentage  Decimal   @map("min_percentage") @db.Decimal(5, 2)
+  maxPercentage  Decimal   @map("max_percentage") @db.Decimal(5, 2)
+  remarks        String?
+  sortOrder      Int       @default(0) @map("sort_order")
+  createdBy      String?   @map("created_by") @db.Uuid
+  updatedBy      String?   @map("updated_by") @db.Uuid
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedBy      String?   @map("deleted_by") @db.Uuid
+  deleteReason   String?   @map("delete_reason")
+  activeScopeKey String    @default("ACTIVE") @map("active_scope_key")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  gradingScale GradingScale @relation(fields: [gradingScaleId], references: [id], onDelete: Cascade)
+
+  @@unique([gradingScaleId, grade, activeScopeKey], map: "grade_band_grade_unique")
+  @@index([gradingScaleId])
+  @@map("grade_bands")
+}
+
+// M4 Phase 1. Institution-wide term definition scoped to one AcademicYear.
+// weight feeds the annual aggregate (equal-weighted by default).
+model ExamTerm {
+  id             String    @id @default(uuid()) @db.Uuid
+  institutionId  String    @map("institution_id") @db.Uuid
+  academicYearId String    @map("academic_year_id") @db.Uuid
+  name           String
+  weight         Decimal   @default(1.00) @map("weight") @db.Decimal(5, 2)
+  sortOrder      Int       @default(0) @map("sort_order")
+  startDate      DateTime? @map("start_date") @db.Timestamptz(3)
+  endDate        DateTime? @map("end_date") @db.Timestamptz(3)
+  createdBy      String?   @map("created_by") @db.Uuid
+  updatedBy      String?   @map("updated_by") @db.Uuid
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedBy      String?   @map("deleted_by") @db.Uuid
+  deleteReason   String?   @map("delete_reason")
+  activeScopeKey String    @default("ACTIVE") @map("active_scope_key")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  institution  Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+
+  @@unique([institutionId, academicYearId, name, activeScopeKey], map: "exam_term_unique")
+  @@index([institutionId])
+  @@index([academicYearId])
+  @@map("exam_terms")
 }
