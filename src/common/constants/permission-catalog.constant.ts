@@ -245,6 +245,15 @@ export const PERMISSION_CATALOG: readonly PermissionFeatureDef[] = [
     actions: ALL_ACTIONS,
   },
 
+  // The exams key also gates publish / unlock / relock and retake creation,
+  // which are specialised writes against the same resource.
+  {
+    key: 'exams',
+    label: 'Exams',
+    module: ModuleKey.EXAMINATIONS,
+    actions: ALL_ACTIONS,
+  },
+
   // Administrative — not gated by a plan module
   { key: 'users', label: 'Users', module: null, actions: ALL_ACTIONS },
   {

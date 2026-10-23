@@ -1,15 +1,17 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
+import { CampusAccessService } from '../../common/services/campus-access.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import { ModuleKey, Prisma, UserRole } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { GradeBandInputDto } from './dto/examinations.dto';
+import { GradeBandInputDto, RetakeExamType } from './dto/examinations.dto';
 import { ExaminationsService } from './examinations.service';
 
 describe('ExaminationsService', () => {
@@ -44,12 +46,26 @@ describe('ExaminationsService', () => {
       update: jest.fn(),
     },
     academicYear: { findUnique: jest.fn() },
+    academicClass: { findUnique: jest.fn() },
+    exam: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      count: jest.fn(),
+    },
     examTerm: {
       create: jest.fn(),
       findMany: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
     },
+  };
+
+  const campusAccessMock = {
+    assertClassAccess: jest.fn().mockResolvedValue(undefined),
+    assertCampusAccess: jest.fn().mockResolvedValue(undefined),
+    getScopedCampusIds: jest.fn(),
   };
 
   const moduleAccessMock = {
@@ -89,6 +105,7 @@ describe('ExaminationsService', () => {
         { provide: PrismaService, useValue: prismaMock },
         { provide: ModuleAccessService, useValue: moduleAccessMock },
         RequestContextService,
+        { provide: CampusAccessService, useValue: campusAccessMock },
       ],
     }).compile();
     service = moduleRef.get(ExaminationsService);
@@ -556,6 +573,375 @@ describe('ExaminationsService', () => {
       await expect(
         service.getExamTerm('inst-1', 'term-1', currentUser),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('exams', () => {
+    const exam = {
+      id: 'exam-1',
+      examTermId: 'term-1',
+      academicYearId: 'year-1',
+      campusId: 'campus-1',
+      classId: 'class-1',
+      name: 'First Term Examination',
+      gradingScaleId: 'scale-1',
+      status: 'DRAFT',
+      examType: 'REGULAR',
+      originalExamId: null,
+    };
+    const term = {
+      id: 'term-1',
+      institutionId: 'inst-1',
+      academicYearId: 'year-1',
+    };
+
+    beforeEach(() => {
+      prismaMock.academicClass.findUnique.mockResolvedValue({
+        level: { campusId: 'campus-1', campus: { institutionId: 'inst-1' } },
+      });
+      prismaMock.examTerm.findUnique.mockResolvedValue(term);
+      prismaMock.institution.findUnique.mockResolvedValue({
+        id: 'inst-1',
+        currentGradingScaleId: 'scale-current',
+      });
+      prismaMock.exam.findUnique.mockResolvedValue(exam);
+    });
+
+    describe('createExam', () => {
+      it('pins the current grading scale and derives campus and year server-side', async () => {
+        prismaMock.exam.create.mockResolvedValue(exam);
+
+        await service.createExam(currentUser, {
+          classId: 'class-1',
+          examTermId: 'term-1',
+          name: 'First Term Examination',
+        });
+
+        expect(campusAccessMock.assertClassAccess).toHaveBeenCalledWith(
+          currentUser,
+          'class-1',
+        );
+        expect(prismaMock.exam.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            campusId: 'campus-1',
+            academicYearId: 'year-1',
+            gradingScaleId: 'scale-current',
+            examType: 'REGULAR',
+            retakeKey: 'REGULAR',
+            createdBy: 'admin-1',
+          }) as never,
+        });
+      });
+
+      it('uses an explicit grading scale of this institution', async () => {
+        prismaMock.gradingScale.findUnique.mockResolvedValue({
+          institutionId: 'inst-1',
+        });
+        prismaMock.exam.create.mockResolvedValue(exam);
+
+        await service.createExam(currentUser, {
+          classId: 'class-1',
+          examTermId: 'term-1',
+          name: 'Exam',
+          gradingScaleId: 'scale-9',
+        });
+
+        expect(prismaMock.exam.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ gradingScaleId: 'scale-9' }) as never,
+        });
+      });
+
+      it('404s for a grading scale of another institution', async () => {
+        prismaMock.gradingScale.findUnique.mockResolvedValue({
+          institutionId: 'inst-2',
+        });
+
+        await expect(
+          service.createExam(currentUser, {
+            classId: 'class-1',
+            examTermId: 'term-1',
+            name: 'Exam',
+            gradingScaleId: 'scale-9',
+          }),
+        ).rejects.toThrow(NotFoundException);
+      });
+
+      it('409s when there is no current grading scale and none was supplied', async () => {
+        prismaMock.institution.findUnique.mockResolvedValue({
+          id: 'inst-1',
+          currentGradingScaleId: null,
+        });
+
+        await expect(
+          service.createExam(currentUser, {
+            classId: 'class-1',
+            examTermId: 'term-1',
+            name: 'Exam',
+          }),
+        ).rejects.toThrow(/Set up a grading scale/);
+        expect(prismaMock.exam.create).not.toHaveBeenCalled();
+      });
+
+      it('404s for a term of another institution', async () => {
+        prismaMock.examTerm.findUnique.mockResolvedValue({
+          ...term,
+          institutionId: 'inst-2',
+        });
+
+        await expect(
+          service.createExam(currentUser, {
+            classId: 'class-1',
+            examTermId: 'term-1',
+            name: 'Exam',
+          }),
+        ).rejects.toThrow(NotFoundException);
+      });
+
+      it('turns a duplicate regular exam into a 409', async () => {
+        prismaMock.exam.create.mockRejectedValue(p2002());
+
+        await expect(
+          service.createExam(currentUser, {
+            classId: 'class-1',
+            examTermId: 'term-1',
+            name: 'Exam',
+          }),
+        ).rejects.toThrow(ConflictException);
+      });
+
+      it('does not touch the database when class access is denied', async () => {
+        campusAccessMock.assertClassAccess.mockRejectedValueOnce(
+          new ForbiddenException(),
+        );
+
+        await expect(
+          service.createExam(currentUser, {
+            classId: 'class-1',
+            examTermId: 'term-1',
+            name: 'Exam',
+          }),
+        ).rejects.toThrow(ForbiddenException);
+        expect(prismaMock.exam.create).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('listExams', () => {
+      it('limits the list to the caller campuses and applies filters', async () => {
+        campusAccessMock.getScopedCampusIds.mockResolvedValue(['campus-1']);
+        prismaMock.exam.findMany.mockResolvedValue([exam]);
+
+        await service.listExams(currentUser, {
+          status: 'PUBLISHED',
+          examType: 'RETAKE',
+          originalExamId: 'exam-0',
+        });
+
+        expect(prismaMock.exam.findMany).toHaveBeenCalledWith({
+          where: {
+            campusId: { in: ['campus-1'] },
+            status: 'PUBLISHED',
+            examType: 'RETAKE',
+            originalExamId: 'exam-0',
+          },
+          orderBy: [{ createdAt: 'desc' }],
+        });
+      });
+
+      it('checks access to a requested class before querying', async () => {
+        campusAccessMock.getScopedCampusIds.mockResolvedValue(['campus-1']);
+        prismaMock.exam.findMany.mockResolvedValue([]);
+
+        await service.listExams(currentUser, { classId: 'class-1' });
+
+        expect(campusAccessMock.assertClassAccess).toHaveBeenCalledWith(
+          currentUser,
+          'class-1',
+        );
+      });
+    });
+
+    describe('getExam', () => {
+      it('checks campus access for the exam', async () => {
+        await service.getExam(currentUser, 'exam-1');
+
+        expect(campusAccessMock.assertCampusAccess).toHaveBeenCalledWith(
+          currentUser,
+          'campus-1',
+        );
+      });
+
+      it('404s for a missing exam', async () => {
+        prismaMock.exam.findUnique.mockResolvedValue(null);
+
+        await expect(service.getExam(currentUser, 'missing')).rejects.toThrow(
+          NotFoundException,
+        );
+      });
+    });
+
+    describe('updateExam', () => {
+      it('renames without touching the grading scale', async () => {
+        prismaMock.exam.update.mockResolvedValue(exam);
+
+        await service.updateExam(currentUser, 'exam-1', { name: 'Renamed' });
+
+        expect(prismaMock.exam.update).toHaveBeenCalledWith({
+          where: { id: 'exam-1' },
+          data: {
+            name: 'Renamed',
+            gradingScaleId: undefined,
+            updatedBy: 'admin-1',
+          },
+        });
+      });
+
+      it('locks the grading scale once the exam is published', async () => {
+        prismaMock.exam.findUnique.mockResolvedValue({
+          ...exam,
+          status: 'PUBLISHED',
+        });
+
+        await expect(
+          service.updateExam(currentUser, 'exam-1', {
+            gradingScaleId: 'scale-9',
+          }),
+        ).rejects.toThrow(ConflictException);
+        expect(prismaMock.exam.update).not.toHaveBeenCalled();
+      });
+
+      it('allows re-sending the same grading scale on a published exam', async () => {
+        prismaMock.exam.findUnique.mockResolvedValue({
+          ...exam,
+          status: 'PUBLISHED',
+        });
+        prismaMock.exam.update.mockResolvedValue(exam);
+
+        await expect(
+          service.updateExam(currentUser, 'exam-1', {
+            gradingScaleId: 'scale-1',
+            name: 'Same scale',
+          }),
+        ).resolves.toBeDefined();
+      });
+    });
+
+    describe('deleteExam', () => {
+      it('soft-deletes an exam with no retakes', async () => {
+        prismaMock.exam.count.mockResolvedValue(0);
+
+        await service.deleteExam(currentUser, 'exam-1', 'duplicate');
+
+        expect(prismaMock.exam.update).toHaveBeenCalledWith({
+          where: { id: 'exam-1' },
+          data: expect.objectContaining({
+            deleteReason: 'duplicate',
+            deletedBy: 'admin-1',
+          }) as never,
+        });
+      });
+
+      it('blocks deleting an exam that still has retakes', async () => {
+        prismaMock.exam.count.mockResolvedValue(1);
+
+        await expect(service.deleteExam(currentUser, 'exam-1')).rejects.toThrow(
+          ConflictException,
+        );
+        expect(prismaMock.exam.update).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('createRetakeExam', () => {
+      const published = { ...exam, status: 'PUBLISHED' };
+
+      it('requires the original exam to be published', async () => {
+        await expect(
+          service.createRetakeExam(currentUser, 'exam-1', {
+            examType: RetakeExamType.RETAKE,
+            name: 'Retake',
+          }),
+        ).rejects.toThrow(/Publish the original exam/);
+        expect(prismaMock.exam.create).not.toHaveBeenCalled();
+      });
+
+      it('links the retake to the original with a server-computed key', async () => {
+        prismaMock.exam.findUnique.mockResolvedValue(published);
+        prismaMock.exam.create.mockResolvedValue({ id: 'exam-2' });
+
+        await service.createRetakeExam(currentUser, 'exam-1', {
+          examType: RetakeExamType.IMPROVEMENT,
+          name: 'Improvement',
+        });
+
+        expect(prismaMock.exam.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            classId: 'class-1',
+            campusId: 'campus-1',
+            examTermId: 'term-1',
+            gradingScaleId: 'scale-1',
+            examType: 'IMPROVEMENT',
+            originalExamId: 'exam-1',
+            retakeKey: 'IMPROVEMENT:exam-1',
+          }) as never,
+        });
+      });
+
+      it('rejects a term from another academic year', async () => {
+        prismaMock.exam.findUnique.mockResolvedValue(published);
+        prismaMock.examTerm.findUnique.mockResolvedValue({
+          ...term,
+          id: 'term-9',
+          academicYearId: 'year-9',
+        });
+
+        await expect(
+          service.createRetakeExam(currentUser, 'exam-1', {
+            examType: RetakeExamType.RETAKE,
+            name: 'Retake',
+            examTermId: 'term-9',
+          }),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('allows a retake of a published retake', async () => {
+        prismaMock.exam.findUnique.mockResolvedValue({
+          ...published,
+          examType: 'RETAKE',
+          originalExamId: 'exam-0',
+        });
+        prismaMock.exam.create.mockResolvedValue({ id: 'exam-3' });
+
+        await expect(
+          service.createRetakeExam(currentUser, 'exam-1', {
+            examType: RetakeExamType.SUPPLEMENTARY,
+            name: 'Second chance',
+          }),
+        ).resolves.toBeDefined();
+      });
+
+      it('turns a duplicate retake type into a 409', async () => {
+        prismaMock.exam.findUnique.mockResolvedValue(published);
+        prismaMock.exam.create.mockRejectedValue(p2002());
+
+        await expect(
+          service.createRetakeExam(currentUser, 'exam-1', {
+            examType: RetakeExamType.RETAKE,
+            name: 'Retake again',
+          }),
+        ).rejects.toThrow(ConflictException);
+      });
+    });
+
+    describe('listRetakeExams', () => {
+      it('lists the exams pointing at the original', async () => {
+        prismaMock.exam.findMany.mockResolvedValue([]);
+
+        await service.listRetakeExams(currentUser, 'exam-1');
+
+        expect(prismaMock.exam.findMany).toHaveBeenCalledWith({
+          where: { originalExamId: 'exam-1' },
+          orderBy: [{ createdAt: 'asc' }],
+        });
+      });
     });
   });
 });

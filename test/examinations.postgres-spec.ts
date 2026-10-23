@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { ConflictException } from '@nestjs/common';
 import { CurrentUser } from '../src/common/interfaces/current-user.interface';
+import { CampusAccessService } from '../src/common/services/campus-access.service';
 import { ModuleAccessService } from '../src/common/services/module-access.service';
 import { RequestContextService } from '../src/common/services/request-context.service';
+import { RetakeExamType } from '../src/modules/examinations/dto/examinations.dto';
 import { ExaminationsService } from '../src/modules/examinations/examinations.service';
 import { UserRole } from '../src/prisma/client';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -51,6 +53,7 @@ describe('PostgreSQL examinations setup', () => {
       prisma,
       new ModuleAccessService(prisma),
       context,
+      new CampusAccessService(prisma),
     );
 
     const institution = await prisma.institution.create({
@@ -210,5 +213,146 @@ describe('PostgreSQL examinations setup', () => {
     expect(terms.data.filter((row) => row.name === 'First Term')).toHaveLength(
       1,
     );
+  });
+
+  describe('exams', () => {
+    let classId: string;
+    let termId: string;
+    let scaleId: string;
+    let regularId: string;
+
+    beforeAll(async () => {
+      const campus = await prisma.campus.create({
+        data: {
+          institutionId,
+          name: 'Exam campus',
+          location: 'Test',
+          studentStartTime: '08:00',
+          studentEndTime: '14:00',
+          staffStartTime: '08:00',
+          staffEndTime: '14:00',
+          lateThreshold: 10,
+          earlyLeaveThreshold: 10,
+        },
+      });
+      const level = await prisma.level.create({
+        data: { name: 'Level 1', campusId: campus.id },
+      });
+      const academicClass = await prisma.academicClass.create({
+        data: { name: 'Class 1', levelId: level.id },
+      });
+      classId = academicClass.id;
+
+      const term = await service.createExamTerm(
+        institutionId,
+        { academicYearId, name: 'Exam Term' },
+        superadmin,
+      );
+      termId = term.data.id;
+      const scale = await service.createGradingScale(
+        institutionId,
+        { name: 'Exam scale', bands: bands(['Pass', 0, 100]) },
+        superadmin,
+      );
+      scaleId = scale.data.id;
+      await service.setCurrentGradingScale(institutionId, scaleId, superadmin);
+    });
+
+    it('allows only one regular exam per class and term, and frees it on delete', async () => {
+      const first = await service.createExam(superadmin, {
+        classId,
+        examTermId: termId,
+        name: 'Regular',
+      });
+      regularId = first.data.id;
+      expect(first.data.gradingScaleId).toBe(scaleId);
+      expect(first.data.retakeKey).toBe('REGULAR');
+
+      await expect(
+        service.createExam(superadmin, {
+          classId,
+          examTermId: termId,
+          name: 'Regular again',
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      const spare = await service.createExamTerm(
+        institutionId,
+        { academicYearId, name: 'Spare Term' },
+        superadmin,
+      );
+      const other = await service.createExam(superadmin, {
+        classId,
+        examTermId: spare.data.id,
+        name: 'Other term',
+      });
+      await service.deleteExam(superadmin, other.data.id);
+      await expect(
+        service.createExam(superadmin, {
+          classId,
+          examTermId: spare.data.id,
+          name: 'Other term again',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('lets each retake type coexist but rejects a duplicate of one type', async () => {
+      await expect(
+        service.createRetakeExam(superadmin, regularId, {
+          examType: RetakeExamType.RETAKE,
+          name: 'Too early',
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      await prisma.exam.update({
+        where: { id: regularId },
+        data: { status: 'PUBLISHED' },
+      });
+
+      const retake = await service.createRetakeExam(superadmin, regularId, {
+        examType: RetakeExamType.RETAKE,
+        name: 'Retake',
+      });
+      expect(retake.data.retakeKey).toBe(`RETAKE:${regularId}`);
+      expect(retake.data.originalExamId).toBe(regularId);
+
+      await expect(
+        service.createRetakeExam(superadmin, regularId, {
+          examType: RetakeExamType.IMPROVEMENT,
+          name: 'Improvement',
+        }),
+      ).resolves.toBeDefined();
+      await expect(
+        service.createRetakeExam(superadmin, regularId, {
+          examType: RetakeExamType.RETAKE,
+          name: 'Second retake',
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      const listed = await service.listRetakeExams(superadmin, regularId);
+      expect(listed.data.map((row) => row.examType).sort()).toEqual([
+        'IMPROVEMENT',
+        'RETAKE',
+      ]);
+    });
+
+    it('refuses to delete an exam while retakes still point at it', async () => {
+      await expect(
+        service.deleteExam(superadmin, regularId),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('locks the grading scale of a published exam', async () => {
+      const spare = await service.createGradingScale(
+        institutionId,
+        { name: 'Spare scale', bands: bands(['OK', 0, 100]) },
+        superadmin,
+      );
+      await expect(
+        service.updateExam(superadmin, regularId, {
+          gradingScaleId: spare.data.id,
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
   });
 });

@@ -5,18 +5,26 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
+import { CampusAccessService } from '../../common/services/campus-access.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import { runAuditedTransaction } from '../../common/utils/transaction.util';
-import { ModuleKey, Prisma } from '../../prisma/client';
+import { ExamStatus, ExamType, ModuleKey, Prisma } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  CreateExamDto,
   CreateExamTermDto,
   CreateGradingScaleDto,
+  CreateRetakeExamDto,
   GradeBandInputDto,
+  ListExamsQueryDto,
+  UpdateExamDto,
   UpdateExamTermDto,
   UpdateGradingScaleDto,
 } from './dto/examinations.dto';
+
+/** Sentinel for the non-nullable half of the exam unique index (see schema). */
+const REGULAR_RETAKE_KEY = 'REGULAR';
 
 /**
  * Nested includes are not covered by the Prisma extension's soft-delete
@@ -32,6 +40,7 @@ export class ExaminationsService {
     private readonly prisma: PrismaService,
     private readonly moduleAccessService: ModuleAccessService,
     private readonly requestContext: RequestContextService,
+    private readonly campusAccessService: CampusAccessService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -457,6 +466,294 @@ export class ExaminationsService {
   }
 
   // ---------------------------------------------------------------------
+  // Exams (class-scoped; campus access resolves through the class)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Create a REGULAR exam for one class in one term. Retake-type exams can
+   * only be created through `createRetakeExam`.
+   *
+   * `campusId` and `academicYearId` are resolved server-side from the class
+   * and term, never taken from the client.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {CreateExamDto} dto - Class, term, name and optional grading scale.
+   * @returns {Promise<{message: string, data: object}>} The created exam.
+   * @throws {ForbiddenException} If the caller has no access to the class's campus.
+   * @throws {NotFoundException} If the class, term or grading scale is not found in the class's institution.
+   * @throws {ConflictException} If no grading scale can be resolved, or the class already has a regular exam for the term.
+   */
+  async createExam(currentUser: CurrentUser, dto: CreateExamDto) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.EXAMINATIONS,
+    );
+    await this.campusAccessService.assertClassAccess(currentUser, dto.classId);
+    const scope = await this.resolveClassScope(dto.classId);
+    const term = await this.findTermOrThrow(
+      scope.institutionId,
+      dto.examTermId,
+    );
+    const gradingScaleId = await this.resolveGradingScaleId(
+      scope.institutionId,
+      dto.gradingScaleId,
+    );
+
+    try {
+      const data = await this.prisma.exam.create({
+        data: {
+          examTermId: term.id,
+          academicYearId: term.academicYearId,
+          campusId: scope.campusId,
+          classId: dto.classId,
+          name: dto.name,
+          gradingScaleId,
+          examType: ExamType.REGULAR,
+          retakeKey: REGULAR_RETAKE_KEY,
+          createdBy: currentUser.sub,
+        },
+      });
+      return { message: 'Exam created successfully', data };
+    } catch (error) {
+      this.rethrowExamConflict(error);
+    }
+  }
+
+  /**
+   * List the exams the caller can see, with optional filters.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {ListExamsQueryDto} query - Optional filters.
+   * @returns {Promise<{message: string, data: object[]}>} Exams, newest term first.
+   * @throws {ForbiddenException} If a requested campus or class is out of the caller's scope.
+   */
+  async listExams(currentUser: CurrentUser, query: ListExamsQueryDto) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.EXAMINATIONS,
+    );
+    if (query.classId) {
+      await this.campusAccessService.assertClassAccess(
+        currentUser,
+        query.classId,
+      );
+    }
+    const campusIds = await this.campusAccessService.getScopedCampusIds(
+      currentUser,
+      query.campusId,
+    );
+
+    const data = await this.prisma.exam.findMany({
+      where: {
+        campusId: { in: campusIds },
+        ...(query.classId ? { classId: query.classId } : {}),
+        ...(query.examTermId ? { examTermId: query.examTermId } : {}),
+        ...(query.academicYearId
+          ? { academicYearId: query.academicYearId }
+          : {}),
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.examType ? { examType: query.examType } : {}),
+        ...(query.originalExamId
+          ? { originalExamId: query.originalExamId }
+          : {}),
+      },
+      orderBy: [{ createdAt: 'desc' }],
+    });
+    return { message: 'Exams fetched successfully', data };
+  }
+
+  /**
+   * Fetch one exam.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} examId - Exam id.
+   * @returns {Promise<{message: string, data: object}>} The exam.
+   * @throws {NotFoundException} If the exam does not exist.
+   * @throws {ForbiddenException} If the caller has no access to the exam's campus.
+   */
+  async getExam(currentUser: CurrentUser, examId: string) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.EXAMINATIONS,
+    );
+    const data = await this.findAccessibleExam(currentUser, examId);
+    return { message: 'Exam fetched successfully', data };
+  }
+
+  /**
+   * Rename an exam or change its grading scale. The class, term and retake
+   * links are immutable. The grading scale is frozen once the exam is
+   * PUBLISHED so published grades cannot shift under a family.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} examId - Exam id.
+   * @param {UpdateExamDto} dto - Fields to change.
+   * @returns {Promise<{message: string, data: object}>} The updated exam.
+   * @throws {NotFoundException} If the exam or grading scale is not found.
+   * @throws {ConflictException} If the grading scale is changed on a published exam.
+   */
+  async updateExam(
+    currentUser: CurrentUser,
+    examId: string,
+    dto: UpdateExamDto,
+  ) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.EXAMINATIONS,
+    );
+    const existing = await this.findAccessibleExam(currentUser, examId);
+
+    let gradingScaleId: string | undefined;
+    if (
+      dto.gradingScaleId !== undefined &&
+      dto.gradingScaleId !== existing.gradingScaleId
+    ) {
+      if (existing.status === ExamStatus.PUBLISHED) {
+        throw new ConflictException(
+          'The grading scale cannot be changed once the exam is published.',
+        );
+      }
+      const scope = await this.resolveClassScope(existing.classId);
+      gradingScaleId = await this.resolveGradingScaleId(
+        scope.institutionId,
+        dto.gradingScaleId,
+      );
+    }
+
+    const data = await this.prisma.exam.update({
+      where: { id: examId },
+      data: { name: dto.name, gradingScaleId, updatedBy: currentUser.sub },
+    });
+    return { message: 'Exam updated successfully', data };
+  }
+
+  /**
+   * Soft-delete an exam.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} examId - Exam id.
+   * @param {string} [reason] - Optional recycle-bin delete reason.
+   * @returns {Promise<{message: string, data: object}>} The deleted record's identifying fields.
+   * @throws {ConflictException} If active retake-type exams still point at this exam.
+   */
+  async deleteExam(currentUser: CurrentUser, examId: string, reason?: string) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.EXAMINATIONS,
+    );
+    const existing = await this.findAccessibleExam(currentUser, examId);
+
+    const activeRetakes = await this.prisma.exam.count({
+      where: { originalExamId: examId },
+    });
+    if (activeRetakes > 0) {
+      throw new ConflictException(
+        "Delete this exam's retake, improvement or supplementary exams first.",
+      );
+    }
+
+    await this.prisma.exam.update({
+      where: { id: examId },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: currentUser.sub,
+        deleteReason: reason ?? null,
+        updatedBy: currentUser.sub,
+      },
+    });
+    return {
+      message: 'Exam moved to recycle bin successfully',
+      data: { id: existing.id, name: existing.name },
+    };
+  }
+
+  /**
+   * Create a retake, improvement or supplementary exam from a published
+   * exam. The class and the link to the original are server-set. A retake of
+   * a retake is allowed as long as the exam being retaken is published.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} originalExamId - Exam being retaken.
+   * @param {CreateRetakeExamDto} dto - Type, name and optional term / grading scale.
+   * @returns {Promise<{message: string, data: object}>} The created exam.
+   * @throws {ConflictException} If the original is not published, or this type of retake already exists for it.
+   * @throws {BadRequestException} If the chosen term is in a different academic year.
+   */
+  async createRetakeExam(
+    currentUser: CurrentUser,
+    originalExamId: string,
+    dto: CreateRetakeExamDto,
+  ) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.EXAMINATIONS,
+    );
+    const original = await this.findAccessibleExam(currentUser, originalExamId);
+    if (original.status !== ExamStatus.PUBLISHED) {
+      throw new ConflictException(
+        'Publish the original exam before creating a retake.',
+      );
+    }
+
+    const scope = await this.resolveClassScope(original.classId);
+    const term = await this.findTermOrThrow(
+      scope.institutionId,
+      dto.examTermId ?? original.examTermId,
+    );
+    if (term.academicYearId !== original.academicYearId) {
+      throw new BadRequestException(
+        "A retake must be in the original exam's academic year.",
+      );
+    }
+    const gradingScaleId = dto.gradingScaleId
+      ? await this.resolveGradingScaleId(
+          scope.institutionId,
+          dto.gradingScaleId,
+        )
+      : original.gradingScaleId;
+
+    try {
+      const data = await this.prisma.exam.create({
+        data: {
+          examTermId: term.id,
+          academicYearId: original.academicYearId,
+          campusId: original.campusId,
+          classId: original.classId,
+          name: dto.name,
+          gradingScaleId,
+          examType: dto.examType,
+          originalExamId: original.id,
+          retakeKey: `${dto.examType}:${original.id}`,
+          createdBy: currentUser.sub,
+        },
+      });
+      return { message: 'Retake exam created successfully', data };
+    } catch (error) {
+      this.rethrowExamConflict(error);
+    }
+  }
+
+  /**
+   * List the retake-type exams created from one exam.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} examId - The original exam.
+   * @returns {Promise<{message: string, data: object[]}>} Exams whose original is this one.
+   */
+  async listRetakeExams(currentUser: CurrentUser, examId: string) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.EXAMINATIONS,
+    );
+    await this.findAccessibleExam(currentUser, examId);
+    const data = await this.prisma.exam.findMany({
+      where: { originalExamId: examId },
+      orderBy: [{ createdAt: 'asc' }],
+    });
+    return { message: 'Retake exams fetched successfully', data };
+  }
+
+  // ---------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------
 
@@ -609,6 +906,93 @@ export class ExaminationsService {
       updatedBy: currentUser.sub,
       activeScopeKey: `DELETED:${id}`,
     };
+  }
+
+  /**
+   * Load a class and walk to its campus and institution.
+   *
+   * @param {string} classId - Class id.
+   * @returns {Promise<{campusId: string, institutionId: string}>} The class's scope.
+   * @throws {NotFoundException} If the class does not exist.
+   */
+  private async resolveClassScope(classId: string) {
+    const academicClass = await this.prisma.academicClass.findUnique({
+      where: { id: classId },
+      select: {
+        level: {
+          select: {
+            campusId: true,
+            campus: { select: { institutionId: true } },
+          },
+        },
+      },
+    });
+    const institutionId = academicClass?.level.campus.institutionId;
+    if (!academicClass || !institutionId) {
+      throw new NotFoundException('Class not found.');
+    }
+    return { campusId: academicClass.level.campusId, institutionId };
+  }
+
+  /**
+   * Resolve the grading scale for a new exam: the explicit one (which must
+   * belong to the institution), else the institution's current scale.
+   *
+   * @param {string} institutionId - Institution the exam belongs to.
+   * @param {string} [explicitId] - Grading scale chosen by the caller.
+   * @returns {Promise<string>} The grading scale id to pin on the exam.
+   * @throws {NotFoundException} If the explicit scale is not in this institution.
+   * @throws {ConflictException} If there is no explicit and no current scale.
+   */
+  private async resolveGradingScaleId(
+    institutionId: string,
+    explicitId?: string,
+  ): Promise<string> {
+    if (explicitId) {
+      const scale = await this.prisma.gradingScale.findUnique({
+        where: { id: explicitId },
+        select: { institutionId: true },
+      });
+      if (!scale || scale.institutionId !== institutionId) {
+        throw new NotFoundException('Grading scale not found.');
+      }
+      return explicitId;
+    }
+
+    const institution = await this.prisma.institution.findUnique({
+      where: { id: institutionId },
+      select: { currentGradingScaleId: true },
+    });
+    if (!institution?.currentGradingScaleId) {
+      throw new ConflictException(
+        'Set up a grading scale before creating exams.',
+      );
+    }
+    return institution.currentGradingScaleId;
+  }
+
+  private async findAccessibleExam(currentUser: CurrentUser, examId: string) {
+    const exam = await this.prisma.exam.findUnique({ where: { id: examId } });
+    if (!exam) {
+      throw new NotFoundException('Exam not found.');
+    }
+    await this.campusAccessService.assertCampusAccess(
+      currentUser,
+      exam.campusId,
+    );
+    return exam;
+  }
+
+  private rethrowExamConflict(error: unknown): never {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      throw new ConflictException(
+        'This class already has an exam of this type for the term.',
+      );
+    }
+    throw error;
   }
 
   private assertDateRange(startDate?: string, endDate?: string): void {

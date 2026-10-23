@@ -19,8 +19,12 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser as CurrentUserPayload } from '../../common/interfaces/current-user.interface';
 import {
+  CreateExamDto,
   CreateExamTermDto,
   CreateGradingScaleDto,
+  CreateRetakeExamDto,
+  ListExamsQueryDto,
+  UpdateExamDto,
   UpdateExamTermDto,
   UpdateGradingScaleDto,
 } from './dto/examinations.dto';
@@ -240,6 +244,113 @@ export class ExaminationsController {
       currentUser,
       dto.reason,
     );
+  }
+
+  @Post('exams')
+  @Version('1')
+  @RequirePermission('exams', 'create')
+  @ApiOperation({
+    summary: 'Create an exam',
+    description:
+      'Creates a regular exam for one class in one term. Retake, improvement and supplementary exams are created from an existing exam instead.',
+  })
+  createExam(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Body() dto: CreateExamDto,
+  ) {
+    return this.examinationsService.createExam(currentUser, dto);
+  }
+
+  @Get('exams')
+  @Version('1')
+  @RequirePermission('exams', 'read')
+  @ApiOperation({
+    summary: 'List exams',
+    description:
+      'Returns the exams in the campuses the caller can access, with optional filters.',
+  })
+  listExams(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Query() query: ListExamsQueryDto,
+  ) {
+    return this.examinationsService.listExams(currentUser, query);
+  }
+
+  @Get('exams/:id')
+  @Version('1')
+  @RequirePermission('exams', 'read')
+  @ApiOperation({
+    summary: 'Get an exam',
+    description: 'Returns one exam, including its retake link when it has one.',
+  })
+  getExam(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('id') id: string,
+  ) {
+    return this.examinationsService.getExam(currentUser, id);
+  }
+
+  @Patch('exams/:id')
+  @Version('1')
+  @RequirePermission('exams', 'update')
+  @ApiOperation({
+    summary: 'Update an exam',
+    description:
+      'Renames an exam or changes its grading scale. The grading scale is locked once the exam is published.',
+  })
+  updateExam(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() dto: UpdateExamDto,
+  ) {
+    return this.examinationsService.updateExam(currentUser, id, dto);
+  }
+
+  @Delete('exams/:id')
+  @Version('1')
+  @RequirePermission('exams', 'delete')
+  @ApiOperation({
+    summary: 'Soft-delete an exam',
+    description:
+      'Moves an exam to the recycle bin. Blocked while retake-type exams still point at it.',
+  })
+  deleteExam(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() dto: DeleteRecordDto,
+  ) {
+    return this.examinationsService.deleteExam(currentUser, id, dto.reason);
+  }
+
+  @Post('exams/:id/retakes')
+  @Version('1')
+  @RequirePermission('exams', 'create')
+  @ApiOperation({
+    summary: 'Create a retake, improvement or supplementary exam',
+    description:
+      'Creates a second sitting from a published exam. The class and the link to the original are set by the server.',
+  })
+  createRetakeExam(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() dto: CreateRetakeExamDto,
+  ) {
+    return this.examinationsService.createRetakeExam(currentUser, id, dto);
+  }
+
+  @Get('exams/:id/retakes')
+  @Version('1')
+  @RequirePermission('exams', 'read')
+  @ApiOperation({
+    summary: 'List the retakes of an exam',
+    description:
+      'Returns every retake, improvement and supplementary exam created from this exam.',
+  })
+  listRetakeExams(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('id') id: string,
+  ) {
+    return this.examinationsService.listRetakeExams(currentUser, id);
   }
 
   /**
