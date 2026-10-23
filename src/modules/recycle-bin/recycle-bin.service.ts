@@ -56,7 +56,8 @@ type ChildModelKey =
   | 'feePayment'
   | 'studentEnrollment'
   | 'periodSlot'
-  | 'examTerm';
+  | 'examTerm'
+  | 'exam';
 
 interface CountableDelegate {
   count(args: { where: Record<string, unknown> }): Promise<number>;
@@ -195,6 +196,7 @@ const ENTITY_CASCADE_CHILDREN: Partial<
       model: 'periodSlot',
       fkField: 'classId',
     },
+    { entity: RecycleBinEntity.EXAM, model: 'exam', fkField: 'classId' },
   ],
   // M2 Phase 3: StudentEnrollment.sectionId is onDelete: Cascade (unlike the
   // old Student.sectionId, which was SetNull) — Section had no cascade
@@ -272,6 +274,18 @@ const ENTITY_CASCADE_CHILDREN: Partial<
       fkField: 'academicYearId',
     },
   ],
+  [RecycleBinEntity.EXAM_TERM]: [
+    { entity: RecycleBinEntity.EXAM, model: 'exam', fkField: 'examTermId' },
+  ],
+  [RecycleBinEntity.GRADING_SCALE]: [
+    { entity: RecycleBinEntity.EXAM, model: 'exam', fkField: 'gradingScaleId' },
+  ],
+  // Self-referential: blocks purging an exam while an active retake,
+  // improvement or supplementary exam still points back at it. Terminates in
+  // assertNoActiveDescendants() because retakes form a chain, never a cycle.
+  [RecycleBinEntity.EXAM]: [
+    { entity: RecycleBinEntity.EXAM, model: 'exam', fkField: 'originalExamId' },
+  ],
   [RecycleBinEntity.SALARY]: [
     {
       entity: RecycleBinEntity.SALARY_PAYMENT,
@@ -341,6 +355,7 @@ export class RecycleBinService {
       periodSlotItems,
       gradingScaleItems,
       examTermItems,
+      examItems,
     ] = await Promise.all([
       query.entity && query.entity !== RecycleBinEntity.USER
         ? Promise.resolve<RecycleBinItem[]>([])
@@ -423,6 +438,9 @@ export class RecycleBinService {
       query.entity && query.entity !== RecycleBinEntity.EXAM_TERM
         ? Promise.resolve<RecycleBinItem[]>([])
         : this.listDeletedExamTerms(institutionId, query.search),
+      query.entity && query.entity !== RecycleBinEntity.EXAM
+        ? Promise.resolve<RecycleBinItem[]>([])
+        : this.listDeletedExams(institutionId, query.search),
     ]);
 
     const combinedItems = [
@@ -453,6 +471,7 @@ export class RecycleBinService {
       ...periodSlotItems,
       ...gradingScaleItems,
       ...examTermItems,
+      ...examItems,
     ].sort(
       (left, right) => right.deletedAt.getTime() - left.deletedAt.getTime(),
     );
@@ -636,6 +655,10 @@ export class RecycleBinService {
         return await this.restoreExamTerm(currentUser, recordId);
       }
 
+      if (entity === RecycleBinEntity.EXAM) {
+        return await this.restoreExam(currentUser, recordId);
+      }
+
       if (entity === RecycleBinEntity.PERIOD_SLOT) {
         return await this.restorePeriodSlot(currentUser, recordId);
       }
@@ -750,6 +773,10 @@ export class RecycleBinService {
 
     if (entity === RecycleBinEntity.EXAM_TERM) {
       return this.permanentlyDeleteExamTerm(currentUser, recordId);
+    }
+
+    if (entity === RecycleBinEntity.EXAM) {
+      return this.permanentlyDeleteExam(currentUser, recordId);
     }
 
     if (entity === RecycleBinEntity.PERIOD_SLOT) {
@@ -1896,6 +1923,50 @@ export class RecycleBinService {
     }));
   }
 
+  private async listDeletedExams(
+    institutionId: string | null,
+    search?: string,
+  ): Promise<RecycleBinItem[]> {
+    const items = await this.prisma.exam.findMany({
+      where: {
+        deletedAt: { not: null },
+        ...(institutionId ? { campus: { institutionId } } : {}),
+        ...(search ? { name: { contains: search, mode: 'insensitive' } } : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        examType: true,
+        classId: true,
+        campus: { select: { institutionId: true } },
+        deletedAt: true,
+        deletedBy: true,
+        deleteReason: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { deletedAt: 'desc' },
+    });
+    return items.map((item) => ({
+      entity: RecycleBinEntity.EXAM,
+      id: item.id,
+      label: item.name,
+      subtitle:
+        item.examType === 'REGULAR' ? 'Exam' : `Exam (${item.examType})`,
+      institutionId: item.campus.institutionId,
+      deletedAt: item.deletedAt!,
+      deletedBy: item.deletedBy,
+      deleteReason: item.deleteReason,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      metadata: {
+        name: item.name,
+        examType: item.examType,
+        classId: item.classId,
+      },
+    }));
+  }
+
   private async listDeletedStudentEnrollments(
     institutionId: string | null,
     search?: string,
@@ -2340,6 +2411,62 @@ export class RecycleBinService {
       message: 'Exam term restored successfully',
       data: restored,
     };
+  }
+
+  private async restoreExam(currentUser: CurrentUser, examId: string) {
+    const item = await this.prisma.exam.findFirst({
+      where: { id: examId, deletedAt: { not: null } },
+      select: {
+        id: true,
+        name: true,
+        classId: true,
+        examTermId: true,
+        gradingScaleId: true,
+        originalExamId: true,
+        campus: { select: { institutionId: true } },
+      },
+    });
+    if (!item) throw new NotFoundException('Deleted exam not found.');
+    this.assertInstitutionScope(currentUser, item.campus.institutionId!);
+    // The default soft-delete filter hides deleted rows, so a missing parent
+    // here means it is still in the recycle bin.
+    const [academicClass, term, scale, original] = await Promise.all([
+      this.prisma.academicClass.findUnique({
+        where: { id: item.classId },
+        select: { id: true },
+      }),
+      this.prisma.examTerm.findUnique({
+        where: { id: item.examTermId },
+        select: { id: true },
+      }),
+      this.prisma.gradingScale.findUnique({
+        where: { id: item.gradingScaleId },
+        select: { id: true },
+      }),
+      item.originalExamId
+        ? this.prisma.exam.findUnique({
+            where: { id: item.originalExamId },
+            select: { id: true },
+          })
+        : Promise.resolve({ id: null }),
+    ]);
+    if (!academicClass || !term || !scale || !original) {
+      throw new ConflictException(
+        "Restore the exam's class, term, grading scale and original exam first.",
+      );
+    }
+    const restored = await this.prisma.exam.update({
+      where: { id: examId, deletedAt: { not: null } },
+      data: { deletedAt: null, deletedBy: null, deleteReason: null },
+    });
+    await this.auditLogService.log(currentUser, {
+      action: 'EXAM_RESTORED',
+      entity: 'Exam',
+      entityId: examId,
+      institutionId: item.campus.institutionId,
+      metadata: { name: item.name },
+    });
+    return { message: 'Exam restored successfully', data: restored };
   }
 
   private async restoreStudentEnrollment(
@@ -3276,6 +3403,44 @@ export class RecycleBinService {
     return {
       message: 'Exam term permanently deleted successfully',
       data: { id: examTermId },
+    };
+  }
+
+  private async permanentlyDeleteExam(
+    currentUser: CurrentUser,
+    examId: string,
+  ) {
+    const item = await this.prisma.exam.findFirst({
+      where: { id: examId, deletedAt: { not: null } },
+      select: {
+        name: true,
+        deletedAt: true,
+        campus: { select: { institutionId: true } },
+      },
+    });
+    if (!item) throw new NotFoundException('Deleted exam not found.');
+    this.assertInstitutionScope(currentUser, item.campus.institutionId!);
+    await this.assertPurgeSafe(
+      RecycleBinEntity.EXAM,
+      examId,
+      item.deletedAt!,
+      item.campus.institutionId,
+    );
+    await this.requestContext.runWith({ allowHardDelete: true }, async () => {
+      await this.prisma.exam.delete({
+        where: { id: examId, deletedAt: { not: null } },
+      });
+    });
+    await this.auditLogService.log(currentUser, {
+      action: 'EXAM_PERMANENTLY_DELETED',
+      entity: 'Exam',
+      entityId: examId,
+      institutionId: item.campus.institutionId,
+      metadata: { name: item.name },
+    });
+    return {
+      message: 'Exam permanently deleted successfully',
+      data: { id: examId },
     };
   }
 

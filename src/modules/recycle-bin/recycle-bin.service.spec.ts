@@ -75,6 +75,7 @@ describe('RecycleBinService', () => {
     academicClass: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
       count: jest.fn().mockResolvedValue(0),
@@ -211,6 +212,15 @@ describe('RecycleBinService', () => {
     gradingScale: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
+    },
+    exam: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
       count: jest.fn().mockResolvedValue(0),
@@ -218,6 +228,7 @@ describe('RecycleBinService', () => {
     examTerm: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
       count: jest.fn().mockResolvedValue(0),
@@ -2739,7 +2750,7 @@ describe('RecycleBinService', () => {
     };
 
     it('lists deleted grading scales and exam terms for the caller institution', async () => {
-      prismaMock.gradingScale.findMany.mockResolvedValue([
+      prismaMock.gradingScale.findMany.mockResolvedValueOnce([
         {
           id: 'scale-1',
           name: 'Standard',
@@ -2747,7 +2758,7 @@ describe('RecycleBinService', () => {
           ...deletedFields,
         },
       ]);
-      prismaMock.examTerm.findMany.mockResolvedValue([
+      prismaMock.examTerm.findMany.mockResolvedValueOnce([
         {
           id: 'term-1',
           name: 'First Term',
@@ -2910,6 +2921,153 @@ describe('RecycleBinService', () => {
         ),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(prismaMock.academicYear.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('exams (M4 phase 2)', () => {
+    const longAgo = () => {
+      const date = new Date();
+      date.setUTCDate(date.getUTCDate() - 31);
+      return date;
+    };
+    const deletedExam = {
+      id: 'exam-1',
+      name: 'First Term Examination',
+      classId: 'class-1',
+      examTermId: 'term-1',
+      gradingScaleId: 'scale-1',
+      originalExamId: null,
+      campus: { institutionId: 'institution-1' },
+    };
+
+    it('lists deleted exams and labels retake types', async () => {
+      prismaMock.exam.findMany.mockResolvedValueOnce([
+        {
+          id: 'exam-2',
+          name: 'Retake',
+          examType: 'RETAKE',
+          classId: 'class-1',
+          campus: { institutionId: 'institution-1' },
+          deletedAt: new Date('2026-05-06T10:00:00.000Z'),
+          deletedBy: 'admin-1',
+          deleteReason: null,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-05-06T09:00:00.000Z'),
+        },
+      ]);
+
+      const result = await service.listDeletedItems(adminUser, {
+        page: 1,
+        limit: 10,
+        entity: RecycleBinEntity.EXAM,
+      });
+
+      expect(result.data.items).toEqual([
+        expect.objectContaining({
+          entity: RecycleBinEntity.EXAM,
+          id: 'exam-2',
+          subtitle: 'Exam (RETAKE)',
+        }),
+      ]);
+    });
+
+    it('restores an exam whose class, term and grading scale are active', async () => {
+      prismaMock.exam.findFirst.mockResolvedValue(deletedExam);
+      prismaMock.academicClass.findUnique.mockResolvedValue({ id: 'class-1' });
+      prismaMock.examTerm.findUnique.mockResolvedValue({ id: 'term-1' });
+      prismaMock.gradingScale.findUnique.mockResolvedValue({ id: 'scale-1' });
+      prismaMock.exam.update.mockResolvedValue({ id: 'exam-1' });
+
+      const result = await service.restoreRecord(
+        adminUser,
+        RecycleBinEntity.EXAM,
+        'exam-1',
+      );
+
+      expect(prismaMock.exam.update).toHaveBeenCalled();
+      expect(result.message).toBe('Exam restored successfully');
+    });
+
+    it('refuses to restore an exam while its term is still deleted', async () => {
+      prismaMock.exam.findFirst.mockResolvedValue(deletedExam);
+      prismaMock.academicClass.findUnique.mockResolvedValue({ id: 'class-1' });
+      prismaMock.examTerm.findUnique.mockResolvedValue(null);
+      prismaMock.gradingScale.findUnique.mockResolvedValue({ id: 'scale-1' });
+
+      await expect(
+        service.restoreRecord(adminUser, RecycleBinEntity.EXAM, 'exam-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prismaMock.exam.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses to restore a retake while its original exam is still deleted', async () => {
+      prismaMock.exam.findFirst.mockResolvedValue({
+        ...deletedExam,
+        originalExamId: 'exam-0',
+      });
+      prismaMock.academicClass.findUnique.mockResolvedValue({ id: 'class-1' });
+      prismaMock.examTerm.findUnique.mockResolvedValue({ id: 'term-1' });
+      prismaMock.gradingScale.findUnique.mockResolvedValue({ id: 'scale-1' });
+      prismaMock.exam.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.restoreRecord(adminUser, RecycleBinEntity.EXAM, 'exam-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('permanently deletes an exam once eligible', async () => {
+      prismaMock.exam.findFirst.mockResolvedValue({
+        name: 'First Term Examination',
+        deletedAt: longAgo(),
+        campus: { institutionId: 'institution-1' },
+      });
+
+      const result = await service.permanentlyDeleteRecord(
+        adminUser,
+        RecycleBinEntity.EXAM,
+        'exam-1',
+      );
+
+      expect(prismaMock.exam.delete).toHaveBeenCalledWith({
+        where: { id: 'exam-1', deletedAt: { not: null } },
+      });
+      expect(result.message).toBe('Exam permanently deleted successfully');
+    });
+
+    it('blocks purging an exam while an active retake still points at it', async () => {
+      prismaMock.exam.findFirst.mockResolvedValue({
+        name: 'First Term Examination',
+        deletedAt: longAgo(),
+        campus: { institutionId: 'institution-1' },
+      });
+      prismaMock.exam.count.mockResolvedValueOnce(1);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.EXAM,
+          'exam-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prismaMock.exam.delete).not.toHaveBeenCalled();
+    });
+
+    it('blocks purging a grading scale or class while active exams use it', async () => {
+      prismaMock.gradingScale.findFirst.mockResolvedValue({
+        name: 'Standard',
+        deletedAt: longAgo(),
+        institutionId: 'institution-1',
+      });
+      prismaMock.exam.count.mockResolvedValueOnce(1);
+
+      await expect(
+        service.permanentlyDeleteRecord(
+          adminUser,
+          RecycleBinEntity.GRADING_SCALE,
+          'scale-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prismaMock.gradingScale.delete).not.toHaveBeenCalled();
     });
   });
 });

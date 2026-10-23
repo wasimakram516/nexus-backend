@@ -30,6 +30,7 @@ export enum RecycleBinEntity {
   PERIOD_SLOT = 'period-slot',
   GRADING_SCALE = 'grading-scale',
   EXAM_TERM = 'exam-term',
+  EXAM = 'exam',
 }
 
 export class ListRecycleBinQueryDto extends PaginationQueryDto {
