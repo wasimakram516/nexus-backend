@@ -28,6 +28,8 @@ export enum RecycleBinEntity {
   STUDENT_ENROLLMENT = 'student-enrollment',
   NOTICE = 'notice',
   PERIOD_SLOT = 'period-slot',
+  GRADING_SCALE = 'grading-scale',
+  EXAM_TERM = 'exam-term',
 }
 
 export class ListRecycleBinQueryDto extends PaginationQueryDto {
