@@ -25,6 +25,11 @@ describe('PrismaService audit helpers', () => {
       result: unknown,
       fallbackInstitutionId: string | null,
     ) => Promise<string | null>;
+    rotateScopeKeyOnSoftDelete: (
+      args: Record<string, unknown>,
+      action: string,
+      capabilities: Record<string, boolean>,
+    ) => Record<string, unknown>;
     buildSnapshot: (value: unknown) => unknown;
     fetchPreImage: (
       service: Record<string, unknown>,
@@ -195,6 +200,74 @@ describe('PrismaService audit helpers', () => {
     expect(service.staffProfile.findUnique).toHaveBeenCalledWith({
       where: { id: 'staff-profile-1' },
       select: { campus: { select: { institutionId: true } } },
+    });
+  });
+
+  describe('rotateScopeKeyOnSoftDelete', () => {
+    const scoped = { activeScopeKey: true };
+
+    it('frees the unique slot when a single row is soft deleted via update', () => {
+      const result = PrismaServiceInternal.rotateScopeKeyOnSoftDelete(
+        { where: { id: 'row-1' }, data: { deletedAt: new Date() } },
+        'update',
+        scoped,
+      );
+
+      expect((result.data as Record<string, unknown>).activeScopeKey).toBe(
+        'DELETED:row-1',
+      );
+    });
+
+    it('leaves restores and ordinary edits alone', () => {
+      const restore = { where: { id: 'row-1' }, data: { deletedAt: null } };
+      const edit = { where: { id: 'row-1' }, data: { name: 'New' } };
+
+      expect(
+        PrismaServiceInternal.rotateScopeKeyOnSoftDelete(
+          restore,
+          'update',
+          scoped,
+        ),
+      ).toBe(restore);
+      expect(
+        PrismaServiceInternal.rotateScopeKeyOnSoftDelete(
+          edit,
+          'update',
+          scoped,
+        ),
+      ).toBe(edit);
+    });
+
+    it('keeps an explicitly supplied key', () => {
+      const args = {
+        where: { id: 'row-1' },
+        data: { deletedAt: new Date(), activeScopeKey: 'REPLACED-row-1' },
+      };
+
+      expect(
+        PrismaServiceInternal.rotateScopeKeyOnSoftDelete(
+          args,
+          'update',
+          scoped,
+        ),
+      ).toBe(args);
+    });
+
+    it('ignores models without an activeScopeKey and bulk updates', () => {
+      const args = { where: { id: 'row-1' }, data: { deletedAt: new Date() } };
+
+      expect(
+        PrismaServiceInternal.rotateScopeKeyOnSoftDelete(args, 'update', {
+          activeScopeKey: false,
+        }),
+      ).toBe(args);
+      expect(
+        PrismaServiceInternal.rotateScopeKeyOnSoftDelete(
+          args,
+          'updateMany',
+          scoped,
+        ),
+      ).toBe(args);
     });
   });
 

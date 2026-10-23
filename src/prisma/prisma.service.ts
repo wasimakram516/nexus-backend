@@ -157,6 +157,11 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
               capabilities,
               actor?.sub ?? null,
             );
+            nextArgs = PrismaService.rotateScopeKeyOnSoftDelete(
+              nextArgs,
+              effectiveOperation,
+              capabilities,
+            );
 
             // Snapshots are only meaningful (and cheap) for single-record
             // mutations — update/delete always require a unique `where` by
@@ -342,6 +347,51 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
     }
 
     return nextArgs;
+  }
+
+  /**
+   * Free a soft-deleted row's slot in its unique indexes. Services soft
+   * delete with `update({ data: { deletedAt } })`, which on its own leaves
+   * `activeScopeKey` as `ACTIVE`, so the deleted row would keep blocking its
+   * name forever. Rotating the key to `DELETED:{id}` here fixes every model
+   * in one place; restoring (`deletedAt: null`) already resets it to
+   * `ACTIVE`. Runs even without an actor (cron, tests). Only single-row
+   * `update` is handled: one shared key across an `updateMany` would itself
+   * collide, so bulk soft deletes must supply per-row keys explicitly.
+   *
+   * @param {QueryArgs} args - The (already normalized) query args.
+   * @param {string} action - The effective Prisma operation.
+   * @param {ModelCapabilities} capabilities - Which lifecycle columns the model has.
+   * @returns {QueryArgs} Args with `activeScopeKey` set when a soft delete is detected.
+   */
+  private static rotateScopeKeyOnSoftDelete(
+    args: QueryArgs,
+    action: string,
+    capabilities: ModelCapabilities,
+  ): QueryArgs {
+    if (action !== 'update' || !capabilities.activeScopeKey) {
+      return args;
+    }
+
+    const data = args.data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return args;
+    }
+
+    const record = data as Record<string, unknown>;
+    const isSoftDelete =
+      record.deletedAt instanceof Date || typeof record.deletedAt === 'string';
+    if (!isSoftDelete || record.activeScopeKey !== undefined) {
+      return args;
+    }
+
+    return {
+      ...args,
+      data: {
+        ...record,
+        activeScopeKey: PrismaService.resolveSoftDeleteScopeValue(args.where),
+      },
+    };
   }
 
   private static stampMutationData(
