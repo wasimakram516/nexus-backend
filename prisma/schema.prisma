@@ -766,6 +766,8 @@ model Subject {
   teacherSubjects TeacherSubject[]
   // M3 (Timetable M1 track, decision #26).
   periodSlots     PeriodSlot[]
+  // M4 Phase 3.
+  examSubjects    ExamSubject[]
 
   @@index([classId])
   @@index([createdAt])
@@ -1831,6 +1833,7 @@ model Exam {
   publishedByUser User?         @relation("ExamPublishedBy", fields: [publishedBy], references: [id], onDelete: SetNull)
   originalExam    Exam?         @relation("ExamRetakes", fields: [originalExamId], references: [id], onDelete: Cascade)
   retakes         Exam[]        @relation("ExamRetakes")
+  subjects        ExamSubject[]
 
   @@unique([classId, examTermId, retakeKey, activeScopeKey], map: "exam_class_term_retake_unique")
   @@index([academicYearId])
@@ -1840,4 +1843,37 @@ model Exam {
   @@index([gradingScaleId])
   @@index([originalExamId])
   @@map("exams")
+}
+
+
+// M4 Phase 3. One paper inside an exam: which subject, when and where it is
+// sat, and out of how many marks. Class-level, not section-level: a school
+// runs one datesheet per class. examDate is optional so papers can be listed
+// before they are scheduled.
+model ExamSubject {
+  id             String    @id @default(uuid()) @db.Uuid
+  examId         String    @map("exam_id") @db.Uuid
+  subjectId      String    @map("subject_id") @db.Uuid
+  maxMarks       Decimal   @map("max_marks") @db.Decimal(6, 2)
+  passingMarks   Decimal   @map("passing_marks") @db.Decimal(6, 2)
+  examDate       DateTime? @map("exam_date") @db.Timestamptz(3)
+  startTime      String?   @map("start_time")
+  endTime        String?   @map("end_time")
+  room           String?
+  createdBy      String?   @map("created_by") @db.Uuid
+  updatedBy      String?   @map("updated_by") @db.Uuid
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedBy      String?   @map("deleted_by") @db.Uuid
+  deleteReason   String?   @map("delete_reason")
+  activeScopeKey String    @default("ACTIVE") @map("active_scope_key")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  exam    Exam    @relation(fields: [examId], references: [id], onDelete: Cascade)
+  subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([examId, subjectId, activeScopeKey], map: "exam_subject_unique")
+  @@index([examId])
+  @@index([subjectId])
+  @@map("exam_subjects")
 }
