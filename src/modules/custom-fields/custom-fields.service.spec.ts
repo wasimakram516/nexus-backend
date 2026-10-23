@@ -46,6 +46,9 @@ describe('CustomFieldsService', () => {
     exam: {
       findUnique: jest.fn(),
     },
+    examSubject: {
+      findUnique: jest.fn(),
+    },
     examTerm: {
       findUnique: jest.fn(),
     },
@@ -994,6 +997,65 @@ describe('CustomFieldsService', () => {
           definitionId: 'definition-term',
           entityId: 'term-1',
           value: 'Hall A',
+        }),
+      ).resolves.toMatchObject({
+        message: 'Custom field value saved successfully',
+      });
+    });
+
+    it('resolves EXAM_SUBJECT access through its parent exam campus', async () => {
+      prismaMock.customFieldDefinition.findUnique.mockResolvedValue({
+        id: 'definition-paper',
+        institutionId: 'institution-1',
+        moduleKey: ModuleKey.EXAMINATIONS,
+        entityType: CustomFieldEntity.EXAM_SUBJECT,
+        fieldKey: 'syllabus',
+        label: 'Syllabus',
+        inputType: CustomFieldInputType.TEXT,
+        isRequired: false,
+        isActive: true,
+        sortOrder: 0,
+      });
+      prismaMock.examSubject.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-paper',
+          entityId: 'paper-1',
+          value: 'Chapters 1-5',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      prismaMock.examSubject.findUnique.mockResolvedValueOnce({
+        exam: {
+          campusId: 'campus-1',
+          campus: { institutionId: 'institution-2' },
+        },
+      });
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-paper',
+          entityId: 'paper-1',
+          value: 'Chapters 1-5',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      prismaMock.examSubject.findUnique.mockResolvedValueOnce({
+        exam: {
+          campusId: 'campus-1',
+          campus: { institutionId: 'institution-1' },
+        },
+      });
+      prismaMock.customFieldValue.upsert.mockResolvedValue({
+        id: 'value-1',
+        entityId: 'paper-1',
+        definition: { id: 'definition-paper' },
+      });
+      await expect(
+        service.upsertValue(adminUser, {
+          definitionId: 'definition-paper',
+          entityId: 'paper-1',
+          value: 'Chapters 1-5',
         }),
       ).resolves.toMatchObject({
         message: 'Custom field value saved successfully',

@@ -1,4 +1,9 @@
-import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import {
+  ApiProperty,
+  ApiPropertyOptional,
+  OmitType,
+  PartialType,
+} from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { CustomFieldPayloadDto } from '../../../common/dto/custom-field-payload.dto';
 import {
@@ -12,6 +17,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -219,4 +225,62 @@ export class ListExamsQueryDto {
   @IsOptional()
   @IsUUID()
   originalExamId?: string;
+}
+
+const TIME_FORMAT_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export class CreateExamSubjectDto extends CustomFieldPayloadDto {
+  @ApiProperty()
+  @IsUUID()
+  examId!: string;
+
+  @ApiProperty()
+  @IsUUID()
+  subjectId!: string;
+
+  @ApiProperty({ minimum: 0.01, maximum: 9999.99 })
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  @Max(9999.99)
+  maxMarks!: number;
+
+  @ApiProperty({ minimum: 0, maximum: 9999.99 })
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(9999.99)
+  passingMarks!: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  examDate?: string;
+
+  @ApiPropertyOptional({ example: '09:00', description: '24-hour "HH:mm".' })
+  @IsOptional()
+  @Matches(TIME_FORMAT_REGEX, { message: 'startTime must be in HH:mm format.' })
+  startTime?: string;
+
+  @ApiPropertyOptional({ example: '11:00', description: '24-hour "HH:mm".' })
+  @IsOptional()
+  @Matches(TIME_FORMAT_REGEX, { message: 'endTime must be in HH:mm format.' })
+  endTime?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  room?: string;
+}
+
+/** The exam and subject of a paper are immutable after creation. */
+export class UpdateExamSubjectDto extends OmitType(
+  PartialType(CreateExamSubjectDto),
+  ['examId', 'subjectId'] as const,
+) {}
+
+export class ListExamSubjectsQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  examId?: string;
 }

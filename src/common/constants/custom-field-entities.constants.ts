@@ -32,6 +32,7 @@ export const CustomFieldEntity = {
   // M4 (Exams). ExamResult and GradingScale are deliberately not registered.
   EXAM_TERM: 'exam_term',
   EXAM: 'exam',
+  EXAM_SUBJECT: 'exam_subject',
 } as const;
 
 export type CustomFieldEntityType =

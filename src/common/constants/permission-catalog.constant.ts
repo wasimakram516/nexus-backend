@@ -254,6 +254,13 @@ export const PERMISSION_CATALOG: readonly PermissionFeatureDef[] = [
     actions: ALL_ACTIONS,
   },
 
+  {
+    key: 'exam_subjects',
+    label: 'Exam Subjects',
+    module: ModuleKey.EXAMINATIONS,
+    actions: ALL_ACTIONS,
+  },
+
   // Administrative — not gated by a plan module
   { key: 'users', label: 'Users', module: null, actions: ALL_ACTIONS },
   {

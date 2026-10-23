@@ -47,6 +47,7 @@ export const CUSTOM_FIELD_ENTITY_MODULES: Record<
   user: ModuleKey.PEOPLE,
   exam_term: ModuleKey.EXAMINATIONS,
   exam: ModuleKey.EXAMINATIONS,
+  exam_subject: ModuleKey.EXAMINATIONS,
 };
 
 export const CUSTOM_FIELD_ENTITY_FEATURES: Record<
@@ -83,6 +84,7 @@ export const CUSTOM_FIELD_ENTITY_FEATURES: Record<
   user: 'users',
   exam_term: 'exam_terms',
   exam: 'exams',
+  exam_subject: 'exam_subjects',
 };
 
 /** Prevents definitions from being assigned to modules their record services never load. */

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { CurrentUser } from '../src/common/interfaces/current-user.interface';
 import { AuditLogService } from '../src/common/services/audit-log.service';
 import { CampusAccessService } from '../src/common/services/campus-access.service';
@@ -7,6 +7,7 @@ import { EntityCustomFieldsService } from '../src/common/services/entity-custom-
 import { ModuleAccessService } from '../src/common/services/module-access.service';
 import { RequestContextService } from '../src/common/services/request-context.service';
 import { RetakeExamType } from '../src/modules/examinations/dto/examinations.dto';
+import { ExamSubjectsService } from '../src/modules/examinations/exam-subjects.service';
 import { ExaminationsService } from '../src/modules/examinations/examinations.service';
 import { UserRole } from '../src/prisma/client';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -28,6 +29,7 @@ describe('PostgreSQL examinations setup', () => {
   const context = new RequestContextService();
   let prisma: PrismaService;
   let service: ExaminationsService;
+  let papers: ExamSubjectsService;
   let institutionId: string;
   let academicYearId: string;
 
@@ -64,6 +66,12 @@ describe('PostgreSQL examinations setup', () => {
       new CampusAccessService(prisma),
       new EntityCustomFieldsService(prisma, context),
       new AuditLogService(prisma),
+    );
+    papers = new ExamSubjectsService(
+      prisma,
+      new ModuleAccessService(prisma),
+      new CampusAccessService(prisma),
+      new EntityCustomFieldsService(prisma, context),
     );
 
     const institution = await prisma.institution.create({
@@ -592,6 +600,226 @@ describe('PostgreSQL examinations setup', () => {
       });
       const read = await service.getExam(superadmin, dataOf(created).id);
       expect(JSON.stringify(read.data)).toContain('Ms Ali');
+    });
+  });
+
+  describe('exam papers', () => {
+    let classId: string;
+    let otherClassSubjectId: string;
+    let mathsId: string;
+    let scienceId: string;
+    let examId: string;
+
+    beforeAll(async () => {
+      const campus = await prisma.campus.create({
+        data: {
+          institutionId,
+          name: 'Papers campus',
+          location: 'Test',
+          studentStartTime: '08:00',
+          studentEndTime: '14:00',
+          staffStartTime: '08:00',
+          staffEndTime: '14:00',
+          lateThreshold: 10,
+          earlyLeaveThreshold: 10,
+        },
+      });
+      const level = await prisma.level.create({
+        data: { name: 'Papers level', campusId: campus.id },
+      });
+      const academicClass = await prisma.academicClass.create({
+        data: { name: 'Papers class', levelId: level.id },
+      });
+      const otherClass = await prisma.academicClass.create({
+        data: { name: 'Other class', levelId: level.id },
+      });
+      classId = academicClass.id;
+      mathsId = (
+        await prisma.subject.create({ data: { name: 'Maths', classId } })
+      ).id;
+      scienceId = (
+        await prisma.subject.create({ data: { name: 'Science', classId } })
+      ).id;
+      otherClassSubjectId = (
+        await prisma.subject.create({
+          data: { name: 'Elsewhere', classId: otherClass.id },
+        })
+      ).id;
+
+      const scale = await service.createGradingScale(
+        institutionId,
+        { name: 'Papers scale', bands: bands(['Pass', 0, 100]) },
+        superadmin,
+      );
+      await service.setCurrentGradingScale(
+        institutionId,
+        dataOf(scale).id,
+        superadmin,
+      );
+      const term = await service.createExamTerm(
+        institutionId,
+        { academicYearId, name: 'Papers term' },
+        superadmin,
+      );
+      examId = dataOf(
+        await service.createExam(superadmin, {
+          classId,
+          examTermId: dataOf(term).id,
+          name: 'Papers exam',
+        }),
+      ).id;
+    });
+
+    it('adds papers with names, rejects a duplicate and a subject of another class', async () => {
+      const maths = dataOf(
+        await papers.createExamSubject(superadmin, {
+          examId,
+          subjectId: mathsId,
+          maxMarks: 100,
+          passingMarks: 40,
+          examDate: '2026-12-01',
+          startTime: '09:00',
+          endTime: '11:00',
+          room: 'A-1',
+        }),
+      );
+      expect(maths.subject.name).toBe('Maths');
+      expect(Number(maths.maxMarks)).toBe(100);
+
+      await expect(
+        papers.createExamSubject(superadmin, {
+          examId,
+          subjectId: mathsId,
+          maxMarks: 50,
+          passingMarks: 20,
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      await expect(
+        papers.createExamSubject(superadmin, {
+          examId,
+          subjectId: otherClassSubjectId,
+          maxMarks: 50,
+          passingMarks: 20,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('audits a paper under the institution of its exam', async () => {
+      const science = dataOf(
+        await papers.createExamSubject(superadmin, {
+          examId,
+          subjectId: scienceId,
+          maxMarks: 50,
+          passingMarks: 20,
+          examDate: '2026-12-05',
+        }),
+      );
+
+      const audit = await prisma.auditLog.findMany({
+        where: { entity: 'ExamSubject', entityId: science.id },
+      });
+      expect(audit.length).toBeGreaterThan(0);
+      expect(audit.every((row) => row.institutionId === institutionId)).toBe(
+        true,
+      );
+    });
+
+    it('computes the datesheet range from the papers', async () => {
+      const exam = dataOf(await service.getExam(superadmin, examId));
+
+      expect(exam.datesheetStart).toEqual(new Date('2026-12-01'));
+      expect(exam.datesheetEnd).toEqual(new Date('2026-12-05'));
+    });
+
+    it('frees a subject after its paper is deleted from a draft', async () => {
+      const list = dataOf(
+        await papers.listExamSubjects(superadmin, { examId }),
+      );
+      const science = list.find((row) => row.subjectId === scienceId);
+
+      await papers.deleteExamSubject(superadmin, science!.id, 'wrong subject');
+      expect(
+        dataOf(await papers.listExamSubjects(superadmin, { examId })),
+      ).toHaveLength(1);
+
+      await expect(
+        papers.createExamSubject(superadmin, {
+          examId,
+          subjectId: scienceId,
+          maxMarks: 50,
+          passingMarks: 20,
+          examDate: '2026-12-05',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('locks structure and marks once published, but never logistics', async () => {
+      await service.publishExam(superadmin, examId);
+      const list = dataOf(
+        await papers.listExamSubjects(superadmin, { examId }),
+      );
+      const maths = list.find((row) => row.subjectId === mathsId)!;
+
+      await expect(
+        papers.createExamSubject(superadmin, {
+          examId,
+          subjectId: otherClassSubjectId,
+          maxMarks: 10,
+          passingMarks: 4,
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      await expect(
+        papers.deleteExamSubject(superadmin, maths.id),
+      ).rejects.toBeInstanceOf(ConflictException);
+      await expect(
+        papers.updateExamSubject(superadmin, maths.id, { maxMarks: 80 }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(
+        dataOf(
+          await papers.updateExamSubject(superadmin, maths.id, { room: 'B-9' }),
+        ).room,
+      ).toBe('B-9');
+
+      await service.unlockExam(superadmin, examId);
+      expect(
+        Number(
+          dataOf(
+            await papers.updateExamSubject(superadmin, maths.id, {
+              maxMarks: 80,
+              passingMarks: 30,
+            }),
+          ).maxMarks,
+        ),
+      ).toBe(80);
+      await expect(
+        papers.deleteExamSubject(superadmin, maths.id),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('only allows a retake paper for a subject that was on the original exam', async () => {
+      const retake = dataOf(
+        await service.createRetakeExam(superadmin, examId, {
+          examType: RetakeExamType.RETAKE,
+          name: 'Papers retake',
+        }),
+      );
+
+      await expect(
+        papers.createExamSubject(superadmin, {
+          examId: retake.id,
+          subjectId: otherClassSubjectId,
+          maxMarks: 10,
+          passingMarks: 4,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        papers.createExamSubject(superadmin, {
+          examId: retake.id,
+          subjectId: mathsId,
+          maxMarks: 80,
+          passingMarks: 30,
+        }),
+      ).resolves.toBeDefined();
     });
   });
 });

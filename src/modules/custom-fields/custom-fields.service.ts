@@ -1001,6 +1001,25 @@ export class CustomFieldsService {
           }),
         );
         return;
+      case CustomFieldEntity.EXAM_SUBJECT: {
+        const item = await this.prisma.examSubject.findUnique({
+          where: { id: entityId },
+          select: {
+            exam: {
+              select: {
+                campusId: true,
+                campus: { select: { institutionId: true } },
+              },
+            },
+          },
+        });
+        await this.assertCampusScopedEntityAccess(
+          currentUser,
+          institutionId,
+          item?.exam ?? null,
+        );
+        return;
+      }
       case CustomFieldEntity.EXAM_TERM: {
         // Exam terms are institution-wide, so scope by institution only.
         const item = await this.prisma.examTerm.findUnique({

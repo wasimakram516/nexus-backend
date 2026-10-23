@@ -53,6 +53,7 @@ describe('ExaminationsService', () => {
     },
     academicYear: { findUnique: jest.fn() },
     academicClass: { findUnique: jest.fn() },
+    examSubject: { aggregate: jest.fn() },
     exam: {
       create: jest.fn(),
       findMany: jest.fn(),
@@ -617,6 +618,10 @@ describe('ExaminationsService', () => {
     };
 
     beforeEach(() => {
+      prismaMock.examSubject.aggregate.mockResolvedValue({
+        _min: { examDate: null },
+        _max: { examDate: null },
+      });
       prismaMock.academicClass.findUnique.mockResolvedValue({
         level: { campusId: 'campus-1', campus: { institutionId: 'inst-1' } },
       });
@@ -789,6 +794,36 @@ describe('ExaminationsService', () => {
           currentUser,
           'campus-1',
         );
+      });
+
+      it('returns the datesheet range computed from the papers', async () => {
+        const start = new Date('2026-12-01');
+        const end = new Date('2026-12-09');
+        prismaMock.examSubject.aggregate.mockResolvedValue({
+          _min: { examDate: start },
+          _max: { examDate: end },
+        });
+
+        const { data } = await service.getExam(currentUser, 'exam-1');
+
+        expect(prismaMock.examSubject.aggregate).toHaveBeenCalledWith({
+          where: { examId: 'exam-1' },
+          _min: { examDate: true },
+          _max: { examDate: true },
+        });
+        expect(data).toMatchObject({
+          datesheetStart: start,
+          datesheetEnd: end,
+        });
+      });
+
+      it('returns no range while no paper has a date', async () => {
+        const { data } = await service.getExam(currentUser, 'exam-1');
+
+        expect(data).toMatchObject({
+          datesheetStart: null,
+          datesheetEnd: null,
+        });
       });
 
       it('404s for a missing exam', async () => {
@@ -1062,6 +1097,10 @@ describe('ExaminationsService', () => {
 
     it('attaches custom values to exam lists and details', async () => {
       campusAccessMock.getScopedCampusIds.mockResolvedValue(['campus-1']);
+      prismaMock.examSubject.aggregate.mockResolvedValue({
+        _min: { examDate: null },
+        _max: { examDate: null },
+      });
       prismaMock.exam.findMany.mockResolvedValueOnce([{ id: 'exam-1' }]);
       prismaMock.exam.findUnique.mockResolvedValueOnce({
         id: 'exam-1',

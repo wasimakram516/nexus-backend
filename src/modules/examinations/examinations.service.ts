@@ -636,10 +636,22 @@ export class ExaminationsService {
       ModuleKey.EXAMINATIONS,
     );
     const exam = await this.findAccessibleExam(currentUser, examId);
-    const data = await this.entityCustomFieldsService.attachToItem(
+    const range = await this.prisma.examSubject.aggregate({
+      where: { examId },
+      _min: { examDate: true },
+      _max: { examDate: true },
+    });
+    const withFields = await this.entityCustomFieldsService.attachToItem(
       exam,
       CustomFieldEntity.EXAM,
     );
+    // Computed on read from the papers, so editing a paper's date never
+    // leaves a stale stored value behind.
+    const data = {
+      ...withFields,
+      datesheetStart: range._min.examDate,
+      datesheetEnd: range._max.examDate,
+    };
     return { message: 'Exam fetched successfully', data };
   }
 
