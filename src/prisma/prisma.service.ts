@@ -68,6 +68,7 @@ type AuditReferenceIds = Partial<{
   bankId: string;
   definitionId: string;
   planId: string;
+  gradingScaleId: string;
 }>;
 
 @Injectable()
@@ -602,6 +603,7 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
         'bankId',
         'definitionId',
         'planId',
+        'gradingScaleId',
       ];
 
       for (const key of keys) {
@@ -771,6 +773,19 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
       );
       if (user?.institutionId) {
         return user.institutionId;
+      }
+    }
+
+    // M4: GradeBand carries no institutionId of its own, only its parent scale.
+    if (refs.gradingScaleId) {
+      const scale = await fetchWithinContext(() =>
+        service.gradingScale.findUnique({
+          where: { id: refs.gradingScaleId! },
+          select: { institutionId: true },
+        }),
+      );
+      if (scale?.institutionId) {
+        return scale.institutionId;
       }
     }
 
