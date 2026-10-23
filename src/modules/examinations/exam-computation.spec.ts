@@ -6,6 +6,7 @@ import {
   PaperLite,
   parsePassPolicy,
   PassPolicy,
+  validatePassPolicyInput,
   rankStudents,
   ResultLite,
   resolveGrade,
@@ -443,5 +444,49 @@ describe('evaluateAnnualPass', () => {
   it('is null when there is nothing to judge', () => {
     expect(evaluateAnnualPass([], null, policy())).toBeNull();
     expect(evaluateAnnualPass([subject(50)], null, policy())).toBeNull();
+  });
+});
+
+describe('validatePassPolicyInput', () => {
+  it('accepts each policy with or without percentages', () => {
+    expect(validatePassPolicyInput({ passPolicy: 'PER_SUBJECT' })).toBeNull();
+    expect(
+      validatePassPolicyInput({
+        passPolicy: 'AGGREGATE',
+        aggregatePassPercentage: 0,
+      }),
+    ).toBeNull();
+    expect(
+      validatePassPolicyInput({
+        passPolicy: 'AGGREGATE_WITH_MINIMUM',
+        aggregatePassPercentage: 100,
+        minimumSubjectPercentage: null,
+      }),
+    ).toBeNull();
+  });
+
+  it('names the problem for a missing or unknown policy and for bad percentages', () => {
+    expect(validatePassPolicyInput({})).toMatch(/passPolicy must be one of/);
+    expect(validatePassPolicyInput({ passPolicy: 'x' })).toMatch(
+      /passPolicy must be one of/,
+    );
+    expect(
+      validatePassPolicyInput({
+        passPolicy: 'AGGREGATE',
+        aggregatePassPercentage: '50',
+      }),
+    ).toMatch(/aggregatePassPercentage must be a number between 0 and 100/);
+    expect(
+      validatePassPolicyInput({
+        passPolicy: 'AGGREGATE',
+        aggregatePassPercentage: 101,
+      }),
+    ).toMatch(/between 0 and 100/);
+  });
+
+  it('rejects things that are not an object', () => {
+    for (const value of [null, undefined, 'PER_SUBJECT', 5, ['PER_SUBJECT']]) {
+      expect(validatePassPolicyInput(value)).toMatch(/must be an object/);
+    }
   });
 });

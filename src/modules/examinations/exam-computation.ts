@@ -343,3 +343,37 @@ export function evaluateAnnualPass(
   const floor = policy.minimumSubjectPercentage;
   return clearsAggregate && subjects.every((s) => s.percentage >= floor);
 }
+
+/**
+ * Checks a value about to be saved as the institution's `exams` setting, so
+ * a typo is reported when it is saved instead of silently falling back to the
+ * default pass rule when results are read.
+ *
+ * @param {unknown} value - The submitted setting value.
+ * @returns {string | null} What is wrong with it, or null when it is valid.
+ */
+export function validatePassPolicyInput(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return 'The exams setting must be an object.';
+  }
+  const raw = value as Record<string, unknown>;
+  const kinds: PassPolicyKind[] = [
+    'PER_SUBJECT',
+    'AGGREGATE',
+    'AGGREGATE_WITH_MINIMUM',
+  ];
+  if (!kinds.includes(raw.passPolicy as PassPolicyKind)) {
+    return `passPolicy must be one of ${kinds.join(', ')}.`;
+  }
+  for (const field of [
+    'aggregatePassPercentage',
+    'minimumSubjectPercentage',
+  ] as const) {
+    const candidate = raw[field];
+    if (candidate === undefined || candidate === null) continue;
+    if (typeof candidate !== 'number' || candidate < 0 || candidate > 100) {
+      return `${field} must be a number between 0 and 100.`;
+    }
+  }
+  return null;
+}

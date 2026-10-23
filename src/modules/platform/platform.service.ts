@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -19,6 +20,7 @@ import { ModuleAccessService } from '../../common/services/module-access.service
 import { RequestContextService } from '../../common/services/request-context.service';
 import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
 import { generateUniqueSlug } from '../../common/utils/slug.util';
+import { validatePassPolicyInput } from '../examinations/exam-computation';
 import { runAuditedTransaction } from '../../common/utils/transaction.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -450,6 +452,7 @@ export class PlatformService {
     dto: UpsertInstitutionSettingsDto,
   ) {
     await this.ensureInstitutionExists(institutionId);
+    this.assertValidSettings(dto.settings);
 
     // Audited automatically by PrismaService — each upserted setting gets
     // its own real before/after snapshot audit entry (finer-grained than
@@ -489,6 +492,25 @@ export class PlatformService {
       message: 'Institution settings updated successfully',
       data: settings,
     };
+  }
+
+  /**
+   * Rejects a setting whose value would silently break a business rule. Only
+   * the exams pass policy is checked for now; the older settings predate this.
+   *
+   * @param {UpsertInstitutionSettingsDto['settings']} settings - The submitted settings.
+   * @throws {BadRequestException} Naming what is wrong with the exams setting.
+   */
+  private assertValidSettings(
+    settings: UpsertInstitutionSettingsDto['settings'],
+  ) {
+    for (const setting of settings) {
+      if (this.toSnakeCase(setting.key) !== 'exams') continue;
+      const problem = validatePassPolicyInput(setting.value);
+      if (problem) {
+        throw new BadRequestException(problem);
+      }
+    }
   }
 
   async upsertEntitlements(institutionId: string, dto: UpsertEntitlementsDto) {

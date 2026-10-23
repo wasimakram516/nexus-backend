@@ -622,6 +622,48 @@ describe('PlatformService', () => {
     });
   });
 
+  describe('upsertSettings: exams pass policy', () => {
+    const save = (value: unknown) =>
+      service.upsertSettings('institution-1', {
+        settings: [{ key: 'exams', value }] as never,
+      });
+
+    it('saves a valid pass policy', async () => {
+      await save({
+        passPolicy: 'AGGREGATE_WITH_MINIMUM',
+        aggregatePassPercentage: 45,
+        minimumSubjectPercentage: 33,
+      });
+
+      expect(txMock.institutionSetting.upsert).toHaveBeenCalled();
+    });
+
+    it('rejects an unknown policy, an out-of-range percentage and a non-object, saving nothing', async () => {
+      await expect(save({ passPolicy: 'EASY' })).rejects.toThrow(
+        /passPolicy must be one of/,
+      );
+      await expect(
+        save({ passPolicy: 'AGGREGATE', aggregatePassPercentage: 140 }),
+      ).rejects.toThrow(/between 0 and 100/);
+      await expect(
+        save({
+          passPolicy: 'AGGREGATE_WITH_MINIMUM',
+          minimumSubjectPercentage: -1,
+        }),
+      ).rejects.toThrow(/minimumSubjectPercentage/);
+      await expect(save('PER_SUBJECT')).rejects.toThrow(/must be an object/);
+      expect(txMock.institutionSetting.upsert).not.toHaveBeenCalled();
+    });
+
+    it('does not validate other settings', async () => {
+      await service.upsertSettings('institution-1', {
+        settings: [{ key: 'attendance', value: { mode: 'ANYTHING' } }] as never,
+      });
+
+      expect(txMock.institutionSetting.upsert).toHaveBeenCalled();
+    });
+  });
+
   describe('upsertEntitlements', () => {
     it('throws NotFoundException when the institution does not exist', async () => {
       prismaMock.institution.findUnique.mockResolvedValueOnce(null);
