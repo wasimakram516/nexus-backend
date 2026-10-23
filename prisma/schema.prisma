@@ -745,6 +745,8 @@ model Section {
   notices         Notice[]
   // M3 (Timetable M1 track, decision #26).
   periodSlots     PeriodSlot[]
+  // M4 Phase 4.
+  examResults ExamResult[]
 
   @@index([classId])
   @@index([createdAt])
@@ -925,6 +927,8 @@ model Student {
   // M2 Phase 3 (decision #21): source of truth for class/section placement,
   // replacing the removed classId/sectionId columns above.
   enrollments    StudentEnrollment[]
+  // M4 Phase 4.
+  examResults ExamResult[]
 
   @@unique([institutionId, regNo, activeScopeKey], map: "student_reg_no_institution_unique")
   @@index([campusId])
@@ -1871,9 +1875,46 @@ model ExamSubject {
 
   exam    Exam    @relation(fields: [examId], references: [id], onDelete: Cascade)
   subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  results ExamResult[]
 
   @@unique([examId, subjectId, activeScopeKey], map: "exam_subject_unique")
   @@index([examId])
   @@index([subjectId])
   @@map("exam_subjects")
+}
+
+
+// M4 Phase 4. One student's result for one paper. The per-exam attendance flag
+// is isAbsent: each paper has its own date, so being absent is a per-paper
+// fact. marksObtained is null until marks are entered or the student is marked
+// absent, and must be null when isAbsent (a service-layer rule). sectionId is
+// copied from the enrollment when the mark is entered, so a later section
+// transfer never changes who owned an already-entered mark; SetNull so removing
+// a section never deletes a historical result.
+model ExamResult {
+  id             String    @id @default(uuid()) @db.Uuid
+  examSubjectId  String    @map("exam_subject_id") @db.Uuid
+  studentId      String    @map("student_id") @db.Uuid
+  sectionId      String?   @map("section_id") @db.Uuid
+  marksObtained  Decimal?  @map("marks_obtained") @db.Decimal(6, 2)
+  isAbsent       Boolean   @default(false) @map("is_absent")
+  remarks        String?
+  createdBy      String?   @map("created_by") @db.Uuid
+  updatedBy      String?   @map("updated_by") @db.Uuid
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedBy      String?   @map("deleted_by") @db.Uuid
+  deleteReason   String?   @map("delete_reason")
+  activeScopeKey String    @default("ACTIVE") @map("active_scope_key")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  examSubject ExamSubject @relation(fields: [examSubjectId], references: [id], onDelete: Cascade)
+  student     Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  section     Section?    @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+
+  @@unique([examSubjectId, studentId, activeScopeKey], map: "exam_result_unique")
+  @@index([examSubjectId])
+  @@index([studentId])
+  @@index([sectionId])
+  @@map("exam_results")
 }
