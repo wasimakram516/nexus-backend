@@ -45,8 +45,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 export function describeInvalidColorOverrides(value: unknown): string | null {
   if (!isPlainObject(value)) return 'colorOverrides must be an object';
   for (const [mode, tokens] of Object.entries(value)) {
-    if (!MODES.includes(mode)) return `unknown mode "${mode}" (use light or dark)`;
-    if (!isPlainObject(tokens)) return `${mode} must be an object of token colors`;
+    if (!MODES.includes(mode))
+      return `unknown mode "${mode}" (use light or dark)`;
+    if (!isPlainObject(tokens))
+      return `${mode} must be an object of token colors`;
     for (const [token, color] of Object.entries(tokens)) {
       if (!TOKENS.has(token)) return `unknown color token "${mode}.${token}"`;
       if (typeof color !== 'string' || !HEX_COLOR.test(color)) {
@@ -69,7 +71,8 @@ export function IsBrandingColorOverrides(options?: ValidationOptions) {
       propertyName,
       options,
       validator: {
-        validate: (value: unknown) => describeInvalidColorOverrides(value) === null,
+        validate: (value: unknown) =>
+          describeInvalidColorOverrides(value) === null,
         defaultMessage: (args) =>
           `${args?.property}: ${describeInvalidColorOverrides(args?.value) ?? 'invalid'}`,
       },
