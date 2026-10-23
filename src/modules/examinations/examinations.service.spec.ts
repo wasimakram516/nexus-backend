@@ -7,6 +7,8 @@ import {
 import { Test } from '@nestjs/testing';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
+import { AuditLogService } from '../../common/services/audit-log.service';
+import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import { ModuleKey, Prisma, UserRole } from '../../prisma/client';
@@ -28,6 +30,10 @@ describe('ExaminationsService', () => {
     gradingScale: {
       create: jest.fn(),
       update: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+    },
+    exam: {
+      updateMany: jest.fn(),
       findUniqueOrThrow: jest.fn(),
     },
     gradeBand: {
@@ -61,6 +67,19 @@ describe('ExaminationsService', () => {
       update: jest.fn(),
     },
   };
+
+  // saveRecord runs the mutation against the same mocked delegates, so the
+  // existing prismaMock assertions still apply; attach* pass items through.
+  const customFieldsMock = {
+    saveRecord: jest.fn(
+      (_params: unknown, mutation: (client: unknown) => Promise<unknown>) =>
+        mutation(prismaMock),
+    ),
+    attachToItem: jest.fn((item: unknown) => Promise.resolve(item)),
+    attachToItems: jest.fn((items: unknown) => Promise.resolve(items)),
+  };
+
+  const auditLogMock = { log: jest.fn().mockResolvedValue(undefined) };
 
   const campusAccessMock = {
     assertClassAccess: jest.fn().mockResolvedValue(undefined),
@@ -106,6 +125,8 @@ describe('ExaminationsService', () => {
         { provide: ModuleAccessService, useValue: moduleAccessMock },
         RequestContextService,
         { provide: CampusAccessService, useValue: campusAccessMock },
+        { provide: EntityCustomFieldsService, useValue: customFieldsMock },
+        { provide: AuditLogService, useValue: auditLogMock },
       ],
     }).compile();
     service = moduleRef.get(ExaminationsService);
@@ -942,6 +963,252 @@ describe('ExaminationsService', () => {
           orderBy: [{ createdAt: 'asc' }],
         });
       });
+    });
+  });
+
+  describe('custom field values', () => {
+    const term = {
+      id: 'term-1',
+      institutionId: 'inst-1',
+      academicYearId: 'year-1',
+    };
+
+    beforeEach(() => {
+      prismaMock.academicYear.findUnique.mockResolvedValue({
+        institutionId: 'inst-1',
+      });
+      prismaMock.academicClass.findUnique.mockResolvedValue({
+        level: { campusId: 'campus-1', campus: { institutionId: 'inst-1' } },
+      });
+      prismaMock.examTerm.findUnique.mockResolvedValue(term);
+      prismaMock.institution.findUnique.mockResolvedValue({
+        id: 'inst-1',
+        currentGradingScaleId: 'scale-1',
+      });
+    });
+
+    it('saves exam term custom values with the record, as a required-field create', async () => {
+      prismaMock.examTerm.create.mockResolvedValue({ id: 'term-2' });
+
+      await service.createExamTerm(
+        'inst-1',
+        {
+          academicYearId: 'year-1',
+          name: 'Mid Term',
+          customFields: { venue: 'Hall A' },
+        },
+        currentUser,
+      );
+
+      expect(customFieldsMock.saveRecord).toHaveBeenCalledWith(
+        {
+          institutionId: 'inst-1',
+          moduleKey: ModuleKey.EXAMINATIONS,
+          entityType: 'exam_term',
+          values: { venue: 'Hall A' },
+          create: true,
+        },
+        expect.any(Function),
+      );
+      expect(customFieldsMock.attachToItem).toHaveBeenCalledWith(
+        { id: 'term-2' },
+        'exam_term',
+      );
+    });
+
+    it('does not require fields again on an exam term update', async () => {
+      prismaMock.examTerm.findUnique.mockResolvedValue({
+        ...term,
+        name: 'Mid Term',
+        startDate: null,
+        endDate: null,
+      });
+      prismaMock.examTerm.update.mockResolvedValue({ id: 'term-1' });
+
+      await service.updateExamTerm(
+        'inst-1',
+        'term-1',
+        { customFields: { venue: 'Hall B' } },
+        currentUser,
+      );
+
+      expect(customFieldsMock.saveRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ entityType: 'exam_term', create: false }),
+        expect.any(Function),
+      );
+    });
+
+    it('saves exam custom values scoped to the class institution', async () => {
+      prismaMock.exam.create.mockResolvedValue({ id: 'exam-9' });
+
+      await service.createExam(currentUser, {
+        classId: 'class-1',
+        examTermId: 'term-1',
+        name: 'Exam',
+        customFields: { invigilator: 'Ms Ali' },
+      });
+
+      expect(customFieldsMock.saveRecord).toHaveBeenCalledWith(
+        {
+          institutionId: 'inst-1',
+          moduleKey: ModuleKey.EXAMINATIONS,
+          entityType: 'exam',
+          values: { invigilator: 'Ms Ali' },
+          create: true,
+        },
+        expect.any(Function),
+      );
+    });
+
+    it('attaches custom values to exam lists and details', async () => {
+      campusAccessMock.getScopedCampusIds.mockResolvedValue(['campus-1']);
+      prismaMock.exam.findMany.mockResolvedValueOnce([{ id: 'exam-1' }]);
+      prismaMock.exam.findUnique.mockResolvedValueOnce({
+        id: 'exam-1',
+        campusId: 'campus-1',
+      });
+
+      await service.listExams(currentUser, {});
+      await service.getExam(currentUser, 'exam-1');
+
+      expect(customFieldsMock.attachToItems).toHaveBeenCalledWith(
+        [{ id: 'exam-1' }],
+        'exam',
+      );
+      expect(customFieldsMock.attachToItem).toHaveBeenCalledWith(
+        { id: 'exam-1', campusId: 'campus-1' },
+        'exam',
+      );
+    });
+  });
+
+  describe('publish, unlock and relock', () => {
+    const exam = {
+      id: 'exam-1',
+      classId: 'class-1',
+      campusId: 'campus-1',
+      name: 'First Term Examination',
+      examType: 'REGULAR',
+      status: 'DRAFT',
+      unlockedForEditing: false,
+    };
+
+    beforeEach(() => {
+      prismaMock.academicClass.findUnique.mockResolvedValue({
+        level: { campusId: 'campus-1', campus: { institutionId: 'inst-1' } },
+      });
+      prismaMock.exam.findUnique.mockResolvedValue(exam);
+      tx.exam.updateMany.mockResolvedValue({ count: 1 });
+      tx.exam.findUniqueOrThrow.mockResolvedValue({ id: 'exam-1' });
+    });
+
+    it('publishes a draft, stamps who and when, and writes a dedicated audit entry', async () => {
+      await service.publishExam(currentUser, 'exam-1');
+
+      expect(tx.exam.updateMany).toHaveBeenCalledWith({
+        where: { id: 'exam-1', status: 'DRAFT', unlockedForEditing: false },
+        data: expect.objectContaining({
+          status: 'PUBLISHED',
+          unlockedForEditing: false,
+          publishedBy: 'admin-1',
+          updatedBy: 'admin-1',
+        }) as never,
+      });
+      expect(auditLogMock.log).toHaveBeenCalledWith(
+        currentUser,
+        expect.objectContaining({
+          action: 'EXAM_PUBLISHED',
+          entity: 'Exam',
+          entityId: 'exam-1',
+          institutionId: 'inst-1',
+        }),
+        tx,
+      );
+    });
+
+    it('rejects publishing an exam that is already published', async () => {
+      prismaMock.exam.findUnique.mockResolvedValue({
+        ...exam,
+        status: 'PUBLISHED',
+      });
+
+      await expect(service.publishExam(currentUser, 'exam-1')).rejects.toThrow(
+        ConflictException,
+      );
+      expect(tx.exam.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('unlocks only a published, locked exam', async () => {
+      await expect(service.unlockExam(currentUser, 'exam-1')).rejects.toThrow(
+        /Only a published exam/,
+      );
+
+      prismaMock.exam.findUnique.mockResolvedValue({
+        ...exam,
+        status: 'PUBLISHED',
+        unlockedForEditing: true,
+      });
+      await expect(service.unlockExam(currentUser, 'exam-1')).rejects.toThrow(
+        /already unlocked/,
+      );
+
+      prismaMock.exam.findUnique.mockResolvedValue({
+        ...exam,
+        status: 'PUBLISHED',
+      });
+      await service.unlockExam(currentUser, 'exam-1');
+      expect(tx.exam.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ unlockedForEditing: true }) as never,
+        }),
+      );
+      expect(auditLogMock.log).toHaveBeenCalledWith(
+        currentUser,
+        expect.objectContaining({ action: 'EXAM_UNLOCKED' }),
+        tx,
+      );
+    });
+
+    it('relocks only an unlocked exam', async () => {
+      prismaMock.exam.findUnique.mockResolvedValue({
+        ...exam,
+        status: 'PUBLISHED',
+      });
+      await expect(service.relockExam(currentUser, 'exam-1')).rejects.toThrow(
+        ConflictException,
+      );
+
+      prismaMock.exam.findUnique.mockResolvedValue({
+        ...exam,
+        status: 'PUBLISHED',
+        unlockedForEditing: true,
+      });
+      await service.relockExam(currentUser, 'exam-1');
+      expect(auditLogMock.log).toHaveBeenCalledWith(
+        currentUser,
+        expect.objectContaining({ action: 'EXAM_RELOCKED' }),
+        tx,
+      );
+    });
+
+    it('turns a concurrent change into a 409 and writes no audit entry', async () => {
+      tx.exam.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.publishExam(currentUser, 'exam-1')).rejects.toThrow(
+        /changed while you were working/,
+      );
+      expect(auditLogMock.log).not.toHaveBeenCalled();
+    });
+
+    it('checks campus access before changing anything', async () => {
+      campusAccessMock.assertCampusAccess.mockRejectedValueOnce(
+        new ForbiddenException(),
+      );
+
+      await expect(service.publishExam(currentUser, 'exam-1')).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(tx.exam.updateMany).not.toHaveBeenCalled();
     });
   });
 });

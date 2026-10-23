@@ -5,7 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
+import { AuditLogService } from '../../common/services/audit-log.service';
 import { CampusAccessService } from '../../common/services/campus-access.service';
+import { CustomFieldEntity } from '../../common/constants/custom-field-entities.constants';
+import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import { runAuditedTransaction } from '../../common/utils/transaction.util';
@@ -41,6 +44,8 @@ export class ExaminationsService {
     private readonly moduleAccessService: ModuleAccessService,
     private readonly requestContext: RequestContextService,
     private readonly campusAccessService: CampusAccessService,
+    private readonly entityCustomFieldsService: EntityCustomFieldsService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -326,18 +331,32 @@ export class ExaminationsService {
     this.assertDateRange(dto.startDate, dto.endDate);
 
     try {
-      const data = await this.prisma.examTerm.create({
-        data: {
+      const term = await this.entityCustomFieldsService.saveRecord(
+        {
           institutionId,
-          academicYearId: dto.academicYearId,
-          name: dto.name,
-          weight: dto.weight,
-          sortOrder: dto.sortOrder,
-          startDate: dto.startDate ? new Date(dto.startDate) : null,
-          endDate: dto.endDate ? new Date(dto.endDate) : null,
-          createdBy: currentUser.sub,
+          moduleKey: ModuleKey.EXAMINATIONS,
+          entityType: CustomFieldEntity.EXAM_TERM,
+          values: dto.customFields,
+          create: true,
         },
-      });
+        (transaction) =>
+          transaction.examTerm.create({
+            data: {
+              institutionId,
+              academicYearId: dto.academicYearId,
+              name: dto.name,
+              weight: dto.weight,
+              sortOrder: dto.sortOrder,
+              startDate: dto.startDate ? new Date(dto.startDate) : null,
+              endDate: dto.endDate ? new Date(dto.endDate) : null,
+              createdBy: currentUser.sub,
+            },
+          }),
+      );
+      const data = await this.entityCustomFieldsService.attachToItem(
+        term,
+        CustomFieldEntity.EXAM_TERM,
+      );
       return { message: 'Exam term created successfully', data };
     } catch (error) {
       this.rethrowUniqueConflict(error, 'exam term');
@@ -359,10 +378,14 @@ export class ExaminationsService {
   ) {
     await this.assertInstitutionAndModule(institutionId, currentUser);
 
-    const data = await this.prisma.examTerm.findMany({
+    const terms = await this.prisma.examTerm.findMany({
       where: { institutionId, ...(academicYearId ? { academicYearId } : {}) },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
+    const data = await this.entityCustomFieldsService.attachToItems(
+      terms,
+      CustomFieldEntity.EXAM_TERM,
+    );
     return { message: 'Exam terms fetched successfully', data };
   }
 
@@ -381,7 +404,11 @@ export class ExaminationsService {
     currentUser: CurrentUser,
   ) {
     await this.assertInstitutionAndModule(institutionId, currentUser);
-    const data = await this.findTermOrThrow(institutionId, examTermId);
+    const term = await this.findTermOrThrow(institutionId, examTermId);
+    const data = await this.entityCustomFieldsService.attachToItem(
+      term,
+      CustomFieldEntity.EXAM_TERM,
+    );
     return { message: 'Exam term fetched successfully', data };
   }
 
@@ -418,17 +445,31 @@ export class ExaminationsService {
     );
 
     try {
-      const data = await this.prisma.examTerm.update({
-        where: { id: examTermId },
-        data: {
-          name: dto.name,
-          weight: dto.weight,
-          sortOrder: dto.sortOrder,
-          startDate: dto.startDate ? new Date(dto.startDate) : undefined,
-          endDate: dto.endDate ? new Date(dto.endDate) : undefined,
-          updatedBy: currentUser.sub,
+      const term = await this.entityCustomFieldsService.saveRecord(
+        {
+          institutionId,
+          moduleKey: ModuleKey.EXAMINATIONS,
+          entityType: CustomFieldEntity.EXAM_TERM,
+          values: dto.customFields,
+          create: false,
         },
-      });
+        (transaction) =>
+          transaction.examTerm.update({
+            where: { id: examTermId },
+            data: {
+              name: dto.name,
+              weight: dto.weight,
+              sortOrder: dto.sortOrder,
+              startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+              endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+              updatedBy: currentUser.sub,
+            },
+          }),
+      );
+      const data = await this.entityCustomFieldsService.attachToItem(
+        term,
+        CustomFieldEntity.EXAM_TERM,
+      );
       return { message: 'Exam term updated successfully', data };
     } catch (error) {
       this.rethrowUniqueConflict(error, 'exam term');
@@ -500,19 +541,33 @@ export class ExaminationsService {
     );
 
     try {
-      const data = await this.prisma.exam.create({
-        data: {
-          examTermId: term.id,
-          academicYearId: term.academicYearId,
-          campusId: scope.campusId,
-          classId: dto.classId,
-          name: dto.name,
-          gradingScaleId,
-          examType: ExamType.REGULAR,
-          retakeKey: REGULAR_RETAKE_KEY,
-          createdBy: currentUser.sub,
+      const created = await this.entityCustomFieldsService.saveRecord(
+        {
+          institutionId: scope.institutionId,
+          moduleKey: ModuleKey.EXAMINATIONS,
+          entityType: CustomFieldEntity.EXAM,
+          values: dto.customFields,
+          create: true,
         },
-      });
+        (transaction) =>
+          transaction.exam.create({
+            data: {
+              examTermId: term.id,
+              academicYearId: term.academicYearId,
+              campusId: scope.campusId,
+              classId: dto.classId,
+              name: dto.name,
+              gradingScaleId,
+              examType: ExamType.REGULAR,
+              retakeKey: REGULAR_RETAKE_KEY,
+              createdBy: currentUser.sub,
+            },
+          }),
+      );
+      const data = await this.entityCustomFieldsService.attachToItem(
+        created,
+        CustomFieldEntity.EXAM,
+      );
       return { message: 'Exam created successfully', data };
     } catch (error) {
       this.rethrowExamConflict(error);
@@ -543,7 +598,7 @@ export class ExaminationsService {
       query.campusId,
     );
 
-    const data = await this.prisma.exam.findMany({
+    const exams = await this.prisma.exam.findMany({
       where: {
         campusId: { in: campusIds },
         ...(query.classId ? { classId: query.classId } : {}),
@@ -559,6 +614,10 @@ export class ExaminationsService {
       },
       orderBy: [{ createdAt: 'desc' }],
     });
+    const data = await this.entityCustomFieldsService.attachToItems(
+      exams,
+      CustomFieldEntity.EXAM,
+    );
     return { message: 'Exams fetched successfully', data };
   }
 
@@ -576,7 +635,11 @@ export class ExaminationsService {
       currentUser,
       ModuleKey.EXAMINATIONS,
     );
-    const data = await this.findAccessibleExam(currentUser, examId);
+    const exam = await this.findAccessibleExam(currentUser, examId);
+    const data = await this.entityCustomFieldsService.attachToItem(
+      exam,
+      CustomFieldEntity.EXAM,
+    );
     return { message: 'Exam fetched successfully', data };
   }
 
@@ -620,10 +683,25 @@ export class ExaminationsService {
       );
     }
 
-    const data = await this.prisma.exam.update({
-      where: { id: examId },
-      data: { name: dto.name, gradingScaleId, updatedBy: currentUser.sub },
-    });
+    const scope = await this.resolveClassScope(existing.classId);
+    const updated = await this.entityCustomFieldsService.saveRecord(
+      {
+        institutionId: scope.institutionId,
+        moduleKey: ModuleKey.EXAMINATIONS,
+        entityType: CustomFieldEntity.EXAM,
+        values: dto.customFields,
+        create: false,
+      },
+      (transaction) =>
+        transaction.exam.update({
+          where: { id: examId },
+          data: { name: dto.name, gradingScaleId, updatedBy: currentUser.sub },
+        }),
+    );
+    const data = await this.entityCustomFieldsService.attachToItem(
+      updated,
+      CustomFieldEntity.EXAM,
+    );
     return { message: 'Exam updated successfully', data };
   }
 
@@ -713,20 +791,34 @@ export class ExaminationsService {
       : original.gradingScaleId;
 
     try {
-      const data = await this.prisma.exam.create({
-        data: {
-          examTermId: term.id,
-          academicYearId: original.academicYearId,
-          campusId: original.campusId,
-          classId: original.classId,
-          name: dto.name,
-          gradingScaleId,
-          examType: dto.examType,
-          originalExamId: original.id,
-          retakeKey: `${dto.examType}:${original.id}`,
-          createdBy: currentUser.sub,
+      const created = await this.entityCustomFieldsService.saveRecord(
+        {
+          institutionId: scope.institutionId,
+          moduleKey: ModuleKey.EXAMINATIONS,
+          entityType: CustomFieldEntity.EXAM,
+          values: dto.customFields,
+          create: true,
         },
-      });
+        (transaction) =>
+          transaction.exam.create({
+            data: {
+              examTermId: term.id,
+              academicYearId: original.academicYearId,
+              campusId: original.campusId,
+              classId: original.classId,
+              name: dto.name,
+              gradingScaleId,
+              examType: dto.examType,
+              originalExamId: original.id,
+              retakeKey: `${dto.examType}:${original.id}`,
+              createdBy: currentUser.sub,
+            },
+          }),
+      );
+      const data = await this.entityCustomFieldsService.attachToItem(
+        created,
+        CustomFieldEntity.EXAM,
+      );
       return { message: 'Retake exam created successfully', data };
     } catch (error) {
       this.rethrowExamConflict(error);
@@ -746,11 +838,165 @@ export class ExaminationsService {
       ModuleKey.EXAMINATIONS,
     );
     await this.findAccessibleExam(currentUser, examId);
-    const data = await this.prisma.exam.findMany({
+    const retakes = await this.prisma.exam.findMany({
       where: { originalExamId: examId },
       orderBy: [{ createdAt: 'asc' }],
     });
+    const data = await this.entityCustomFieldsService.attachToItems(
+      retakes,
+      CustomFieldEntity.EXAM,
+    );
     return { message: 'Retake exams fetched successfully', data };
+  }
+
+  // ---------------------------------------------------------------------
+  // Publish / unlock / relock (decision #27)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Publish a DRAFT exam so its results become visible. Applies to regular
+   * and retake-type exams alike.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} examId - Exam id.
+   * @returns {Promise<{message: string, data: object}>} The published exam.
+   * @throws {ConflictException} If the exam is already published.
+   */
+  async publishExam(currentUser: CurrentUser, examId: string) {
+    return this.transitionExam(currentUser, examId, {
+      action: 'EXAM_PUBLISHED',
+      message: 'Exam published successfully',
+      assert: (exam) => {
+        if (exam.status === ExamStatus.PUBLISHED) {
+          throw new ConflictException('This exam is already published.');
+        }
+      },
+      data: (currentUserId) => ({
+        status: ExamStatus.PUBLISHED,
+        unlockedForEditing: false,
+        publishedAt: new Date(),
+        publishedBy: currentUserId,
+      }),
+    });
+  }
+
+  /**
+   * Open a PUBLISHED exam for correction. The unlock is a temporary edit
+   * window, not a third lifecycle state, and is audited separately from the
+   * mark edits made while it is open.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} examId - Exam id.
+   * @returns {Promise<{message: string, data: object}>} The unlocked exam.
+   * @throws {ConflictException} If the exam is still a draft or is already unlocked.
+   */
+  async unlockExam(currentUser: CurrentUser, examId: string) {
+    return this.transitionExam(currentUser, examId, {
+      action: 'EXAM_UNLOCKED',
+      message: 'Exam unlocked for editing',
+      assert: (exam) => {
+        if (exam.status !== ExamStatus.PUBLISHED) {
+          throw new ConflictException(
+            'Only a published exam can be unlocked. Draft exams are already editable.',
+          );
+        }
+        if (exam.unlockedForEditing) {
+          throw new ConflictException('This exam is already unlocked.');
+        }
+      },
+      data: () => ({ unlockedForEditing: true }),
+    });
+  }
+
+  /**
+   * Close the correction window opened by `unlockExam`.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} examId - Exam id.
+   * @returns {Promise<{message: string, data: object}>} The relocked exam.
+   * @throws {ConflictException} If the exam is not currently unlocked.
+   */
+  async relockExam(currentUser: CurrentUser, examId: string) {
+    return this.transitionExam(currentUser, examId, {
+      action: 'EXAM_RELOCKED',
+      message: 'Exam locked again',
+      assert: (exam) => {
+        if (exam.status !== ExamStatus.PUBLISHED || !exam.unlockedForEditing) {
+          throw new ConflictException('This exam is not currently unlocked.');
+        }
+      },
+      data: () => ({ unlockedForEditing: false }),
+    });
+  }
+
+  /**
+   * Shared body of the three workflow actions: check access, validate the
+   * state change against the freshly read exam, then write the change and
+   * its dedicated audit entry in one transaction.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} examId - Exam id.
+   * @param {object} transition - Audit action, response message, state guard and the data to write.
+   * @returns {Promise<{message: string, data: object}>} The updated exam.
+   */
+  private async transitionExam(
+    currentUser: CurrentUser,
+    examId: string,
+    transition: {
+      action: string;
+      message: string;
+      assert: (exam: {
+        status: ExamStatus;
+        unlockedForEditing: boolean;
+      }) => void;
+      data: (currentUserId: string) => Prisma.ExamUncheckedUpdateInput;
+    },
+  ) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.EXAMINATIONS,
+    );
+    const exam = await this.findAccessibleExam(currentUser, examId);
+    transition.assert(exam);
+    const scope = await this.resolveClassScope(exam.classId);
+
+    const data = await runAuditedTransaction(
+      this.prisma,
+      this.requestContext,
+      async (transaction) => {
+        // The state is re-checked in the same write, so two admins acting at
+        // once cannot both succeed.
+        const updated = await transaction.exam.updateMany({
+          where: {
+            id: examId,
+            status: exam.status,
+            unlockedForEditing: exam.unlockedForEditing,
+          },
+          data: {
+            ...transition.data(currentUser.sub),
+            updatedBy: currentUser.sub,
+          },
+        });
+        if (updated.count !== 1) {
+          throw new ConflictException(
+            'This exam changed while you were working. Reload it and try again.',
+          );
+        }
+        await this.auditLogService.log(
+          currentUser,
+          {
+            action: transition.action,
+            entity: 'Exam',
+            entityId: examId,
+            institutionId: scope.institutionId,
+            metadata: { name: exam.name, examType: exam.examType },
+          },
+          transaction,
+        );
+        return transaction.exam.findUniqueOrThrow({ where: { id: examId } });
+      },
+    );
+    return { message: transition.message, data };
   }
 
   // ---------------------------------------------------------------------

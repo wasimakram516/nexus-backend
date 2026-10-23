@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { ConflictException } from '@nestjs/common';
 import { CurrentUser } from '../src/common/interfaces/current-user.interface';
+import { AuditLogService } from '../src/common/services/audit-log.service';
 import { CampusAccessService } from '../src/common/services/campus-access.service';
+import { EntityCustomFieldsService } from '../src/common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../src/common/services/module-access.service';
 import { RequestContextService } from '../src/common/services/request-context.service';
 import { RetakeExamType } from '../src/modules/examinations/dto/examinations.dto';
@@ -16,6 +18,12 @@ import { PrismaService } from '../src/prisma/prisma.service';
  * additive migration's unique constraints behave as designed. Run via
  * `npm run test:postgres`; see test/POSTGRES-TESTS.md.
  */
+/** The service returns `data` as possibly null after the retry wrapper; fail loudly if it is. */
+function dataOf<T>(result: { data: T } | undefined): NonNullable<T> {
+  if (!result?.data) throw new Error('Expected the service to return data');
+  return result.data;
+}
+
 describe('PostgreSQL examinations setup', () => {
   const context = new RequestContextService();
   let prisma: PrismaService;
@@ -54,12 +62,24 @@ describe('PostgreSQL examinations setup', () => {
       new ModuleAccessService(prisma),
       context,
       new CampusAccessService(prisma),
+      new EntityCustomFieldsService(prisma, context),
+      new AuditLogService(prisma),
     );
 
     const institution = await prisma.institution.create({
       data: { name: 'Exams setup test', slug: randomUUID() },
     });
     institutionId = institution.id;
+    // Workflow actions stamp publishedBy, which is a foreign key to users.
+    await prisma.user.create({
+      data: {
+        id: superadmin.sub,
+        name: 'Exam test superadmin',
+        email: `${randomUUID()}@example.test`,
+        passwordHash: 'unused-test-value',
+        role: 'SUPERADMIN',
+      },
+    });
     const year = await prisma.academicYear.create({
       data: {
         institutionId,
@@ -85,7 +105,7 @@ describe('PostgreSQL examinations setup', () => {
       superadmin,
     );
 
-    expect(created.data.bands.map((band) => band.grade)).toEqual([
+    expect(dataOf(created).bands.map((band) => band.grade)).toEqual([
       'A',
       'B',
       'F',
@@ -93,16 +113,16 @@ describe('PostgreSQL examinations setup', () => {
 
     await service.setCurrentGradingScale(
       institutionId,
-      created.data.id,
+      dataOf(created).id,
       superadmin,
     );
     const list = await service.listGradingScales(institutionId, superadmin);
     expect(
-      list.data.find((scale) => scale.id === created.data.id)?.isCurrent,
+      list.data.find((scale) => scale.id === dataOf(created).id)?.isCurrent,
     ).toBe(true);
 
     await expect(
-      service.deleteGradingScale(institutionId, created.data.id, superadmin),
+      service.deleteGradingScale(institutionId, dataOf(created).id, superadmin),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
@@ -120,7 +140,11 @@ describe('PostgreSQL examinations setup', () => {
       ),
     ).rejects.toBeInstanceOf(ConflictException);
 
-    await service.deleteGradingScale(institutionId, first.data.id, superadmin);
+    await service.deleteGradingScale(
+      institutionId,
+      dataOf(first).id,
+      superadmin,
+    );
 
     await expect(
       service.createGradingScale(
@@ -140,7 +164,7 @@ describe('PostgreSQL examinations setup', () => {
 
     const updated = await service.updateGradingScale(
       institutionId,
-      created.data.id,
+      dataOf(created).id,
       { bands: bands(['A', 90, 100], ['B', 70, 89.99], ['F', 0, 69.99]) },
       superadmin,
     );
@@ -153,7 +177,7 @@ describe('PostgreSQL examinations setup', () => {
     expect(Number(updated.data.bands[0].minPercentage)).toBe(90);
 
     const superseded = await prisma.gradeBand.findMany({
-      where: { gradingScaleId: created.data.id, deletedAt: { not: null } },
+      where: { gradingScaleId: dataOf(created).id, deletedAt: { not: null } },
     });
     expect(superseded).toHaveLength(2);
     expect(
@@ -167,7 +191,7 @@ describe('PostgreSQL examinations setup', () => {
       { name: 'Audited', bands: bands(['Pass', 40, 100]) },
       superadmin,
     );
-    const bandRow = created.data.bands[0];
+    const bandRow = dataOf(created).bands[0];
 
     const audit = await prisma.auditLog.findMany({
       where: { entity: 'GradeBand', entityId: bandRow.id },
@@ -185,7 +209,7 @@ describe('PostgreSQL examinations setup', () => {
       { academicYearId, name: 'First Term', weight: 1.5, sortOrder: 1 },
       superadmin,
     );
-    expect(Number(term?.data.weight)).toBe(1.5);
+    expect(Number(dataOf(term).weight)).toBe(1.5);
 
     await expect(
       service.createExamTerm(
@@ -195,7 +219,7 @@ describe('PostgreSQL examinations setup', () => {
       ),
     ).rejects.toBeInstanceOf(ConflictException);
 
-    await service.deleteExamTerm(institutionId, term.data.id, superadmin);
+    await service.deleteExamTerm(institutionId, dataOf(term).id, superadmin);
 
     await expect(
       service.createExamTerm(
@@ -248,7 +272,7 @@ describe('PostgreSQL examinations setup', () => {
         { academicYearId, name: 'Exam Term' },
         superadmin,
       );
-      termId = term.data.id;
+      termId = dataOf(term).id;
       const scale = await service.createGradingScale(
         institutionId,
         { name: 'Exam scale', bands: bands(['Pass', 0, 100]) },
@@ -264,9 +288,9 @@ describe('PostgreSQL examinations setup', () => {
         examTermId: termId,
         name: 'Regular',
       });
-      regularId = first.data.id;
-      expect(first.data.gradingScaleId).toBe(scaleId);
-      expect(first.data.retakeKey).toBe('REGULAR');
+      regularId = dataOf(first).id;
+      expect(dataOf(first).gradingScaleId).toBe(scaleId);
+      expect(dataOf(first).retakeKey).toBe('REGULAR');
 
       await expect(
         service.createExam(superadmin, {
@@ -283,14 +307,14 @@ describe('PostgreSQL examinations setup', () => {
       );
       const other = await service.createExam(superadmin, {
         classId,
-        examTermId: spare.data.id,
+        examTermId: dataOf(spare).id,
         name: 'Other term',
       });
-      await service.deleteExam(superadmin, other.data.id);
+      await service.deleteExam(superadmin, dataOf(other).id);
       await expect(
         service.createExam(superadmin, {
           classId,
-          examTermId: spare.data.id,
+          examTermId: dataOf(spare).id,
           name: 'Other term again',
         }),
       ).resolves.toBeDefined();
@@ -304,17 +328,14 @@ describe('PostgreSQL examinations setup', () => {
         }),
       ).rejects.toBeInstanceOf(ConflictException);
 
-      await prisma.exam.update({
-        where: { id: regularId },
-        data: { status: 'PUBLISHED' },
-      });
+      await service.publishExam(superadmin, regularId);
 
       const retake = await service.createRetakeExam(superadmin, regularId, {
         examType: RetakeExamType.RETAKE,
         name: 'Retake',
       });
-      expect(retake.data.retakeKey).toBe(`RETAKE:${regularId}`);
-      expect(retake.data.originalExamId).toBe(regularId);
+      expect(dataOf(retake).retakeKey).toBe(`RETAKE:${regularId}`);
+      expect(dataOf(retake).originalExamId).toBe(regularId);
 
       await expect(
         service.createRetakeExam(superadmin, regularId, {
@@ -336,6 +357,85 @@ describe('PostgreSQL examinations setup', () => {
       ]);
     });
 
+    it('runs the publish, unlock, relock cycle with a dedicated audit entry for each', async () => {
+      const exam = dataOf(
+        await service.createExam(superadmin, {
+          classId,
+          examTermId: dataOf(
+            await service.createExamTerm(
+              institutionId,
+              { academicYearId, name: 'Workflow Term' },
+              superadmin,
+            ),
+          ).id,
+          name: 'Workflow exam',
+        }),
+      );
+
+      await expect(
+        service.unlockExam(superadmin, exam.id),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      const published = dataOf(await service.publishExam(superadmin, exam.id));
+      expect(published.status).toBe('PUBLISHED');
+      expect(published.publishedAt).toBeInstanceOf(Date);
+      await expect(
+        service.publishExam(superadmin, exam.id),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      expect(
+        dataOf(await service.unlockExam(superadmin, exam.id))
+          .unlockedForEditing,
+      ).toBe(true);
+      expect(
+        dataOf(await service.relockExam(superadmin, exam.id))
+          .unlockedForEditing,
+      ).toBe(false);
+      await expect(
+        service.relockExam(superadmin, exam.id),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      const audit = await prisma.auditLog.findMany({
+        where: {
+          entity: 'Exam',
+          entityId: exam.id,
+          action: { in: ['EXAM_PUBLISHED', 'EXAM_UNLOCKED', 'EXAM_RELOCKED'] },
+        },
+      });
+      expect(audit.map((row) => row.action).sort()).toEqual([
+        'EXAM_PUBLISHED',
+        'EXAM_RELOCKED',
+        'EXAM_UNLOCKED',
+      ]);
+      expect(audit.every((row) => row.institutionId === institutionId)).toBe(
+        true,
+      );
+    });
+
+    it('lets only one of two simultaneous publishes win', async () => {
+      const exam = dataOf(
+        await service.createExam(superadmin, {
+          classId,
+          examTermId: dataOf(
+            await service.createExamTerm(
+              institutionId,
+              { academicYearId, name: 'Race Term' },
+              superadmin,
+            ),
+          ).id,
+          name: 'Race exam',
+        }),
+      );
+
+      const results = await Promise.allSettled([
+        service.publishExam(superadmin, exam.id),
+        service.publishExam(superadmin, exam.id),
+      ]);
+
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    });
+
     it('refuses to delete an exam while retakes still point at it', async () => {
       await expect(
         service.deleteExam(superadmin, regularId),
@@ -350,9 +450,148 @@ describe('PostgreSQL examinations setup', () => {
       );
       await expect(
         service.updateExam(superadmin, regularId, {
-          gradingScaleId: spare.data.id,
+          gradingScaleId: dataOf(spare).id,
         }),
       ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('custom field values on exam entities', () => {
+    let fieldInstitutionId: string;
+    let fieldYearId: string;
+    let fieldClassId: string;
+    let fieldTermId: string;
+
+    beforeAll(async () => {
+      // A dedicated institution, so the required definitions below cannot
+      // affect the other scenarios in this file.
+      const institution = await prisma.institution.create({
+        data: { name: 'Exam fields test', slug: randomUUID() },
+      });
+      fieldInstitutionId = institution.id;
+      const year = await prisma.academicYear.create({
+        data: {
+          institutionId: fieldInstitutionId,
+          name: '2026-27',
+          startDate: new Date('2026-08-01'),
+          endDate: new Date('2027-06-30'),
+        },
+      });
+      fieldYearId = year.id;
+      const campus = await prisma.campus.create({
+        data: {
+          institutionId: fieldInstitutionId,
+          name: 'Fields campus',
+          location: 'Test',
+          studentStartTime: '08:00',
+          studentEndTime: '14:00',
+          staffStartTime: '08:00',
+          staffEndTime: '14:00',
+          lateThreshold: 10,
+          earlyLeaveThreshold: 10,
+        },
+      });
+      const level = await prisma.level.create({
+        data: { name: 'Level 1', campusId: campus.id },
+      });
+      const academicClass = await prisma.academicClass.create({
+        data: { name: 'Class 1', levelId: level.id },
+      });
+      fieldClassId = academicClass.id;
+
+      const scale = await service.createGradingScale(
+        fieldInstitutionId,
+        { name: 'Scale', bands: bands(['Pass', 0, 100]) },
+        superadmin,
+      );
+      await service.setCurrentGradingScale(
+        fieldInstitutionId,
+        scale.data.id,
+        superadmin,
+      );
+      // Created before the required definitions exist.
+      const term = await service.createExamTerm(
+        fieldInstitutionId,
+        { academicYearId: fieldYearId, name: 'Term' },
+        superadmin,
+      );
+      fieldTermId = dataOf(term).id;
+
+      await prisma.customFieldDefinition.createMany({
+        data: [
+          {
+            institutionId: fieldInstitutionId,
+            moduleKey: 'EXAMINATIONS' as never,
+            entityType: 'exam_term',
+            fieldKey: 'venue',
+            label: 'Venue',
+            inputType: 'TEXT' as never,
+            isRequired: true,
+          },
+          {
+            institutionId: fieldInstitutionId,
+            moduleKey: 'EXAMINATIONS' as never,
+            entityType: 'exam',
+            fieldKey: 'invigilator',
+            label: 'Invigilator',
+            inputType: 'TEXT' as never,
+            isRequired: true,
+          },
+        ],
+      });
+    });
+
+    it('rolls an exam term back when a required value is missing, and saves it with the value', async () => {
+      await expect(
+        service.createExamTerm(
+          fieldInstitutionId,
+          { academicYearId: fieldYearId, name: 'No venue' },
+          superadmin,
+        ),
+      ).rejects.toThrow();
+      expect(
+        await prisma.examTerm.count({
+          where: { institutionId: fieldInstitutionId, name: 'No venue' },
+        }),
+      ).toBe(0);
+
+      const created = await service.createExamTerm(
+        fieldInstitutionId,
+        {
+          academicYearId: fieldYearId,
+          name: 'With venue',
+          customFields: { venue: 'Hall A' },
+        },
+        superadmin,
+      );
+      const read = await service.getExamTerm(
+        fieldInstitutionId,
+        dataOf(created).id,
+        superadmin,
+      );
+      expect(JSON.stringify(read.data)).toContain('Hall A');
+    });
+
+    it('rolls an exam back when a required value is missing, and saves it with the value', async () => {
+      await expect(
+        service.createExam(superadmin, {
+          classId: fieldClassId,
+          examTermId: fieldTermId,
+          name: 'No invigilator',
+        }),
+      ).rejects.toThrow();
+      expect(
+        await prisma.exam.count({ where: { name: 'No invigilator' } }),
+      ).toBe(0);
+
+      const created = await service.createExam(superadmin, {
+        classId: fieldClassId,
+        examTermId: fieldTermId,
+        name: 'With invigilator',
+        customFields: { invigilator: 'Ms Ali' },
+      });
+      const read = await service.getExam(superadmin, dataOf(created).id);
+      expect(JSON.stringify(read.data)).toContain('Ms Ali');
     });
   });
 });

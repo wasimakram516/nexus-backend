@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import { CustomFieldPayloadDto } from '../../../common/dto/custom-field-payload.dto';
 import {
   ArrayMinSize,
   IsArray,
@@ -70,7 +71,7 @@ export class CreateGradingScaleDto {
 
 export class UpdateGradingScaleDto extends PartialType(CreateGradingScaleDto) {}
 
-export class CreateExamTermDto {
+export class CreateExamTermDto extends CustomFieldPayloadDto {
   @ApiProperty()
   @IsUUID()
   academicYearId!: string;
@@ -110,7 +111,7 @@ export class CreateExamTermDto {
 
 export class UpdateExamTermDto extends PartialType(CreateExamTermDto) {}
 
-export class CreateExamDto {
+export class CreateExamDto extends CustomFieldPayloadDto {
   @ApiProperty()
   @IsUUID()
   classId!: string;
@@ -134,7 +135,7 @@ export class CreateExamDto {
 }
 
 /** classId, examTermId and the retake fields are immutable after creation. */
-export class UpdateExamDto {
+export class UpdateExamDto extends CustomFieldPayloadDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -155,7 +156,7 @@ export enum RetakeExamType {
   SUPPLEMENTARY = 'SUPPLEMENTARY',
 }
 
-export class CreateRetakeExamDto {
+export class CreateRetakeExamDto extends CustomFieldPayloadDto {
   @ApiProperty({ enum: RetakeExamType })
   @IsEnum(RetakeExamType)
   examType!: RetakeExamType;

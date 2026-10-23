@@ -322,6 +322,50 @@ export class ExaminationsController {
     return this.examinationsService.deleteExam(currentUser, id, dto.reason);
   }
 
+  @Post('exams/:id/publish')
+  @Version('1')
+  @RequirePermission('exams', 'update')
+  @ApiOperation({
+    summary: 'Publish an exam',
+    description:
+      'Moves a draft exam to published so its results become visible. Fails with a 409 if it is already published.',
+  })
+  publishExam(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('id') id: string,
+  ) {
+    return this.examinationsService.publishExam(currentUser, id);
+  }
+
+  @Post('exams/:id/unlock')
+  @Version('1')
+  @RequirePermission('exams', 'update')
+  @ApiOperation({
+    summary: 'Unlock a published exam for correction',
+    description:
+      'Opens a temporary edit window on a published exam. Audited separately from the mark edits made while it is open.',
+  })
+  unlockExam(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('id') id: string,
+  ) {
+    return this.examinationsService.unlockExam(currentUser, id);
+  }
+
+  @Post('exams/:id/relock')
+  @Version('1')
+  @RequirePermission('exams', 'update')
+  @ApiOperation({
+    summary: 'Lock a corrected exam again',
+    description: 'Closes the edit window opened by unlock.',
+  })
+  relockExam(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Param('id') id: string,
+  ) {
+    return this.examinationsService.relockExam(currentUser, id);
+  }
+
   @Post('exams/:id/retakes')
   @Version('1')
   @RequirePermission('exams', 'create')
