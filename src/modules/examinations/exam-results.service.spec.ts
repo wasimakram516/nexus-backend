@@ -308,6 +308,45 @@ describe('ExamResultsService', () => {
       );
     });
 
+    it('clears a saved remark when an empty one is sent, and keeps it when none is sent', async () => {
+      tx.examResult.findMany.mockResolvedValue([
+        {
+          id: 'r-1',
+          studentId: 's-ayesha',
+          marksObtained: '80.00',
+          isAbsent: false,
+          remarks: 'Old note',
+          sectionId: 'section-1',
+        },
+        {
+          id: 'r-2',
+          studentId: 's-bilal',
+          marksObtained: '50.00',
+          isAbsent: false,
+          remarks: 'Keep me',
+          sectionId: 'section-1',
+        },
+      ]);
+
+      await save([
+        { studentId: 's-ayesha', marksObtained: 80, remarks: '  ' },
+        { studentId: 's-bilal', marksObtained: 55 },
+      ]);
+
+      expect(tx.examResult.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'r-1' },
+          data: expect.objectContaining({ remarks: null }) as never,
+        }),
+      );
+      expect(tx.examResult.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'r-2' },
+          data: expect.objectContaining({ remarks: 'Keep me' }) as never,
+        }),
+      );
+    });
+
     it('rejects marks above the maximum, naming the student', async () => {
       await expect(
         save([{ studentId: 's-ayesha', marksObtained: 120 }]),

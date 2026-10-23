@@ -167,7 +167,7 @@ export class ExamResultsService {
                 sectionId: dto.sectionId,
                 marksObtained,
                 isAbsent,
-                remarks: entry.remarks ?? null,
+                remarks: entry.remarks?.trim() || null,
                 createdBy: currentUser.sub,
               },
             });
@@ -175,7 +175,11 @@ export class ExamResultsService {
             continue;
           }
 
-          const remarks = entry.remarks ?? current.remarks;
+          // Omitted keeps the saved remark; an empty string clears it.
+          const remarks =
+            entry.remarks === undefined
+              ? current.remarks
+              : entry.remarks.trim() || null;
           const unchanged =
             current.isAbsent === isAbsent &&
             (current.marksObtained === null
