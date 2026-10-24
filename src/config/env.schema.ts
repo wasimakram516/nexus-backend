@@ -7,6 +7,21 @@ export const envSchema = z
       .default('development'),
     PORT: z.coerce.number().default(3000),
     DATABASE_URL: z.string().min(1),
+    // How long a database transaction may run before it is cancelled. Prisma's
+    // own default (5 s) is too short when the database is in another region,
+    // where every query costs a round trip.
+    DB_TRANSACTION_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(5000)
+      .max(120000)
+      .default(20000),
+    DB_TRANSACTION_MAX_WAIT_MS: z.coerce
+      .number()
+      .int()
+      .min(2000)
+      .max(60000)
+      .default(10000),
     JWT_ACCESS_SECRET: z.string().min(32),
     JWT_REFRESH_SECRET: z.string().min(32),
     JWT_ACCESS_TTL: z.string().default('15m'),

@@ -1,4 +1,4 @@
-import { PrismaService } from './prisma.service';
+import { PrismaService, transactionOptionsFromEnv } from './prisma.service';
 
 describe('PrismaService audit helpers', () => {
   type PrismaServiceInternals = {
@@ -378,4 +378,34 @@ describe('PrismaService audit helpers', () => {
       expect(service.level.findUnique).not.toHaveBeenCalled();
     });
   });
+});
+
+describe('transactionOptionsFromEnv', () => {
+  it('allows a transaction far longer than Prisma defaults when nothing is configured', () => {
+    expect(transactionOptionsFromEnv({})).toEqual({
+      timeout: 20000,
+      maxWait: 10000,
+    });
+  });
+
+  it('uses the configured limits', () => {
+    expect(
+      transactionOptionsFromEnv({
+        DB_TRANSACTION_TIMEOUT_MS: '30000',
+        DB_TRANSACTION_MAX_WAIT_MS: '5000',
+      }),
+    ).toEqual({ timeout: 30000, maxWait: 5000 });
+  });
+
+  it.each(['', 'abc', '0', '-5', '1.5'])(
+    'falls back to the defaults for the unusable value %j',
+    (value) => {
+      expect(
+        transactionOptionsFromEnv({
+          DB_TRANSACTION_TIMEOUT_MS: value,
+          DB_TRANSACTION_MAX_WAIT_MS: value,
+        }),
+      ).toEqual({ timeout: 20000, maxWait: 10000 });
+    },
+  );
 });

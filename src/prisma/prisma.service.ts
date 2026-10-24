@@ -72,6 +72,37 @@ type AuditReferenceIds = Partial<{
   examId: string;
 }>;
 
+/** Defaults sized for a database in another region; see DB_TRANSACTION_TIMEOUT_MS in the env schema. */
+const DEFAULT_TRANSACTION_TIMEOUT_MS = 20000;
+const DEFAULT_TRANSACTION_MAX_WAIT_MS = 10000;
+
+/**
+ * How long a database transaction may wait to start and run. Prisma's own
+ * defaults (2 s and 5 s) cancel a payment or voucher save whenever the
+ * database is a few hundred milliseconds away per query.
+ *
+ * @param {NodeJS.ProcessEnv} [env] - The environment to read, for tests.
+ * @returns {{timeout: number, maxWait: number}} Limits in milliseconds.
+ */
+export function transactionOptionsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  const read = (value: string | undefined, fallback: number) => {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+  };
+  return {
+    timeout: read(
+      env.DB_TRANSACTION_TIMEOUT_MS,
+      DEFAULT_TRANSACTION_TIMEOUT_MS,
+    ),
+    maxWait: read(
+      env.DB_TRANSACTION_MAX_WAIT_MS,
+      DEFAULT_TRANSACTION_MAX_WAIT_MS,
+    ),
+  };
+}
+
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleDestroy {
   constructor(private readonly requestContext: RequestContextService) {
@@ -79,6 +110,7 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
       adapter: new PrismaPg({
         connectionString: process.env.DATABASE_URL ?? '',
       }),
+      transactionOptions: transactionOptionsFromEnv(),
     });
 
     const contextService = this.requestContext;

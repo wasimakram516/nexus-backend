@@ -117,6 +117,20 @@ describe('PostgreSQL audited transactions', () => {
     await prisma?.$disconnect();
   });
 
+  it("lets a save take longer than Prisma's 5 second default, as a payment against a remote database does", async () => {
+    // A live payment failed with "commit cannot be executed on an expired
+    // transaction" after 5.5 s. The client now allows far longer.
+    const started = Date.now();
+
+    const result = await prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw`SELECT pg_sleep(6)::text AS slept`;
+      return 'committed';
+    });
+
+    expect(result).toBe('committed');
+    expect(Date.now() - started).toBeGreaterThanOrEqual(6000);
+  }, 30000);
+
   it('rolls back admission, enrollment and login identifier when student custom values fail', async () => {
     const people = new PeopleService(
       prisma,
