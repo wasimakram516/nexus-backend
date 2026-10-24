@@ -34,6 +34,7 @@ describe('AcademicsService', () => {
       createMany: jest.fn(),
       update: jest.fn(),
     },
+    institution: { findUnique: jest.fn(), update: jest.fn() },
   };
 
   const prismaMock = {
@@ -741,6 +742,10 @@ describe('AcademicsService', () => {
       prismaMock.institution.findUnique.mockResolvedValue({
         id: institutionId,
       });
+      // An existing current year, so this one is not made current.
+      academicYearTxMock.institution.findUnique.mockResolvedValue({
+        currentAcademicYearId: 'year-0',
+      });
       academicYearTxMock.academicYear.create.mockResolvedValue({
         id: 'year-1',
       });
@@ -777,6 +782,59 @@ describe('AcademicsService', () => {
         message: 'Academic year created successfully',
         data: { id: 'year-1', isCurrent: false },
       });
+    });
+
+    it('makes the first academic year the current one', async () => {
+      prismaMock.institution.findUnique.mockResolvedValue({
+        id: institutionId,
+      });
+      academicYearTxMock.institution.findUnique.mockResolvedValue({
+        currentAcademicYearId: null,
+      });
+      academicYearTxMock.academicYear.create.mockResolvedValue({
+        id: 'year-1',
+      });
+      academicYearTxMock.academicYear.findUnique.mockResolvedValue({
+        id: 'year-1',
+        campusOverrides: [],
+      });
+
+      const result = await service.createAcademicYear(
+        institutionId,
+        { name: '2026-27', startDate: '2026-08-01', endDate: '2027-06-30' },
+        currentUser,
+      );
+
+      expect(academicYearTxMock.institution.update).toHaveBeenCalledWith({
+        where: { id: institutionId },
+        data: { currentAcademicYearId: 'year-1' },
+      });
+      expect(result.data).toMatchObject({ id: 'year-1', isCurrent: true });
+    });
+
+    it('keeps the current year when a later one is created', async () => {
+      prismaMock.institution.findUnique.mockResolvedValue({
+        id: institutionId,
+      });
+      academicYearTxMock.institution.findUnique.mockResolvedValue({
+        currentAcademicYearId: 'year-1',
+      });
+      academicYearTxMock.academicYear.create.mockResolvedValue({
+        id: 'year-2',
+      });
+      academicYearTxMock.academicYear.findUnique.mockResolvedValue({
+        id: 'year-2',
+        campusOverrides: [],
+      });
+
+      const result = await service.createAcademicYear(
+        institutionId,
+        { name: '2027-28', startDate: '2027-08-01', endDate: '2028-06-30' },
+        currentUser,
+      );
+
+      expect(academicYearTxMock.institution.update).not.toHaveBeenCalled();
+      expect(result.data).toMatchObject({ id: 'year-2', isCurrent: false });
     });
 
     it('returns 404 creating an academic year for an institution that does not exist', async () => {

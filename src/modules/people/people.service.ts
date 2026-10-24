@@ -150,7 +150,7 @@ export class PeopleService {
       await this.resolveCurrentAcademicYearId(institutionId);
     if (!academicYearId) {
       throw new ConflictException(
-        'Set up an academic year before admitting students.',
+        'Set an academic year as current before admitting students (Academics, Academic Years, then Set as current).',
       );
     }
 
@@ -260,7 +260,7 @@ export class PeopleService {
       await this.resolveCurrentAcademicYearId(institutionId);
     if (!academicYearId) {
       throw new ConflictException(
-        'Set up an academic year before admitting students.',
+        'Set an academic year as current before admitting students (Academics, Academic Years, then Set as current).',
       );
     }
     const suggestedRegNo = await this.generateRegNo(

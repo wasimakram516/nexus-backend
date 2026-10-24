@@ -707,6 +707,7 @@ export class AcademicsService {
     );
 
     try {
+      let madeCurrent = false;
       const data = await this.prisma.$transaction(
         async (tx: Prisma.TransactionClient) => {
           const created = await tx.academicYear.create({
@@ -731,6 +732,22 @@ export class AcademicsService {
             });
           }
 
+          // The first year an institution creates becomes its current year,
+          // so admitting students and the other flows that need a current
+          // year work straight away. Later years stay as they are until
+          // someone deliberately switches.
+          const institution = await tx.institution.findUnique({
+            where: { id: institutionId },
+            select: { currentAcademicYearId: true },
+          });
+          if (!institution?.currentAcademicYearId) {
+            await tx.institution.update({
+              where: { id: institutionId },
+              data: { currentAcademicYearId: created.id },
+            });
+            madeCurrent = true;
+          }
+
           return tx.academicYear.findUnique({
             where: { id: created.id },
             include: { campusOverrides: true },
@@ -740,7 +757,7 @@ export class AcademicsService {
 
       return {
         message: 'Academic year created successfully',
-        data: { ...data, isCurrent: false },
+        data: { ...data, isCurrent: madeCurrent },
       };
     } catch (error) {
       this.rethrowUniqueConflict(error);
