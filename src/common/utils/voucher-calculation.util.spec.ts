@@ -1,6 +1,7 @@
 import { Prisma } from '../../prisma/client';
 import {
   calculateVoucherAmounts,
+  mergeOneTimeCharges,
   readVoucherAmounts,
 } from './voucher-calculation.util';
 
@@ -94,5 +95,107 @@ describe('voucher calculation', () => {
     ).toBe('55.00');
     student.mockResolvedValue({ campusId: 'changed' });
     await expect(readVoucherAmounts(tx, params)).rejects.toThrow('changed');
+  });
+});
+
+describe('one-time charges', () => {
+  it('adds each charge as its own line without changing the original breakdown', () => {
+    const base = { tuition: 5000 };
+    const merged = mergeOneTimeCharges(base, [
+      { label: 'Admission fee', amount: 2000 },
+      { label: ' Exam fee ', amount: 500 },
+    ]);
+
+    expect(merged).toEqual({
+      tuition: 5000,
+      'Admission fee': 2000,
+      'Exam fee': 500,
+    });
+    expect(base).toEqual({ tuition: 5000 });
+  });
+
+  it('keeps both amounts when a charge label matches an existing line, and numbers repeats', () => {
+    const merged = mergeOneTimeCharges({ tuition: 5000 }, [
+      { label: 'tuition', amount: 100 },
+      { label: 'Tuition', amount: 200 },
+      { label: 'Tuition', amount: 300 },
+    ]);
+
+    // Matching is case-sensitive, so 'tuition' is its own line; the two
+    // 'Tuition' charges become the second and third lines of that label.
+    expect(merged).toEqual({
+      tuition: 5000,
+      'tuition (one-time)': 100,
+      Tuition: 200,
+      'Tuition (one-time)': 300,
+    });
+    const crowded = mergeOneTimeCharges({ Fee: 1 }, [
+      { label: 'Fee', amount: 2 },
+      { label: 'Fee', amount: 3 },
+    ]);
+    expect(crowded).toEqual({
+      Fee: 1,
+      'Fee (one-time)': 2,
+      'Fee (one-time 2)': 3,
+    });
+  });
+
+  it('rejects a breakdown that is not an object', () => {
+    expect(() => mergeOneTimeCharges(null, [])).toThrow(
+      'Fee breakdown must be an object',
+    );
+    expect(() => mergeOneTimeCharges([1, 2], [])).toThrow();
+  });
+
+  it('counts the charges in the total and caps discounts against the total including them', () => {
+    const result = calculateVoucherAmounts(
+      mergeOneTimeCharges({ tuition: 1000 }, [
+        { label: 'Admission fee', amount: 500 },
+      ]),
+      [200, 100],
+      0,
+      0,
+    );
+
+    expect(result.finalAmountDue.toFixed(2)).toBe('1200.00');
+    expect(result.discountAmount.toFixed(2)).toBe('300.00');
+  });
+
+  it('readVoucherAmounts adds the charges to this voucher only', async () => {
+    const tx = {
+      feeStructure: {
+        findUnique: jest.fn().mockResolvedValue({
+          campusId: 'campus',
+          feeBreakdown: { tuition: 1000 },
+        }),
+      },
+      student: {
+        findUnique: jest.fn().mockResolvedValue({ campusId: 'campus' }),
+      },
+      bankAccount: { findUnique: jest.fn() },
+      studentDiscount: { findMany: jest.fn().mockResolvedValue([]) },
+      studentFine: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as Prisma.TransactionClient;
+    const params = {
+      studentId: 'student',
+      feeStructureId: 'structure',
+      campusId: 'campus',
+      month: 9,
+      year: 2026,
+      lateFeeFine: 0,
+    };
+
+    const withCharges = await readVoucherAmounts(tx, {
+      ...params,
+      oneTimeCharges: [{ label: 'Paper fund', amount: 250 }],
+    });
+    const without = await readVoucherAmounts(tx, params);
+
+    expect(withCharges.finalAmountDue.toFixed(2)).toBe('1250.00');
+    expect(withCharges.feeBreakdown).toEqual({
+      tuition: 1000,
+      'Paper fund': 250,
+    });
+    expect(without.finalAmountDue.toFixed(2)).toBe('1000.00');
   });
 });

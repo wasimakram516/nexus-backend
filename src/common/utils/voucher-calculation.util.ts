@@ -22,6 +22,37 @@ function money(value: unknown): Prisma.Decimal {
   return amount;
 }
 
+/**
+ * Adds one-time charge lines (admission fee, exam fee, annual charges) to a
+ * fee structure's monthly breakdown. A charge whose label matches an existing
+ * line keeps both: the new one is labelled "(one-time)", numbered if needed,
+ * so neither amount is silently replaced or doubled.
+ *
+ * @param {unknown} breakdown - The fee structure's monthly breakdown.
+ * @param {Array<{label: string, amount: number}>} charges - One-time charge lines.
+ * @returns {Record<string, unknown>} A new breakdown containing every line.
+ * @throws {BadRequestException} If the breakdown is not an object.
+ */
+export function mergeOneTimeCharges(
+  breakdown: unknown,
+  charges: Array<{ label: string; amount: number }>,
+): Record<string, unknown> {
+  if (!breakdown || typeof breakdown !== 'object' || Array.isArray(breakdown))
+    throw new BadRequestException(
+      'Fee breakdown must be an object of numeric amounts.',
+    );
+  const merged: Record<string, unknown> = { ...breakdown };
+  for (const charge of charges) {
+    const label = charge.label.trim();
+    let key = label;
+    if (key in merged) key = `${label} (one-time)`;
+    for (let counter = 2; key in merged; counter += 1)
+      key = `${label} (one-time ${counter})`;
+    merged[key] = charge.amount;
+  }
+  return merged;
+}
+
 /** Calculates exact currency totals and caps stacked discounts at the base fee. */
 export function calculateVoucherAmounts(
   breakdown: unknown,
@@ -68,6 +99,8 @@ export async function readVoucherAmounts(
     year: number;
     lateFeeFine: number | Prisma.Decimal;
     bankId?: string | null;
+    /** One-time charge lines added to this voucher's breakdown only. */
+    oneTimeCharges?: Array<{ label: string; amount: number }>;
   },
 ) {
   const structure = await transaction.feeStructure.findUnique({
@@ -109,7 +142,9 @@ export async function readVoucherAmounts(
     orderBy: { createdAt: 'desc' },
   });
   return calculateVoucherAmounts(
-    structure.feeBreakdown,
+    params.oneTimeCharges?.length
+      ? mergeOneTimeCharges(structure.feeBreakdown, params.oneTimeCharges)
+      : structure.feeBreakdown,
     discounts.map((discount) => discount.discountAmount),
     fine?.totalFineAmount ?? 0,
     params.lateFeeFine,
