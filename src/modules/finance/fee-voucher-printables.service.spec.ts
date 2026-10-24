@@ -33,6 +33,7 @@ describe('FeeVoucherPrintablesService', () => {
     student: { findMany: jest.fn() },
     studentEnrollment: { findMany: jest.fn() },
     campus: { findMany: jest.fn() },
+    institutionSetting: { findMany: jest.fn() },
   };
   const moduleAccessMock = {
     assertModuleEnabledForUser: jest.fn(),
@@ -46,6 +47,7 @@ describe('FeeVoucherPrintablesService', () => {
     studentId: `student-${id}`,
     month: 9,
     year: 2026,
+    createdAt: new Date('2026-09-01'),
     dueDate: new Date('2026-09-10'),
     status: 'PENDING',
     feeBreakdown: { tuition: 5000, transport: '1000.5' },
@@ -85,6 +87,7 @@ describe('FeeVoucherPrintablesService', () => {
     prismaMock.campus.findMany.mockResolvedValue([
       { id: 'campus-1', institutionId: 'inst-1' },
     ]);
+    prismaMock.institutionSetting.findMany.mockResolvedValue([]);
     prismaMock.studentEnrollment.findMany.mockResolvedValue([
       {
         studentId: 'student-v1',
@@ -145,6 +148,37 @@ describe('FeeVoucherPrintablesService', () => {
         sectionName: 'A',
       });
       expect(data.bank?.bankName).toBe('HBL');
+    });
+
+    it('prints the institution wording from its finance setting, with defaults when none is set', async () => {
+      prismaMock.feeVoucher.findUnique.mockResolvedValue(
+        row('v1', 'Ayesha', 'R-1'),
+      );
+      const defaults = await service.getPrintable(admin, 'v1');
+      expect(defaults.data.print).toEqual({
+        currencyLabel: 'Rs.',
+        voucherInstructions: [],
+        voucherContact: '',
+      });
+      expect(defaults.data.voucher.issueDate).toEqual(new Date('2026-09-01'));
+
+      prismaMock.institutionSetting.findMany.mockResolvedValue([
+        {
+          institutionId: 'inst-1',
+          value: {
+            currencyLabel: 'SAR',
+            voucherInstructions: 'Pay at the bank.\nKeep the receipt.',
+            voucherContact: 'info@school.test',
+          },
+        },
+      ]);
+      const configured = await service.getPrintable(admin, 'v1');
+
+      expect(configured.data.print).toEqual({
+        currencyLabel: 'SAR',
+        voucherInstructions: ['Pay at the bank.', 'Keep the receipt.'],
+        voucherContact: 'info@school.test',
+      });
     });
 
     it('prints a voucher with no bank and a student with no placement', async () => {

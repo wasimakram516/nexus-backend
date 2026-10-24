@@ -10,6 +10,10 @@ import {
   PrintableMeta,
   PrintableMetaService,
 } from '../../common/services/printable-meta.service';
+import {
+  FinanceSettings,
+  readFinanceSettings,
+} from '../../common/utils/finance-settings.util';
 import { attachFeeVoucherBalances } from '../../common/utils/fee-settlement.util';
 import { ModuleKey, Prisma } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -50,6 +54,7 @@ export interface PrintableFeeVoucher {
     voucherNumber: string;
     month: number;
     year: number;
+    issueDate: Date;
     dueDate: Date;
     status: string;
     lines: Array<{ label: string; amount: string }>;
@@ -69,6 +74,11 @@ export interface PrintableFeeVoucher {
     sectionName: string | null;
   };
   bank: VoucherRow['bank'];
+  /** The institution's wording for the printed voucher. */
+  print: Pick<
+    FinanceSettings,
+    'currencyLabel' | 'voucherInstructions' | 'voucherContact'
+  >;
 }
 
 /**
@@ -184,6 +194,28 @@ export class FeeVoucherPrintablesService {
       );
     }
 
+    const settingRows = await this.prisma.institutionSetting.findMany({
+      where: {
+        institutionId: {
+          in: [
+            ...new Set(
+              [...institutionByCampus.values()].filter((id): id is string =>
+                Boolean(id),
+              ),
+            ),
+          ],
+        },
+        key: 'finance',
+      },
+      select: { institutionId: true, value: true },
+    });
+    const settingsByInstitution = new Map(
+      settingRows.map((row) => [
+        row.institutionId,
+        readFinanceSettings(row.value),
+      ]),
+    );
+
     const placements = await loadStudentPlacements(
       this.prisma,
       vouchers.map((voucher) => voucher.studentId),
@@ -191,6 +223,10 @@ export class FeeVoucherPrintablesService {
 
     return withBalances.map((voucher) => {
       const placement = placements.get(voucher.studentId);
+      const settings =
+        settingsByInstitution.get(
+          institutionByCampus.get(voucher.student.campusId) ?? '',
+        ) ?? readFinanceSettings(null);
       const lines = Object.entries(
         (voucher.feeBreakdown ?? {}) as Record<string, number | string>,
       ).map(([label, amount]) => ({
@@ -207,6 +243,7 @@ export class FeeVoucherPrintablesService {
           voucherNumber: voucherNumber(voucher),
           month: voucher.month,
           year: voucher.year,
+          issueDate: voucher.createdAt,
           dueDate: voucher.dueDate,
           status: voucher.status,
           lines,
@@ -228,6 +265,11 @@ export class FeeVoucherPrintablesService {
           sectionName: placement?.sectionName ?? null,
         },
         bank: voucher.bank,
+        print: {
+          currencyLabel: settings.currencyLabel,
+          voucherInstructions: settings.voucherInstructions,
+          voucherContact: settings.voucherContact,
+        },
       };
     });
   }

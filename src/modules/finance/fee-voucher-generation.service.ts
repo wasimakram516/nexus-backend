@@ -13,6 +13,7 @@ import { ModuleAccessService } from '../../common/services/module-access.service
 import { RequestContextService } from '../../common/services/request-context.service';
 import { reconcileFeeVoucher } from '../../common/utils/fee-settlement.util';
 import { runAuditedTransaction } from '../../common/utils/transaction.util';
+import { readFinanceSettings } from '../../common/utils/finance-settings.util';
 import { readVoucherAmounts } from '../../common/utils/voucher-calculation.util';
 import { EnrollmentStatus, ModuleKey, Prisma } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -20,7 +21,6 @@ import { BulkGenerateVouchersDto } from './dto/finance.dto';
 
 /** A run covers at most this many students; larger campuses narrow by class or section. */
 export const MAX_BULK_VOUCHER_STUDENTS = 2000;
-const DEFAULT_DUE_DAY = 10;
 
 interface StudentRef {
   studentId: string;
@@ -338,14 +338,7 @@ export class FeeVoucherGenerationService {
       },
       select: { value: true },
     });
-    const raw =
-      setting?.value && typeof setting.value === 'object'
-        ? (setting.value as { dueDayOfMonth?: unknown }).dueDayOfMonth
-        : undefined;
-    const day =
-      typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 && raw <= 28
-        ? raw
-        : DEFAULT_DUE_DAY;
+    const { dueDayOfMonth: day } = readFinanceSettings(setting?.value);
     return new Date(Date.UTC(year, month - 1, day));
   }
 

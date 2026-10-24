@@ -20,6 +20,7 @@ import { ModuleAccessService } from '../../common/services/module-access.service
 import { RequestContextService } from '../../common/services/request-context.service';
 import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
 import { generateUniqueSlug } from '../../common/utils/slug.util';
+import { validateFinanceSettingInput } from '../../common/utils/finance-settings.util';
 import { validatePassPolicyInput } from '../examinations/exam-computation';
 import { runAuditedTransaction } from '../../common/utils/transaction.util';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -505,8 +506,13 @@ export class PlatformService {
     settings: UpsertInstitutionSettingsDto['settings'],
   ) {
     for (const setting of settings) {
-      if (this.toSnakeCase(setting.key) !== 'exams') continue;
-      const problem = validatePassPolicyInput(setting.value);
+      const key = this.toSnakeCase(setting.key);
+      const problem =
+        key === 'exams'
+          ? validatePassPolicyInput(setting.value)
+          : key === 'finance'
+            ? validateFinanceSettingInput(setting.value)
+            : null;
       if (problem) {
         throw new BadRequestException(problem);
       }
