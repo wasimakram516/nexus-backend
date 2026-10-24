@@ -21,6 +21,7 @@ import {
   BulkGenerateVouchersDto,
   GenerateStudentFinesDto,
   DefaultersQueryDto,
+  FamilyPaymentDto,
   PrintFeeVouchersQueryDto,
   CreateBankAccountDto,
   CreateDeductionRuleDto,
@@ -40,6 +41,7 @@ import {
   UpdateSalaryDto,
 } from './dto/finance.dto';
 import { FeeVoucherGenerationService } from './fee-voucher-generation.service';
+import { FamilyPaymentService } from './family-payment.service';
 import { FeeReportsService } from './fee-reports.service';
 import { FeeVoucherPrintablesService } from './fee-voucher-printables.service';
 import { StudentFineGenerationService } from './student-fine-generation.service';
@@ -56,6 +58,7 @@ export class FinanceController {
     private readonly fineGenerationService: StudentFineGenerationService,
     private readonly voucherPrintablesService: FeeVoucherPrintablesService,
     private readonly feeReportsService: FeeReportsService,
+    private readonly familyPaymentService: FamilyPaymentService,
   ) {}
 
   @Post('salaries')
@@ -956,6 +959,21 @@ export class FinanceController {
       voucherId,
       dto.reason,
     );
+  }
+
+  @Post('fee-payments/family')
+  @Version('1')
+  @RequirePermission('fee_payments', 'create')
+  @ApiOperation({
+    summary: "Record one payment across a family's vouchers",
+    description:
+      "Records a payment at the front desk across several vouchers of one guardian's children. Each voucher gets its own ordinary payment and is independent: a refused one is reported and the rest are still recorded. Retrying with the same request key never pays twice.",
+  })
+  recordFamilyPayment(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: FamilyPaymentDto,
+  ) {
+    return this.familyPaymentService.record(currentUser, dto);
   }
 
   @Post('fee-payments')

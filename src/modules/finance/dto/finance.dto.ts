@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -362,4 +363,43 @@ export class DefaultersQueryDto {
   @Min(1)
   @Max(36)
   minMonths?: number;
+}
+
+export class FamilyPaymentLineDto {
+  @ApiProperty() @IsUUID() voucherId!: string;
+
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  @Max(99999999.99)
+  paidAmount!: number;
+}
+
+export class FamilyPaymentDto {
+  @ApiProperty({
+    description:
+      'Stable UUID retained across retries of the same sitting, so a retry never pays twice.',
+  })
+  @IsUUID()
+  requestKey!: string;
+
+  @ApiProperty({
+    description: 'The guardian whose children the vouchers belong to.',
+  })
+  @IsUUID()
+  guardianId!: string;
+
+  @ApiProperty({ enum: PaymentMethod })
+  @IsEnum(PaymentMethod)
+  paymentMethod!: PaymentMethod;
+
+  @ApiProperty() @IsDateString() paymentDate!: string;
+
+  @ApiProperty({ type: [FamilyPaymentLineDto] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => FamilyPaymentLineDto)
+  payments!: FamilyPaymentLineDto[];
 }
