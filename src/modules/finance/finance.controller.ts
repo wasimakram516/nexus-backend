@@ -20,6 +20,7 @@ import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import {
   BulkGenerateVouchersDto,
   GenerateStudentFinesDto,
+  DefaultersQueryDto,
   PrintFeeVouchersQueryDto,
   CreateBankAccountDto,
   CreateDeductionRuleDto,
@@ -39,6 +40,7 @@ import {
   UpdateSalaryDto,
 } from './dto/finance.dto';
 import { FeeVoucherGenerationService } from './fee-voucher-generation.service';
+import { FeeReportsService } from './fee-reports.service';
 import { FeeVoucherPrintablesService } from './fee-voucher-printables.service';
 import { StudentFineGenerationService } from './student-fine-generation.service';
 import { FinanceService } from './finance.service';
@@ -53,6 +55,7 @@ export class FinanceController {
     private readonly voucherGenerationService: FeeVoucherGenerationService,
     private readonly fineGenerationService: StudentFineGenerationService,
     private readonly voucherPrintablesService: FeeVoucherPrintablesService,
+    private readonly feeReportsService: FeeReportsService,
   ) {}
 
   @Post('salaries')
@@ -800,6 +803,36 @@ export class FinanceController {
       campusId,
       studentId,
     );
+  }
+
+  @Get('fee-defaulters')
+  @Version('1')
+  @RequirePermission('fee_vouchers', 'read')
+  @ApiOperation({
+    summary: 'Students who owe fees past the due date',
+    description:
+      'Lists students with an unpaid balance on a voucher whose due date has passed, largest debt first, with the months they owe. Filter by class, section or a minimum number of months.',
+  })
+  getDefaulters(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: DefaultersQueryDto,
+  ) {
+    return this.feeReportsService.getDefaulters(currentUser, query);
+  }
+
+  @Get('fee-ledger/:studentId')
+  @Version('1')
+  @RequirePermission('fee_vouchers', 'read')
+  @ApiOperation({
+    summary: "A student's fee statement",
+    description:
+      'Every voucher of the student, oldest first, with its payments, the paid and remaining amounts, and a running balance.',
+  })
+  getStudentLedger(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Param('studentId') studentId: string,
+  ) {
+    return this.feeReportsService.getStudentLedger(currentUser, studentId);
   }
 
   @Get('fee-vouchers/printable')

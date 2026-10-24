@@ -328,3 +328,26 @@ export class PrintFeeVouchersQueryDto {
   @ApiProperty() @IsInt() @Min(1) @Max(12) month!: number;
   @ApiProperty() @IsInt() @Min(2000) year!: number;
 }
+
+export class DefaultersQueryDto {
+  @ApiProperty() @IsUUID() campusId!: string;
+
+  @ApiPropertyOptional({ description: 'Limit to one class.' })
+  @IsOptional()
+  @IsUUID()
+  classId?: string;
+
+  @ApiPropertyOptional({ description: 'Limit to one section.' })
+  @IsOptional()
+  @IsUUID()
+  sectionId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Only students with at least this many unpaid overdue months.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(36)
+  minMonths?: number;
+}

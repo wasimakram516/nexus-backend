@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { FeeVoucherGenerationService } from './fee-voucher-generation.service';
+import { FeeReportsService } from './fee-reports.service';
 import { FeeVoucherPrintablesService } from './fee-voucher-printables.service';
 import { StudentFineGenerationService } from './student-fine-generation.service';
 import { FinanceController } from './finance.controller';
@@ -12,6 +13,7 @@ import { FinanceService } from './finance.service';
     FeeVoucherGenerationService,
     StudentFineGenerationService,
     FeeVoucherPrintablesService,
+    FeeReportsService,
   ],
 })
 export class FinanceModule {}
