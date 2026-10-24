@@ -20,6 +20,7 @@ import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import {
   BulkGenerateVouchersDto,
   GenerateStudentFinesDto,
+  PrintFeeVouchersQueryDto,
   CreateBankAccountDto,
   CreateDeductionRuleDto,
   CreateFeePaymentDto,
@@ -38,6 +39,7 @@ import {
   UpdateSalaryDto,
 } from './dto/finance.dto';
 import { FeeVoucherGenerationService } from './fee-voucher-generation.service';
+import { FeeVoucherPrintablesService } from './fee-voucher-printables.service';
 import { StudentFineGenerationService } from './student-fine-generation.service';
 import { FinanceService } from './finance.service';
 
@@ -50,6 +52,7 @@ export class FinanceController {
     private readonly financeService: FinanceService,
     private readonly voucherGenerationService: FeeVoucherGenerationService,
     private readonly fineGenerationService: StudentFineGenerationService,
+    private readonly voucherPrintablesService: FeeVoucherPrintablesService,
   ) {}
 
   @Post('salaries')
@@ -797,6 +800,32 @@ export class FinanceController {
       campusId,
       studentId,
     );
+  }
+
+  @Get('fee-vouchers/printable')
+  @Version('1')
+  @RequirePermission('fee_vouchers', 'read')
+  @ApiOperation({
+    summary: "Print a month's fee vouchers for a campus, class or section",
+    description:
+      'Returns each voucher with the school header, fee lines, discounts, fines, paid and remaining amounts and bank details, ordered by student name.',
+  })
+  getPrintableVouchers(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: PrintFeeVouchersQueryDto,
+  ) {
+    return this.voucherPrintablesService.getBatchPrintable(currentUser, query);
+  }
+
+  @Get('fee-vouchers/:voucherId/printable')
+  @Version('1')
+  @RequirePermission('fee_vouchers', 'read')
+  @ApiOperation({ summary: 'Print one fee voucher' })
+  getPrintableVoucher(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Param('voucherId') voucherId: string,
+  ) {
+    return this.voucherPrintablesService.getPrintable(currentUser, voucherId);
   }
 
   @Get('fee-vouchers/:voucherId')
