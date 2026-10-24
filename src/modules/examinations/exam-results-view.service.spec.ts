@@ -5,6 +5,7 @@ import { CampusAccessService } from '../../common/services/campus-access.service
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
 import { ModuleKey, UserRole } from '../../prisma/client';
+import { OwnedStudentsService } from '../../common/services/owned-students.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExamResultsViewService } from './exam-results-view.service';
 
@@ -123,6 +124,7 @@ describe('ExamResultsViewService', () => {
         { provide: ModuleAccessService, useValue: moduleAccessMock },
         { provide: CampusAccessService, useValue: campusAccessMock },
         { provide: UserPermissionsService, useValue: permissionsMock },
+        OwnedStudentsService,
       ],
     }).compile();
     service = moduleRef.get(ExamResultsViewService);

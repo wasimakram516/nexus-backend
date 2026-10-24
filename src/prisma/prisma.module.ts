@@ -8,6 +8,7 @@ import { TimezoneResolverService } from '../common/services/timezone-resolver.se
 import { UserPermissionsService } from '../common/services/user-permissions.service';
 import { WorkingDayResolverService } from '../common/services/working-day-resolver.service';
 import { PrintableMetaService } from '../common/services/printable-meta.service';
+import { OwnedStudentsService } from '../common/services/owned-students.service';
 import { PrismaService } from './prisma.service';
 
 @Global()
@@ -23,6 +24,7 @@ import { PrismaService } from './prisma.service';
     TimezoneResolverService,
     WorkingDayResolverService,
     PrintableMetaService,
+    OwnedStudentsService,
   ],
   exports: [
     PrismaService,
@@ -35,6 +37,7 @@ import { PrismaService } from './prisma.service';
     TimezoneResolverService,
     WorkingDayResolverService,
     PrintableMetaService,
+    OwnedStudentsService,
   ],
 })
 export class PrismaModule {}

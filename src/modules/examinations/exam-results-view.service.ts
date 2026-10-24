@@ -13,6 +13,7 @@ import {
   ModuleKey,
   UserRole,
 } from '../../prisma/client';
+import { OwnedStudentsService } from '../../common/services/owned-students.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   computeExamOutcome,
@@ -68,6 +69,7 @@ export class ExamResultsViewService {
     private readonly moduleAccessService: ModuleAccessService,
     private readonly campusAccessService: CampusAccessService,
     private readonly userPermissionsService: UserPermissionsService,
+    private readonly ownedStudents: OwnedStudentsService,
   ) {}
 
   /**
@@ -423,31 +425,8 @@ export class ExamResultsViewService {
    * @param {CurrentUser} currentUser - A student or guardian.
    * @returns {Promise<string[]>} Student ids.
    */
-  async resolveOwnedStudentIds(currentUser: CurrentUser): Promise<string[]> {
-    if (currentUser.role === UserRole.STUDENT) {
-      const student = await this.prisma.student.findFirst({
-        where: { userId: currentUser.sub, deletedAt: null },
-        select: { id: true },
-      });
-      return student ? [student.id] : [];
-    }
-    if (currentUser.role === UserRole.GUARDIAN) {
-      const guardian = await this.prisma.guardian.findFirst({
-        where: { userId: currentUser.sub, deletedAt: null },
-        select: { id: true },
-      });
-      if (!guardian) return [];
-      const links = await this.prisma.studentGuardian.findMany({
-        where: {
-          guardianId: guardian.id,
-          deletedAt: null,
-          student: { deletedAt: null },
-        },
-        select: { studentId: true },
-      });
-      return links.map((link) => link.studentId);
-    }
-    return [];
+  resolveOwnedStudentIds(currentUser: CurrentUser): Promise<string[]> {
+    return this.ownedStudents.resolveOwnedStudentIds(currentUser);
   }
 
   private async assertModule(currentUser: CurrentUser): Promise<void> {

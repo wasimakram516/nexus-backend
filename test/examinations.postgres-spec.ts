@@ -21,6 +21,7 @@ import { ExamResultsService } from '../src/modules/examinations/exam-results.ser
 import { ExamSubjectsService } from '../src/modules/examinations/exam-subjects.service';
 import { ExaminationsService } from '../src/modules/examinations/examinations.service';
 import { UserRole } from '../src/prisma/client';
+import { OwnedStudentsService } from '../src/common/services/owned-students.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
@@ -102,6 +103,7 @@ describe('PostgreSQL examinations setup', () => {
       moduleAccess,
       campusAccess,
       permissions,
+      new OwnedStudentsService(prisma),
     );
     printables = new ExamPrintablesService(
       prisma,
