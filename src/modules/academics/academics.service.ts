@@ -240,6 +240,9 @@ export class AcademicsService {
         ...(campusIds ? { level: { campusId: { in: campusIds } } } : {}),
       },
       orderBy: { createdAt: 'desc' },
+      // The level and its campus let a picker tell same-named classes apart
+      // and offer only one campus's classes.
+      include: { level: { select: { id: true, name: true, campusId: true } } },
     });
     const data = await this.entityCustomFieldsService.attachToItems(
       items,

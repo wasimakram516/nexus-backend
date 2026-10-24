@@ -377,6 +377,9 @@ describe('AcademicsService', () => {
       expect(prismaMock.academicClass.findMany).toHaveBeenCalledWith({
         where: { level: { campusId: { in: ['campus-1'] } } },
         orderBy: { createdAt: 'desc' },
+        include: {
+          level: { select: { id: true, name: true, campusId: true } },
+        },
       });
     });
 
@@ -394,6 +397,9 @@ describe('AcademicsService', () => {
       expect(prismaMock.academicClass.findMany).toHaveBeenCalledWith({
         where: {},
         orderBy: { createdAt: 'desc' },
+        include: {
+          level: { select: { id: true, name: true, campusId: true } },
+        },
       });
       expect(
         campusAccessServiceMock.getCampusIdsForUser,
@@ -418,6 +424,9 @@ describe('AcademicsService', () => {
           level: { campusId: { in: ['campus-1'] } },
         },
         orderBy: { createdAt: 'desc' },
+        include: {
+          level: { select: { id: true, name: true, campusId: true } },
+        },
       });
     });
 
