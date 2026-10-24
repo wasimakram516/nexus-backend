@@ -18,6 +18,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import {
+  BulkGenerateVouchersDto,
   CreateBankAccountDto,
   CreateDeductionRuleDto,
   CreateFeePaymentDto,
@@ -35,6 +36,7 @@ import {
   UpdateFeeVoucherDto,
   UpdateSalaryDto,
 } from './dto/finance.dto';
+import { FeeVoucherGenerationService } from './fee-voucher-generation.service';
 import { FinanceService } from './finance.service';
 
 @ApiTags('Finance')
@@ -42,7 +44,10 @@ import { FinanceService } from './finance.service';
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('finance')
 export class FinanceController {
-  constructor(private readonly financeService: FinanceService) {}
+  constructor(
+    private readonly financeService: FinanceService,
+    private readonly voucherGenerationService: FeeVoucherGenerationService,
+  ) {}
 
   @Post('salaries')
   @Version('1')
@@ -724,6 +729,21 @@ export class FinanceController {
       fineId,
       dto.reason,
     );
+  }
+
+  @Post('fee-vouchers/bulk-generate')
+  @Version('1')
+  @RequirePermission('fee_vouchers', 'create')
+  @ApiOperation({
+    summary: 'Generate a month of fee vouchers in one action',
+    description:
+      "Creates the month's vouchers for every enrolled student of a campus, class or section, applying all active discounts, the month's fine and any one-time charges. Students who already have a voucher are skipped, so it is safe to run twice. Use preview to see the result first.",
+  })
+  generateVouchers(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: BulkGenerateVouchersDto,
+  ) {
+    return this.voucherGenerationService.generate(currentUser, dto);
   }
 
   @Post('fee-vouchers')

@@ -1,15 +1,22 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsObject,
   IsOptional,
   IsString,
   IsUUID,
   Max,
+  MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import {
   AdjustmentType,
@@ -220,4 +227,63 @@ export class CreateFeePaymentDto extends CustomFieldPayloadDto {
   @IsEnum(PaymentMethod)
   paymentMethod!: PaymentMethod;
   @ApiProperty() @IsDateString() paymentDate!: string;
+}
+
+export class OneTimeChargeDto {
+  @ApiProperty({ description: 'e.g. "Admission fee", "Annual charges".' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  label!: string;
+
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  @Max(99999999.99)
+  amount!: number;
+}
+
+export class BulkGenerateVouchersDto {
+  @ApiProperty() @IsUUID() campusId!: string;
+
+  @ApiPropertyOptional({ description: 'Limit to one class.' })
+  @IsOptional()
+  @IsUUID()
+  classId?: string;
+
+  @ApiPropertyOptional({ description: 'Limit to one section.' })
+  @IsOptional()
+  @IsUUID()
+  sectionId?: string;
+
+  @ApiProperty() @IsInt() @Min(1) @Max(12) month!: number;
+  @ApiProperty() @IsInt() @Min(2000) year!: number;
+
+  @ApiPropertyOptional({
+    description:
+      "Due date for every voucher. Defaults to the institution's due day of the month.",
+  })
+  @IsOptional()
+  @IsDateString()
+  dueDate?: string;
+
+  @ApiPropertyOptional() @IsOptional() @IsUUID() bankId?: string;
+
+  @ApiPropertyOptional({
+    type: [OneTimeChargeDto],
+    description: 'Charges added to every voucher of this run only.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => OneTimeChargeDto)
+  oneTimeCharges?: OneTimeChargeDto[];
+
+  @ApiPropertyOptional({
+    description: 'Report what would be generated without creating anything.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  preview?: boolean;
 }
