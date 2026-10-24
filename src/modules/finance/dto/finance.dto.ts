@@ -287,3 +287,27 @@ export class BulkGenerateVouchersDto {
   @IsBoolean()
   preview?: boolean;
 }
+
+export class GenerateStudentFinesDto {
+  @ApiProperty() @IsUUID() campusId!: string;
+
+  @ApiPropertyOptional({ description: 'Limit to one class.' })
+  @IsOptional()
+  @IsUUID()
+  classId?: string;
+
+  @ApiPropertyOptional({ description: 'Limit to one section.' })
+  @IsOptional()
+  @IsUUID()
+  sectionId?: string;
+
+  @ApiProperty() @IsInt() @Min(1) @Max(12) month!: number;
+  @ApiProperty() @IsInt() @Min(2000) year!: number;
+
+  @ApiPropertyOptional({
+    description: 'Report what would be fined without saving anything.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  preview?: boolean;
+}

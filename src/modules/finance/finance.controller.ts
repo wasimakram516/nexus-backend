@@ -19,6 +19,7 @@ import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import {
   BulkGenerateVouchersDto,
+  GenerateStudentFinesDto,
   CreateBankAccountDto,
   CreateDeductionRuleDto,
   CreateFeePaymentDto,
@@ -37,6 +38,7 @@ import {
   UpdateSalaryDto,
 } from './dto/finance.dto';
 import { FeeVoucherGenerationService } from './fee-voucher-generation.service';
+import { StudentFineGenerationService } from './student-fine-generation.service';
 import { FinanceService } from './finance.service';
 
 @ApiTags('Finance')
@@ -47,6 +49,7 @@ export class FinanceController {
   constructor(
     private readonly financeService: FinanceService,
     private readonly voucherGenerationService: FeeVoucherGenerationService,
+    private readonly fineGenerationService: StudentFineGenerationService,
   ) {}
 
   @Post('salaries')
@@ -729,6 +732,21 @@ export class FinanceController {
       fineId,
       dto.reason,
     );
+  }
+
+  @Post('student-fines/generate')
+  @Version('1')
+  @RequirePermission('student_fines', 'create')
+  @ApiOperation({
+    summary: "Calculate a month's attendance fines",
+    description:
+      "Applies the campus or class fine rule to each student's attendance for the month and creates or refreshes their fine. Fines entered by hand, fines already paid and months whose voucher was already issued are left alone. Use preview to see the result first.",
+  })
+  generateStudentFines(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: GenerateStudentFinesDto,
+  ) {
+    return this.fineGenerationService.generate(currentUser, dto);
   }
 
   @Post('fee-vouchers/bulk-generate')
