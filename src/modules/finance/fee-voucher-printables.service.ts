@@ -11,9 +11,10 @@ import {
   PrintableMetaService,
 } from '../../common/services/printable-meta.service';
 import { attachFeeVoucherBalances } from '../../common/utils/fee-settlement.util';
-import { EnrollmentStatus, ModuleKey, Prisma } from '../../prisma/client';
+import { ModuleKey, Prisma } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PrintFeeVouchersQueryDto } from './dto/finance.dto';
+import { loadStudentPlacements, studentIdsInScope } from './student-scope.util';
 
 /** A batch print covers at most this many vouchers; larger runs narrow by class or section. */
 export const MAX_PRINT_VOUCHERS = 500;
@@ -133,7 +134,7 @@ export class FeeVoucherPrintablesService {
       currentUser,
       query.campusId,
     );
-    const studentIds = await this.studentIdsFor(query);
+    const studentIds = await studentIdsInScope(this.prisma, query);
     const vouchers = await this.prisma.feeVoucher.findMany({
       where: {
         studentId: { in: studentIds },
@@ -151,27 +152,6 @@ export class FeeVoucherPrintablesService {
     const printables = await this.build(vouchers);
     printables.sort((a, b) => a.student.name.localeCompare(b.student.name));
     return { message: 'Fee vouchers ready to print', data: printables };
-  }
-
-  private async studentIdsFor(query: PrintFeeVouchersQueryDto) {
-    if (!query.classId && !query.sectionId) {
-      const students = await this.prisma.student.findMany({
-        where: { campusId: query.campusId, deletedAt: null },
-        select: { id: true },
-      });
-      return students.map((row) => row.id);
-    }
-    const enrollments = await this.prisma.studentEnrollment.findMany({
-      where: {
-        campusId: query.campusId,
-        status: { not: EnrollmentStatus.LEFT },
-        deletedAt: null,
-        ...(query.classId ? { classId: query.classId } : {}),
-        ...(query.sectionId ? { sectionId: query.sectionId } : {}),
-      },
-      select: { studentId: true },
-    });
-    return [...new Set(enrollments.map((row) => row.studentId))];
   }
 
   /** Attach balances, class and section names and the school header. */
@@ -204,7 +184,8 @@ export class FeeVoucherPrintablesService {
       );
     }
 
-    const placements = await this.placements(
+    const placements = await loadStudentPlacements(
+      this.prisma,
       vouchers.map((voucher) => voucher.studentId),
     );
 
@@ -249,36 +230,6 @@ export class FeeVoucherPrintablesService {
         bank: voucher.bank,
       };
     });
-  }
-
-  /** Each student's latest non-withdrawn enrollment, for the class and section on the voucher. */
-  private async placements(studentIds: string[]) {
-    const enrollments = await this.prisma.studentEnrollment.findMany({
-      where: {
-        studentId: { in: studentIds },
-        status: { not: EnrollmentStatus.LEFT },
-        deletedAt: null,
-      },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        studentId: true,
-        class: { select: { name: true } },
-        section: { select: { name: true } },
-      },
-    });
-    const byStudent = new Map<
-      string,
-      { className: string; sectionName: string | null }
-    >();
-    for (const row of enrollments) {
-      if (!byStudent.has(row.studentId)) {
-        byStudent.set(row.studentId, {
-          className: row.class.name,
-          sectionName: row.section?.name ?? null,
-        });
-      }
-    }
-    return byStudent;
   }
 }
 
