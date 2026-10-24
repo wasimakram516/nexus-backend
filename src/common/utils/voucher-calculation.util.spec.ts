@@ -1,6 +1,7 @@
 import { Prisma } from '../../prisma/client';
 import {
   calculateVoucherAmounts,
+  extractOneTimeCharges,
   mergeOneTimeCharges,
   readVoucherAmounts,
 } from './voucher-calculation.util';
@@ -197,5 +198,46 @@ describe('one-time charges', () => {
       'Paper fund': 250,
     });
     expect(without.finalAmountDue.toFixed(2)).toBe('1000.00');
+  });
+});
+
+describe('extractOneTimeCharges', () => {
+  it('returns only the lines the fee structure does not have', () => {
+    expect(
+      extractOneTimeCharges(
+        { tuition: 5000, transport: 1000, 'Admission fee': 2000 },
+        { tuition: 5000, transport: 1000 },
+      ),
+    ).toEqual([{ label: 'Admission fee', amount: 2000 }]);
+  });
+
+  it('is empty when the voucher has no extra lines', () => {
+    expect(extractOneTimeCharges({ tuition: 5000 }, { tuition: 5000 })).toEqual(
+      [],
+    );
+  });
+
+  it.each([null, undefined, 'x', [], 7])(
+    'is empty for a bad voucher breakdown %p',
+    (value) => {
+      expect(extractOneTimeCharges(value, { tuition: 1 })).toEqual([]);
+    },
+  );
+
+  it('treats every line as extra when the structure breakdown is unusable', () => {
+    expect(extractOneTimeCharges({ a: '5' }, null)).toEqual([
+      { label: 'a', amount: 5 },
+    ]);
+  });
+
+  it('round-trips with mergeOneTimeCharges, including a label that collides with a structure line', () => {
+    const structure = { tuition: 5000 };
+    const merged = mergeOneTimeCharges(structure, [
+      { label: 'tuition', amount: 100 },
+    ]);
+
+    expect(extractOneTimeCharges(merged, structure)).toEqual([
+      { label: 'tuition (one-time)', amount: 100 },
+    ]);
   });
 });

@@ -4,6 +4,7 @@ import {
 } from '../../common/utils/payroll-money.util';
 import {
   calculateVoucherAmounts,
+  extractOneTimeCharges,
   readVoucherAmounts,
 } from '../../common/utils/voucher-calculation.util';
 import {
@@ -1758,7 +1759,7 @@ export class FinanceService {
       );
     }
 
-    const { customFields, ...voucherData } = dto;
+    const { customFields, oneTimeCharges, ...voucherData } = dto;
     const item = await this.entityCustomFieldsService.saveRecord(
       {
         institutionId: studentInstitutionId,
@@ -1777,6 +1778,7 @@ export class FinanceService {
           year: dto.year,
           lateFeeFine: dto.lateFeeFine ?? 0,
           bankId: dto.bankId,
+          oneTimeCharges,
         });
         const item = await transaction.feeVoucher.create({
           data: {
@@ -1933,7 +1935,7 @@ export class FinanceService {
       'fee structure',
     );
 
-    const { customFields, dueDate, ...voucherData } = dto;
+    const { customFields, dueDate, oneTimeCharges, ...voucherData } = dto;
     const item = await this.entityCustomFieldsService.saveRecord(
       {
         institutionId: studentInstitutionId,
@@ -1968,6 +1970,14 @@ export class FinanceService {
           year: dto.year ?? existing.year,
           lateFeeFine: dto.lateFeeFine ?? currentVoucher.lateFeeFine,
           bankId: dto.bankId === undefined ? currentVoucher.bankId : dto.bankId,
+          // Keep the one-time charges already on the voucher unless new ones
+          // are given, so editing a due date never drops an admission fee.
+          oneTimeCharges:
+            oneTimeCharges ??
+            extractOneTimeCharges(
+              existing.feeBreakdown,
+              existing.feeStructure.feeBreakdown,
+            ),
         });
         const item = await transaction.feeVoucher.update({
           where: { id: voucherId },

@@ -191,6 +191,20 @@ export class CreateStudentFineDto extends CustomFieldPayloadDto {
   @ApiPropertyOptional() @IsOptional() @IsString() fineReason?: string;
 }
 
+export class OneTimeChargeDto {
+  @ApiProperty({ description: 'e.g. "Admission fee", "Annual charges".' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  label!: string;
+
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  @Max(99999999.99)
+  amount!: number;
+}
+
 export class CreateFeeVoucherDto extends CustomFieldPayloadDto {
   @ApiProperty() @IsUUID() studentId!: string;
   @ApiProperty() @IsUUID() feeStructureId!: string;
@@ -204,6 +218,18 @@ export class CreateFeeVoucherDto extends CustomFieldPayloadDto {
   @Min(0)
   @Max(99999999.99)
   lateFeeFine?: number;
+
+  @ApiPropertyOptional({
+    type: [OneTimeChargeDto],
+    description:
+      'Charges added to this voucher only, such as an admission fee. When editing, omit to keep the ones already on the voucher.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => OneTimeChargeDto)
+  oneTimeCharges?: OneTimeChargeDto[];
 }
 
 export class UpdateFeeVoucherDto extends PartialType(CreateFeeVoucherDto) {}
@@ -227,20 +253,6 @@ export class CreateFeePaymentDto extends CustomFieldPayloadDto {
   @IsEnum(PaymentMethod)
   paymentMethod!: PaymentMethod;
   @ApiProperty() @IsDateString() paymentDate!: string;
-}
-
-export class OneTimeChargeDto {
-  @ApiProperty({ description: 'e.g. "Admission fee", "Annual charges".' })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(60)
-  label!: string;
-
-  @ApiProperty()
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0.01)
-  @Max(99999999.99)
-  amount!: number;
 }
 
 export class BulkGenerateVouchersDto {

@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ConflictException } from '@nestjs/common';
+import { EntityCustomFieldsService } from '../src/common/services/entity-custom-fields.service';
+import { FinanceService } from '../src/modules/finance/finance.service';
 import { AuditLogService } from '../src/common/services/audit-log.service';
 import { CampusAccessService } from '../src/common/services/campus-access.service';
 import { CurrentUser } from '../src/common/interfaces/current-user.interface';
@@ -16,10 +18,19 @@ import { PrismaService } from '../src/prisma/prisma.service';
  * date setting and the required-field refusal behave as designed. Run via
  * `npm run test:postgres`; see test/POSTGRES-TESTS.md.
  */
+/** A service response's data, failing the test clearly when it is missing. */
+function present<T>(value: T | null | undefined): T {
+  if (value === null || value === undefined) {
+    throw new Error('The response had no data.');
+  }
+  return value;
+}
+
 describe('PostgreSQL bulk voucher generation', () => {
   const context = new RequestContextService();
   let prisma: PrismaService;
   let service: FeeVoucherGenerationService;
+  let finance: FinanceService;
   let institutionId: string;
   let campusId: string;
   let classId: string;
@@ -99,6 +110,14 @@ describe('PostgreSQL bulk voucher generation', () => {
       new CampusAccessService(prisma),
       context,
       new AuditLogService(prisma),
+    );
+
+    finance = new FinanceService(
+      prisma,
+      new CampusAccessService(prisma),
+      new EntityCustomFieldsService(prisma, context),
+      new ModuleAccessService(prisma),
+      context,
     );
 
     const institution = await prisma.institution.create({
@@ -340,6 +359,55 @@ describe('PostgreSQL bulk voucher generation', () => {
     expect(
       entries.every((entry) => entry.institutionId === institutionId),
     ).toBe(true);
+  });
+
+  it('adds one-time charges to a single voucher, keeps them when it is edited, and replaces or clears them on request', async () => {
+    const structure = await prisma.feeStructure.findFirstOrThrow({
+      where: { classId },
+    });
+    const created = await finance.createFeeVoucher(superadmin, {
+      studentId: bilalId,
+      feeStructureId: structure.id,
+      month: 2,
+      year: 2027,
+      dueDate: '2027-02-10',
+      oneTimeCharges: [{ label: 'Admission fee', amount: 2000 }],
+    });
+    const id = present(created.data).id;
+    // 6000 + 2000 of charges; Bilal's discounts (9000) cap at the 8000 total.
+    expect(present(created.data).feeBreakdown).toEqual({
+      tuition: 5000,
+      transport: 1000,
+      'Admission fee': 2000,
+    });
+    expect(Number(present(created.data).finalAmountDue)).toBe(0);
+
+    // Editing only the due date must not drop the admission fee.
+    const edited = await finance.updateFeeVoucher(superadmin, id, {
+      dueDate: '2027-02-20',
+    });
+    expect(present(edited.data).feeBreakdown).toEqual({
+      tuition: 5000,
+      transport: 1000,
+      'Admission fee': 2000,
+    });
+
+    const replaced = await finance.updateFeeVoucher(superadmin, id, {
+      oneTimeCharges: [{ label: 'Exam fee', amount: 300 }],
+    });
+    expect(present(replaced.data).feeBreakdown).toEqual({
+      tuition: 5000,
+      transport: 1000,
+      'Exam fee': 300,
+    });
+
+    const cleared = await finance.updateFeeVoucher(superadmin, id, {
+      oneTimeCharges: [],
+    });
+    expect(present(cleared.data).feeBreakdown).toEqual({
+      tuition: 5000,
+      transport: 1000,
+    });
   });
 
   it('refuses to run while vouchers have required custom fields', async () => {

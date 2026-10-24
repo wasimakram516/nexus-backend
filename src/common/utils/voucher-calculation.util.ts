@@ -53,6 +53,28 @@ export function mergeOneTimeCharges(
   return merged;
 }
 
+/**
+ * The one-time charge lines already on a voucher: every breakdown line that
+ * the fee structure does not have. Editing a voucher keeps these unless new
+ * charges are supplied, so a recalculation never silently drops them.
+ *
+ * @param {unknown} voucherBreakdown - The voucher's stored breakdown.
+ * @param {unknown} structureBreakdown - The fee structure's monthly breakdown.
+ * @returns {Array<{label: string, amount: number}>} The extra lines, empty when there are none.
+ */
+export function extractOneTimeCharges(
+  voucherBreakdown: unknown,
+  structureBreakdown: unknown,
+): Array<{ label: string; amount: number }> {
+  const isObject = (value: unknown): value is Record<string, unknown> =>
+    Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  if (!isObject(voucherBreakdown)) return [];
+  const structure = isObject(structureBreakdown) ? structureBreakdown : {};
+  return Object.entries(voucherBreakdown)
+    .filter(([label]) => !(label in structure))
+    .map(([label, amount]) => ({ label, amount: Number(amount) }));
+}
+
 /** Calculates exact currency totals and caps stacked discounts at the base fee. */
 export function calculateVoucherAmounts(
   breakdown: unknown,
