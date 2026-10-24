@@ -43,7 +43,7 @@ type VoucherRow = Prisma.FeeVoucherGetPayload<{
 }>;
 
 export interface PrintableFeeVoucher {
-  meta: PrintableMeta;
+  printMeta: PrintableMeta;
   voucher: {
     id: string;
     voucherNumber: string;
@@ -220,7 +220,7 @@ export class FeeVoucherPrintablesService {
         .reduce((sum, line) => sum.plus(line.amount), new Prisma.Decimal(0))
         .toFixed(2);
       return {
-        meta: metaByCampus.get(voucher.student.campusId) as PrintableMeta,
+        printMeta: metaByCampus.get(voucher.student.campusId) as PrintableMeta,
         voucher: {
           id: voucher.id,
           voucherNumber: voucherNumber(voucher),
