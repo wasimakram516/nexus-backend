@@ -1,10 +1,12 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
+import { OwnedStudentsService } from '../../common/services/owned-students.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import {
   PrintableMeta,
@@ -94,6 +96,7 @@ export class FeeVoucherPrintablesService {
     private readonly moduleAccessService: ModuleAccessService,
     private readonly campusAccessService: CampusAccessService,
     private readonly printableMetaService: PrintableMetaService,
+    private readonly ownedStudents: OwnedStudentsService,
   ) {}
 
   /**
@@ -119,6 +122,34 @@ export class FeeVoucherPrintablesService {
       currentUser,
       voucher.student.campusId,
     );
+    const [printable] = await this.build([voucher]);
+    return { message: 'Fee voucher ready to print', data: printable };
+  }
+
+  /**
+   * One of the caller's own vouchers (or a ward's, for a guardian), ready to
+   * print at home.
+   *
+   * @param {CurrentUser} currentUser - A student or guardian.
+   * @param {string} voucherId - Voucher to print.
+   * @returns {Promise<{message: string, data: PrintableFeeVoucher}>} The printable voucher.
+   * @throws {NotFoundException} If the voucher does not exist.
+   * @throws {ForbiddenException} If the voucher belongs to someone else's child.
+   */
+  async getPrintableForSelf(currentUser: CurrentUser, voucherId: string) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.FINANCE,
+    );
+    const voucher = await this.prisma.feeVoucher.findUnique({
+      where: { id: voucherId },
+      include: voucherInclude,
+    });
+    if (!voucher) throw new NotFoundException('Fee voucher not found.');
+    const owned = await this.ownedStudents.resolveOwnedStudentIds(currentUser);
+    if (!owned.includes(voucher.studentId)) {
+      throw new ForbiddenException('You can only print your own vouchers.');
+    }
     const [printable] = await this.build([voucher]);
     return { message: 'Fee voucher ready to print', data: printable };
   }

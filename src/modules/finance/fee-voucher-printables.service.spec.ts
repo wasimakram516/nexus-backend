@@ -1,8 +1,13 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- jest asymmetric matchers are typed any */
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
+import { OwnedStudentsService } from '../../common/services/owned-students.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { PrintableMetaService } from '../../common/services/printable-meta.service';
 import { attachFeeVoucherBalances } from '../../common/utils/fee-settlement.util';
@@ -40,6 +45,7 @@ describe('FeeVoucherPrintablesService', () => {
   };
   const campusAccessMock = { assertCampusAccess: jest.fn() };
   const metaMock = { build: jest.fn() };
+  const ownedMock = { resolveOwnedStudentIds: jest.fn() };
   const balances = attachFeeVoucherBalances as jest.Mock;
 
   const row = (id: string, name: string, regNo: string) => ({
@@ -103,6 +109,7 @@ describe('FeeVoucherPrintablesService', () => {
         { provide: ModuleAccessService, useValue: moduleAccessMock },
         { provide: CampusAccessService, useValue: campusAccessMock },
         { provide: PrintableMetaService, useValue: metaMock },
+        { provide: OwnedStudentsService, useValue: ownedMock },
       ],
     }).compile();
     service = module.get(FeeVoucherPrintablesService);
@@ -214,6 +221,49 @@ describe('FeeVoucherPrintablesService', () => {
         'forbidden',
       );
       expect(metaMock.build).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getPrintableForSelf', () => {
+    const parent = { ...admin, role: UserRole.GUARDIAN };
+
+    it("prints a voucher that belongs to one of the caller's children, without checking campus staff access", async () => {
+      prismaMock.feeVoucher.findUnique.mockResolvedValue(
+        row('v1', 'Ayesha', 'R-1'),
+      );
+      ownedMock.resolveOwnedStudentIds.mockResolvedValue(['student-v1']);
+
+      const { data } = await service.getPrintableForSelf(parent, 'v1');
+
+      expect(data.voucher.voucherNumber).toBe('FV-202609-R-1');
+      expect(campusAccessMock.assertCampusAccess).not.toHaveBeenCalled();
+    });
+
+    it("refuses someone else's child", async () => {
+      prismaMock.feeVoucher.findUnique.mockResolvedValue(
+        row('v1', 'Ayesha', 'R-1'),
+      );
+      ownedMock.resolveOwnedStudentIds.mockResolvedValue(['student-other']);
+
+      await expect(
+        service.getPrintableForSelf(parent, 'v1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(metaMock.build).not.toHaveBeenCalled();
+    });
+
+    it('is not found for an unknown voucher, and refuses a caller who owns no students', async () => {
+      prismaMock.feeVoucher.findUnique.mockResolvedValue(null);
+      await expect(
+        service.getPrintableForSelf(parent, 'nope'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prismaMock.feeVoucher.findUnique.mockResolvedValue(
+        row('v1', 'Ayesha', 'R-1'),
+      );
+      ownedMock.resolveOwnedStudentIds.mockResolvedValue([]);
+      await expect(
+        service.getPrintableForSelf(parent, 'v1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 

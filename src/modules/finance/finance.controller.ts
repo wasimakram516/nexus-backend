@@ -805,6 +805,52 @@ export class FinanceController {
     );
   }
 
+  // No permission decorator on the two "my-fees" routes: every student and
+  // guardian needs them, and they only ever return the caller's own (or their
+  // wards') fees.
+  @Get('my-fees')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get my fees',
+    description:
+      "A student's own fee statement, or for a guardian every child's statement with the combined totals and the vouchers still unpaid.",
+  })
+  getMyFees(@CurrentUserDecorator() currentUser: CurrentUser) {
+    return this.feeReportsService.getMyFees(currentUser);
+  }
+
+  @Get('my-fees/vouchers/:voucherId/printable')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Print one of my vouchers',
+    description:
+      'The voucher of the caller, or of one of their wards, ready to print at home.',
+  })
+  getMyPrintableVoucher(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Param('voucherId') voucherId: string,
+  ) {
+    return this.voucherPrintablesService.getPrintableForSelf(
+      currentUser,
+      voucherId,
+    );
+  }
+
+  @Get('family-billing/:guardianId')
+  @Version('1')
+  @RequirePermission('fee_vouchers', 'read')
+  @ApiOperation({
+    summary: "A guardian's family fees",
+    description:
+      "For the front desk: every linked child's statement, the combined totals and the vouchers still unpaid.",
+  })
+  getFamilyBilling(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Param('guardianId') guardianId: string,
+  ) {
+    return this.feeReportsService.getFamilyBilling(currentUser, guardianId);
+  }
+
   @Get('fee-defaulters')
   @Version('1')
   @RequirePermission('fee_vouchers', 'read')

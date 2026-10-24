@@ -3,6 +3,7 @@ import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
+import { OwnedStudentsService } from '../../common/services/owned-students.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { attachFeeVoucherBalances } from '../../common/utils/fee-settlement.util';
 import { ModuleKey, Prisma, UserRole } from '../../prisma/client';
@@ -27,11 +28,17 @@ describe('FeeReportsService', () => {
     student: { findUnique: jest.fn(), findMany: jest.fn() },
     studentEnrollment: { findMany: jest.fn() },
     feeVoucher: { findMany: jest.fn() },
+    guardian: { findUnique: jest.fn() },
+  };
+  const ownedMock = {
+    resolveOwnedStudentIds: jest.fn(),
+    studentIdsOfGuardian: jest.fn(),
   };
   const moduleAccessMock = { assertModuleEnabledForUser: jest.fn() };
   const campusAccessMock = {
     assertCampusAccess: jest.fn(),
     assertStudentAccess: jest.fn(),
+    assertGuardianAccess: jest.fn(),
   };
   const balances = attachFeeVoucherBalances as jest.Mock;
 
@@ -65,6 +72,7 @@ describe('FeeReportsService', () => {
     moduleAccessMock.assertModuleEnabledForUser.mockResolvedValue(undefined);
     campusAccessMock.assertCampusAccess.mockResolvedValue(undefined);
     campusAccessMock.assertStudentAccess.mockResolvedValue(undefined);
+    campusAccessMock.assertGuardianAccess.mockResolvedValue(undefined);
     balances.mockImplementation((_client: unknown, rows: unknown[]) =>
       Promise.resolve(rows),
     );
@@ -76,6 +84,7 @@ describe('FeeReportsService', () => {
         { provide: PrismaService, useValue: prismaMock },
         { provide: ModuleAccessService, useValue: moduleAccessMock },
         { provide: CampusAccessService, useValue: campusAccessMock },
+        { provide: OwnedStudentsService, useValue: ownedMock },
       ],
     }).compile();
     service = module.get(FeeReportsService);
@@ -173,6 +182,107 @@ describe('FeeReportsService', () => {
       await expect(service.buildLedger('nope')).rejects.toBeInstanceOf(
         NotFoundException,
       );
+    });
+  });
+
+  describe('family views', () => {
+    const student = (id: string, name: string) => ({
+      id,
+      regNo: `R-${id}`,
+      user: { name },
+    });
+
+    beforeEach(() => {
+      prismaMock.student.findUnique.mockImplementation(
+        ({ where }: { where: { id: string } }) =>
+          Promise.resolve(
+            where.id === 's1' ? student('s1', 'Zara') : student('s2', 'Ayesha'),
+          ),
+      );
+      prismaMock.feeVoucher.findMany.mockImplementation(
+        ({ where }: { where: { studentId: string } }) =>
+          Promise.resolve(
+            where.studentId === 's1'
+              ? [voucher('a1', 's1', 9, '2026-09-10', '3000.00')]
+              : [
+                  voucher('b1', 's2', 8, '2026-08-10', '0.00'),
+                  voucher('b2', 's2', 9, '2026-09-10', '1000.00'),
+                ],
+          ),
+      );
+    });
+
+    it('gives a student or guardian the statements of what they own, with combined totals and unpaid vouchers', async () => {
+      ownedMock.resolveOwnedStudentIds.mockResolvedValue(['s1', 's2']);
+
+      const { data } = await service.getMyFees(admin);
+
+      expect(moduleAccessMock.assertModuleEnabledForUser).toHaveBeenCalledWith(
+        admin,
+        ModuleKey.FINANCE,
+      );
+      // Children are listed by name.
+      expect(data.students.map((row) => row.student.name)).toEqual([
+        'Ayesha',
+        'Zara',
+      ]);
+      expect(data.totals).toEqual({
+        charged: '15000.00',
+        paid: '11000.00',
+        outstanding: '4000.00',
+        overdue: '4000.00',
+      });
+      expect(data.openVouchers.map((row) => row.voucherId)).toEqual([
+        'b2',
+        'a1',
+      ]);
+      expect(data.openVouchers[0]).toMatchObject({
+        studentName: 'Ayesha',
+        remaining: '1000.00',
+        voucherNumber: 'FV-202609-R-s2',
+      });
+    });
+
+    it('is an empty family for someone who owns no students', async () => {
+      ownedMock.resolveOwnedStudentIds.mockResolvedValue([]);
+
+      const { data } = await service.getMyFees(admin);
+
+      expect(data.students).toEqual([]);
+      expect(data.openVouchers).toEqual([]);
+      expect(data.totals.outstanding).toBe('0.00');
+    });
+
+    it("gives the front desk a guardian's family after checking access to that guardian", async () => {
+      prismaMock.guardian.findUnique.mockResolvedValue({
+        id: 'g1',
+        user: { name: 'Mr Khan' },
+      });
+      ownedMock.studentIdsOfGuardian.mockResolvedValue(['s1']);
+
+      const { data } = await service.getFamilyBilling(admin, 'g1');
+
+      expect(campusAccessMock.assertGuardianAccess).toHaveBeenCalledWith(
+        admin,
+        'g1',
+      );
+      expect(data.guardian).toEqual({ id: 'g1', name: 'Mr Khan' });
+      expect(data.totals.outstanding).toBe('3000.00');
+    });
+
+    it('is not found for an unknown guardian, and refuses a guardian at another campus', async () => {
+      prismaMock.guardian.findUnique.mockResolvedValue(null);
+      await expect(
+        service.getFamilyBilling(admin, 'nope'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      campusAccessMock.assertGuardianAccess.mockRejectedValue(
+        new Error('forbidden'),
+      );
+      await expect(service.getFamilyBilling(admin, 'g1')).rejects.toThrow(
+        'forbidden',
+      );
+      expect(ownedMock.studentIdsOfGuardian).not.toHaveBeenCalled();
     });
   });
 

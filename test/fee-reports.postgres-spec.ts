@@ -3,7 +3,10 @@ import { CampusAccessService } from '../src/common/services/campus-access.servic
 import { CurrentUser } from '../src/common/interfaces/current-user.interface';
 import { ModuleAccessService } from '../src/common/services/module-access.service';
 import { RequestContextService } from '../src/common/services/request-context.service';
+import { OwnedStudentsService } from '../src/common/services/owned-students.service';
+import { PrintableMetaService } from '../src/common/services/printable-meta.service';
 import { FeeReportsService } from '../src/modules/finance/fee-reports.service';
+import { FeeVoucherPrintablesService } from '../src/modules/finance/fee-voucher-printables.service';
 import { UserRole } from '../src/prisma/client';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -17,6 +20,12 @@ describe('PostgreSQL fee ledger and defaulters', () => {
   const context = new RequestContextService();
   let prisma: PrismaService;
   let service: FeeReportsService;
+  let printables: FeeVoucherPrintablesService;
+  let owned: OwnedStudentsService;
+  let guardianUser: CurrentUser;
+  let guardianId: string;
+  let outsiderVoucherId: string;
+  let ayeshaSeptemberId: string;
   let institutionId: string;
   let campusId: string;
   let otherCampusId: string;
@@ -98,10 +107,23 @@ describe('PostgreSQL fee ledger and defaulters', () => {
       throw new Error('Use an isolated loopback nexus_audit_test database');
     process.env.DATABASE_URL = connection;
     prisma = new PrismaService(context);
+    owned = new OwnedStudentsService(prisma);
+    // Module entitlement is not what these tests prove, so that one check is skipped.
+    const allowModule = {
+      assertModuleEnabledForUser: () => Promise.resolve(),
+    } as unknown as ModuleAccessService;
     service = new FeeReportsService(
       prisma,
-      new ModuleAccessService(prisma),
+      allowModule,
       new CampusAccessService(prisma),
+      owned,
+    );
+    printables = new FeeVoucherPrintablesService(
+      prisma,
+      allowModule,
+      new CampusAccessService(prisma),
+      new PrintableMetaService(prisma),
+      owned,
     );
 
     institutionId = (
@@ -156,13 +178,42 @@ describe('PostgreSQL fee ledger and defaulters', () => {
     const august = await voucher(ayeshaId, 8, '2026-08-10');
     await pay(august.id, 8, 5000);
     const september = await voucher(ayeshaId, 9, '2026-09-10');
+    ayeshaSeptemberId = september.id;
     await pay(september.id, 9, 2000);
     await voucher(ayeshaId, 12, '2099-12-10');
     // Bilal: two months unpaid, the larger debt.
     await voucher(bilalId, 8, '2026-08-10', 6000);
     await voucher(bilalId, 9, '2026-09-10', 6000);
     // Someone at another campus owes too, but must not be listed.
-    await voucher(outsiderId, 9, '2026-09-10');
+    outsiderVoucherId = (await voucher(outsiderId, 9, '2026-09-10')).id;
+
+    // A guardian whose two children are Ayesha and Bilal; the outsider belongs to nobody here.
+    const guardianAccount = await prisma.user.create({
+      data: {
+        institutionId,
+        name: 'Mr Khan',
+        email: `${randomUUID()}@example.test`,
+        passwordHash: 'unused-test-value',
+        role: 'GUARDIAN',
+      },
+    });
+    guardianId = (
+      await prisma.guardian.create({
+        data: { userId: guardianAccount.id, relation: 'FATHER', campusId },
+      })
+    ).id;
+    await prisma.studentGuardian.createMany({
+      data: [
+        { studentId: ayeshaId, guardianId },
+        { studentId: bilalId, guardianId },
+      ],
+    });
+    guardianUser = {
+      sub: guardianAccount.id,
+      email: guardianAccount.email,
+      role: UserRole.GUARDIAN,
+      institutionId,
+    };
   });
 
   afterAll(async () => {
@@ -223,6 +274,72 @@ describe('PostgreSQL fee ledger and defaulters', () => {
     });
 
     expect(data.defaulters.map((row) => row.name)).toEqual(['Bilal']);
+  });
+
+  it("gives a guardian every child's statement with combined totals and the unpaid vouchers", async () => {
+    const { data } = await service.getMyFees(guardianUser);
+
+    expect(data.students.map((row) => row.student.name)).toEqual([
+      'Ayesha',
+      'Bilal',
+    ]);
+    // Ayesha: 15000 charged, 7000 paid. Bilal: 12000 charged, nothing paid.
+    expect(data.totals).toEqual({
+      charged: '27000.00',
+      paid: '7000.00',
+      outstanding: '20000.00',
+      overdue: '15000.00',
+    });
+    expect(data.openVouchers).toHaveLength(4);
+    expect(data.openVouchers.map((row) => row.studentName)).toEqual([
+      'Ayesha',
+      'Ayesha',
+      'Bilal',
+      'Bilal',
+    ]);
+  });
+
+  it('gives a student only their own fees, and staff nothing through the self-service route', async () => {
+    const studentAccount = await prisma.student.findUniqueOrThrow({
+      where: { id: bilalId },
+      select: { userId: true },
+    });
+    const own = await service.getMyFees({
+      sub: studentAccount.userId,
+      email: 'b@example.test',
+      role: UserRole.STUDENT,
+      institutionId,
+    });
+    expect(own.data.students.map((row) => row.student.name)).toEqual(['Bilal']);
+
+    const staff = await service.getMyFees({
+      ...superadmin,
+      role: UserRole.ADMIN,
+    });
+    expect(staff.data.students).toEqual([]);
+  });
+
+  it('shows the front desk the same family for a guardian, and refuses an unknown guardian', async () => {
+    const { data } = await service.getFamilyBilling(superadmin, guardianId);
+
+    expect(data.guardian.name).toBe('Mr Khan');
+    expect(data.totals.outstanding).toBe('20000.00');
+    await expect(
+      service.getFamilyBilling(superadmin, randomUUID()),
+    ).rejects.toThrow();
+  });
+
+  it("lets a guardian print their own child's voucher but not anyone else's", async () => {
+    const own = await printables.getPrintableForSelf(
+      guardianUser,
+      ayeshaSeptemberId,
+    );
+    expect(own.data.student.name).toBe('Ayesha');
+    expect(own.data.voucher.remainingBalance).toBe('3000.00');
+
+    await expect(
+      printables.getPrintableForSelf(guardianUser, outsiderVoucherId),
+    ).rejects.toThrow('You can only print your own vouchers.');
   });
 
   it('drops a student from the list once they pay in full', async () => {
