@@ -8,6 +8,20 @@ import {
 import { Request, Response } from 'express';
 import { AppLoggerService } from '../services/app-logger.service';
 
+/** The longest cause text returned or logged, so a huge database error cannot flood a response. */
+const MAX_CAUSE_LENGTH = 600;
+
+/** An error's name and message on one line, such as `PrismaClientKnownRequestError: Unique constraint failed`. */
+function describeCause(exception: unknown): string | null {
+  if (!(exception instanceof Error)) return null;
+  const text = `${exception.name}: ${exception.message}`
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > MAX_CAUSE_LENGTH
+    ? `${text.slice(0, MAX_CAUSE_LENGTH)}...`
+    : text;
+}
+
 @Catch()
 export class AppExceptionFilter implements ExceptionFilter {
   constructor(private readonly logger: AppLoggerService) {}
@@ -73,6 +87,8 @@ export class AppExceptionFilter implements ExceptionFilter {
       body,
     });
 
+    // The real cause is always logged, so it can be found by request id.
+    const cause = status === 500 ? describeCause(exception) : null;
     if (status === 500) {
       this.logger.logUnhandledError(
         {
@@ -83,6 +99,7 @@ export class AppExceptionFilter implements ExceptionFilter {
           userId: request.user?.sub ?? null,
           role: request.user?.role ?? null,
           message,
+          cause,
         },
         stack,
       );
@@ -103,6 +120,9 @@ export class AppExceptionFilter implements ExceptionFilter {
           method: request.method,
           path: request.originalUrl,
           ...(validationErrors ? { validationErrors } : {}),
+          // Only platform operators see why an unexpected error happened; everyone
+          // else gets the masked message so internals never reach the public.
+          ...(cause && request.user?.role === 'SUPERADMIN' ? { cause } : {}),
           ...extraDetails,
         },
       },

@@ -109,7 +109,88 @@ describe('AppExceptionFilter', () => {
     expect(logger.logUnhandledError).toHaveBeenCalled();
   });
 
-  function createHost(statusFn: jest.Mock): ArgumentsHost {
+  describe('the cause of an unexpected error', () => {
+    const run = (
+      exception: unknown,
+      user: { sub: string; role: string } | null,
+    ) => {
+      type Body = {
+        message: string;
+        error: { details: Record<string, unknown> };
+      };
+      const json = jest.fn<void, [Body]>();
+      const status = jest.fn().mockReturnValue({ json });
+      filter.catch(exception, createHost(status, user));
+      return json.mock.calls[0][0];
+    };
+
+    it('is always logged with the real message, even though the response is masked', () => {
+      run(new Error('column "foo" does not exist'), null);
+
+      expect(logger.logUnhandledError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Internal server error',
+          cause: 'Error: column "foo" does not exist',
+        }),
+        expect.any(String),
+      );
+    });
+
+    it('is returned to a superadmin', () => {
+      const body = run(new Error('column "foo" does not exist'), {
+        sub: 'u1',
+        role: 'SUPERADMIN',
+      });
+
+      expect(body.message).toBe('Internal server error');
+      expect(body.error.details.cause).toBe(
+        'Error: column "foo" does not exist',
+      );
+    });
+
+    it.each(['ADMIN', 'STAFF', 'STUDENT', 'GUARDIAN'])(
+      'is not returned to a %s',
+      (role) => {
+        const body = run(new Error('secret table name'), { sub: 'u1', role });
+
+        expect(body.error.details).not.toHaveProperty('cause');
+      },
+    );
+
+    it('is not returned to an anonymous caller', () => {
+      expect(run(new Error('x'), null).error.details).not.toHaveProperty(
+        'cause',
+      );
+    });
+
+    it('is collapsed to one line and cut to a safe length', () => {
+      const body = run(new Error(`first\nsecond ${'x'.repeat(2000)}`), {
+        sub: 'u1',
+        role: 'SUPERADMIN',
+      });
+      const cause = body.error.details.cause as string;
+
+      expect(cause.startsWith('Error: first second ')).toBe(true);
+      expect(cause).not.toContain('\n');
+      expect(cause.length).toBeLessThanOrEqual(604);
+    });
+
+    it('is left out for something that is not an Error, and for client errors', () => {
+      const user = { sub: 'u1', role: 'SUPERADMIN' };
+
+      expect(run('plain string', user).error.details).not.toHaveProperty(
+        'cause',
+      );
+      expect(
+        run(new BadRequestException('bad'), user).error.details,
+      ).not.toHaveProperty('cause');
+    });
+  });
+
+  function createHost(
+    statusFn: jest.Mock,
+    user: { sub: string; role: string } | null = null,
+  ): ArgumentsHost {
     return {
       switchToHttp: () => ({
         getResponse: () => ({
@@ -120,7 +201,7 @@ describe('AppExceptionFilter', () => {
           method: 'POST',
           originalUrl: '/api/v1/auth/login',
           ip: '127.0.0.1',
-          user: null,
+          user,
         }),
       }),
     } as ArgumentsHost;
