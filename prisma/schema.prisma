@@ -586,6 +586,9 @@ model CustomFieldDefinition {
   planKeys        Json?                @map("plan_keys")
   isRequired      Boolean              @default(false) @map("is_required")
   isActive        Boolean              @default(true) @map("is_active")
+  // The institution has chosen to show this field's value on the printed
+  // documents of its entity (a voucher, an exam's datesheet and report card).
+  showOnPrint     Boolean              @default(false) @map("show_on_print")
   sortOrder       Int                  @default(0) @map("sort_order")
   createdBy       String?              @map("created_by") @db.Uuid
   updatedBy       String?              @map("updated_by") @db.Uuid

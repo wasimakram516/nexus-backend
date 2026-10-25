@@ -136,6 +136,14 @@ export class CreateCustomFieldDefinitionDto {
   @IsBoolean()
   isActive?: boolean;
 
+  @ApiPropertyOptional({
+    description:
+      "Show this field's value on the entity's printed documents, such as a fee voucher or an exam datesheet.",
+  })
+  @IsOptional()
+  @IsBoolean()
+  showOnPrint?: boolean;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsInt()

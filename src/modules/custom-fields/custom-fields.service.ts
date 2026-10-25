@@ -141,6 +141,7 @@ export class CustomFieldsService {
           planKeys: this.toJsonOrUndefined(dto.planKeys),
           isRequired: dto.isRequired ?? false,
           isActive: dto.isActive ?? true,
+          showOnPrint: dto.showOnPrint ?? false,
           sortOrder: dto.sortOrder ?? 0,
         },
       });
@@ -279,6 +280,7 @@ export class CustomFieldsService {
           planKeys: this.toJsonOrUndefined(dto.planKeys),
           isRequired: dto.isRequired,
           isActive: dto.isActive,
+          showOnPrint: dto.showOnPrint,
           sortOrder: dto.sortOrder,
         },
       });
