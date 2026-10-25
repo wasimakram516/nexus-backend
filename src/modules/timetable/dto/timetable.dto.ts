@@ -3,6 +3,7 @@ import {
   IsEnum,
   IsInt,
   IsNotEmpty,
+  IsDateString,
   IsOptional,
   IsString,
   IsUUID,
@@ -128,4 +129,75 @@ export class SwapPeriodSlotsDto {
 
 export class CampusTimetableQueryDto {
   @ApiProperty() @IsUUID() campusId!: string;
+}
+
+export class CreatePeriodSubstitutionDto {
+  @ApiProperty({ description: 'The period to cover.' })
+  @IsUUID()
+  periodSlotId!: string;
+
+  @ApiProperty({
+    example: '2026-11-02',
+    description:
+      "The date to cover, which must fall on the period's own day of the week.",
+  })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be YYYY-MM-DD.' })
+  date!: string;
+
+  @ApiProperty({ description: 'The teacher covering the period.' })
+  @IsUUID()
+  substituteStaffProfileId!: string;
+
+  @ApiPropertyOptional({
+    description: 'Why cover is needed, such as sick leave.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reason?: string;
+}
+
+export class ListPeriodSubstitutionsQueryDto {
+  @ApiProperty() @IsUUID() campusId!: string;
+
+  @ApiPropertyOptional({ example: '2026-11-01' })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'from must be YYYY-MM-DD.' })
+  from?: string;
+
+  @ApiPropertyOptional({ example: '2026-11-07' })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'to must be YYYY-MM-DD.' })
+  to?: string;
+
+  @ApiPropertyOptional({ description: 'Only cover for one section.' })
+  @IsOptional()
+  @IsUUID()
+  sectionId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Only cover given or taken by one teacher.',
+  })
+  @IsOptional()
+  @IsUUID()
+  staffProfileId?: string;
+}
+
+export class CancelSubstitutionDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reason?: string;
+}
+
+export class WeekQueryDto {
+  @ApiPropertyOptional({
+    example: '2026-11-02',
+    description:
+      'Any date in the week wanted; defaults to the current week. The week runs Monday to Sunday.',
+  })
+  @IsOptional()
+  @IsDateString()
+  date?: string;
 }

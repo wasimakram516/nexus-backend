@@ -228,6 +228,12 @@ export const PERMISSION_CATALOG: readonly PermissionFeatureDef[] = [
     module: ModuleKey.TIMETABLE,
     actions: ALL_ACTIONS,
   },
+  {
+    key: 'period_substitutions',
+    label: 'Period Substitutions',
+    module: ModuleKey.TIMETABLE,
+    actions: ['create', 'read', 'delete'],
+  },
 
   // Exams (M4, see M4-EXAMS-RESULTS-DESIGN.md § 6). Catalog keys name the
   // resource, not the module. Later phases add exams / exam_subjects /
