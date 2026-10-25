@@ -1,3 +1,4 @@
+import { StreamableFile } from '@nestjs/common';
 import { of } from 'rxjs';
 import { ResponseInterceptor } from './response.interceptor';
 
@@ -47,6 +48,28 @@ describe('ResponseInterceptor', () => {
           data: [{ id: 'log-1' }],
           error: null,
         });
+        done();
+      });
+  });
+
+  it('sends a file download as it is, without the JSON envelope', (done) => {
+    const file = new StreamableFile(Buffer.from('%PDF-1.4'));
+
+    interceptor
+      .intercept({} as never, { handle: () => of(file) } as never)
+      .subscribe((value) => {
+        expect(value).toBe(file);
+        done();
+      });
+  });
+
+  it('sends raw bytes as they are too', (done) => {
+    const bytes = Buffer.from([1, 2, 3]);
+
+    interceptor
+      .intercept({} as never, { handle: () => of(bytes) } as never)
+      .subscribe((value) => {
+        expect(value).toBe(bytes);
         done();
       });
   });

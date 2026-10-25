@@ -7,6 +7,10 @@ import {
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { OwnedStudentsService } from '../../common/services/owned-students.service';
+import {
+  PrintableCustomValue,
+  PrintableCustomValuesService,
+} from '../../common/services/printable-custom-values.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import {
   PrintableMeta,
@@ -60,6 +64,8 @@ export interface PrintableFeeVoucher {
     dueDate: Date;
     status: string;
     lines: Array<{ label: string; amount: string }>;
+    /** Custom field values the institution chose to show on the printed voucher. */
+    customValues: PrintableCustomValue[];
     totalFees: string;
     discountAmount: string;
     fineAmount: string;
@@ -97,6 +103,7 @@ export class FeeVoucherPrintablesService {
     private readonly campusAccessService: CampusAccessService,
     private readonly printableMetaService: PrintableMetaService,
     private readonly ownedStudents: OwnedStudentsService,
+    private readonly customValues: PrintableCustomValuesService,
   ) {}
 
   /**
@@ -247,6 +254,26 @@ export class FeeVoucherPrintablesService {
       ]),
     );
 
+    const customByVoucher = new Map<string, PrintableCustomValue[]>();
+    for (const institutionId of new Set(
+      [...institutionByCampus.values()].filter((id): id is string =>
+        Boolean(id),
+      ),
+    )) {
+      const inInstitution = vouchers.filter(
+        (voucher) =>
+          institutionByCampus.get(voucher.student.campusId) === institutionId,
+      );
+      const found = await this.customValues.forRecords(
+        institutionId,
+        'fee_voucher',
+        inInstitution.map((voucher) => voucher.id),
+      );
+      found.forEach((lines, voucherId) =>
+        customByVoucher.set(voucherId, lines),
+      );
+    }
+
     const placements = await loadStudentPlacements(
       this.prisma,
       vouchers.map((voucher) => voucher.studentId),
@@ -278,6 +305,7 @@ export class FeeVoucherPrintablesService {
           dueDate: voucher.dueDate,
           status: voucher.status,
           lines,
+          customValues: customByVoucher.get(voucher.id) ?? [],
           totalFees,
           discountAmount: voucher.discountAmount.toFixed(2),
           fineAmount: voucher.fineAmount.toFixed(2),

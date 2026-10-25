@@ -7,9 +7,12 @@ import {
   Patch,
   Post,
   Query,
+  Res,
+  StreamableFile,
   UseGuards,
   Version,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
 import { DeleteRecordDto } from '../../common/dto/delete-record.dto';
@@ -42,6 +45,7 @@ import {
 } from './dto/finance.dto';
 import { FeeVoucherGenerationService } from './fee-voucher-generation.service';
 import { FamilyPaymentService } from './family-payment.service';
+import { FeeVoucherPdfService } from './fee-voucher-pdf.service';
 import { FeeReportsService } from './fee-reports.service';
 import { FeeVoucherPrintablesService } from './fee-voucher-printables.service';
 import { StudentFineGenerationService } from './student-fine-generation.service';
@@ -59,6 +63,7 @@ export class FinanceController {
     private readonly voucherPrintablesService: FeeVoucherPrintablesService,
     private readonly feeReportsService: FeeReportsService,
     private readonly familyPaymentService: FamilyPaymentService,
+    private readonly voucherPdfService: FeeVoucherPdfService,
   ) {}
 
   @Post('salaries')
@@ -884,6 +889,58 @@ export class FinanceController {
     return this.feeReportsService.getStudentLedger(currentUser, studentId);
   }
 
+  @Get('fee-vouchers/pdf')
+  @Version('1')
+  @RequirePermission('fee_vouchers', 'read')
+  @ApiOperation({
+    summary: "Download a month's fee vouchers as a PDF",
+    description:
+      'One landscape page per voucher with the student, school and bank copies, for a campus, class or section.',
+  })
+  async downloadVouchersPdf(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: PrintFeeVouchersQueryDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return this.sendPdf(
+      response,
+      await this.voucherPdfService.forBatch(currentUser, query),
+    );
+  }
+
+  @Get('fee-vouchers/:voucherId/pdf')
+  @Version('1')
+  @RequirePermission('fee_vouchers', 'read')
+  @ApiOperation({ summary: 'Download one fee voucher as a PDF' })
+  async downloadVoucherPdf(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Param('voucherId') voucherId: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return this.sendPdf(
+      response,
+      await this.voucherPdfService.forVoucher(currentUser, voucherId),
+    );
+  }
+
+  @Get('my-fees/vouchers/:voucherId/pdf')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Download one of my vouchers as a PDF',
+    description:
+      'The voucher of the caller, or of one of their wards, as a PDF.',
+  })
+  async downloadMyVoucherPdf(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Param('voucherId') voucherId: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return this.sendPdf(
+      response,
+      await this.voucherPdfService.forOwnVoucher(currentUser, voucherId),
+    );
+  }
+
   @Get('fee-vouchers/printable')
   @Version('1')
   @RequirePermission('fee_vouchers', 'read')
@@ -1044,5 +1101,17 @@ export class FinanceController {
       paymentId,
       dto.reason,
     );
+  }
+  /** Sends a generated file as a download. */
+  private sendPdf(
+    response: Response,
+    file: { buffer: Buffer; filename: string },
+  ) {
+    response.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${file.filename}"`,
+      'Cache-Control': 'no-store',
+    });
+    return new StreamableFile(file.buffer);
   }
 }

@@ -9,6 +9,8 @@ import { UserPermissionsService } from '../common/services/user-permissions.serv
 import { WorkingDayResolverService } from '../common/services/working-day-resolver.service';
 import { PrintableMetaService } from '../common/services/printable-meta.service';
 import { OwnedStudentsService } from '../common/services/owned-students.service';
+import { PrintableCustomValuesService } from '../common/services/printable-custom-values.service';
+import { PdfService } from '../common/pdf/pdf.service';
 import { PrismaService } from './prisma.service';
 
 @Global()
@@ -25,6 +27,8 @@ import { PrismaService } from './prisma.service';
     WorkingDayResolverService,
     PrintableMetaService,
     OwnedStudentsService,
+    PrintableCustomValuesService,
+    PdfService,
   ],
   exports: [
     PrismaService,
@@ -38,6 +42,8 @@ import { PrismaService } from './prisma.service';
     WorkingDayResolverService,
     PrintableMetaService,
     OwnedStudentsService,
+    PrintableCustomValuesService,
+    PdfService,
   ],
 })
 export class PrismaModule {}

@@ -4,6 +4,7 @@ import { CurrentUser } from '../src/common/interfaces/current-user.interface';
 import { ModuleAccessService } from '../src/common/services/module-access.service';
 import { RequestContextService } from '../src/common/services/request-context.service';
 import { OwnedStudentsService } from '../src/common/services/owned-students.service';
+import { PrintableCustomValuesService } from '../src/common/services/printable-custom-values.service';
 import { PrintableMetaService } from '../src/common/services/printable-meta.service';
 import { FeeReportsService } from '../src/modules/finance/fee-reports.service';
 import { FeeVoucherPrintablesService } from '../src/modules/finance/fee-voucher-printables.service';
@@ -124,6 +125,7 @@ describe('PostgreSQL fee ledger and defaulters', () => {
       new CampusAccessService(prisma),
       new PrintableMetaService(prisma),
       owned,
+      new PrintableCustomValuesService(prisma),
     );
 
     institutionId = (
@@ -340,6 +342,57 @@ describe('PostgreSQL fee ledger and defaulters', () => {
     await expect(
       printables.getPrintableForSelf(guardianUser, outsiderVoucherId),
     ).rejects.toThrow('You can only print your own vouchers.');
+  });
+
+  it('prints only the custom values the institution flagged for printing', async () => {
+    const shown = await prisma.customFieldDefinition.create({
+      data: {
+        institutionId,
+        moduleKey: 'FINANCE',
+        entityType: 'fee_voucher',
+        fieldKey: 'reference',
+        label: 'Reference',
+        inputType: 'TEXT',
+        showOnPrint: true,
+        sortOrder: 1,
+      },
+    });
+    const hidden = await prisma.customFieldDefinition.create({
+      data: {
+        institutionId,
+        moduleKey: 'FINANCE',
+        entityType: 'fee_voucher',
+        fieldKey: 'internal_note',
+        label: 'Internal note',
+        inputType: 'TEXT',
+        sortOrder: 2,
+      },
+    });
+    await prisma.customFieldValue.createMany({
+      data: [
+        {
+          institutionId,
+          definitionId: shown.id,
+          entityId: ayeshaSeptemberId,
+          value: 'INV-9',
+        },
+        {
+          institutionId,
+          definitionId: hidden.id,
+          entityId: ayeshaSeptemberId,
+          value: 'do not print',
+        },
+      ],
+    });
+
+    const { data } = await printables.getPrintableForSelf(
+      guardianUser,
+      ayeshaSeptemberId,
+    );
+
+    expect(data.voucher.customValues).toEqual([
+      { label: 'Reference', value: 'INV-9' },
+    ]);
   });
 
   it('drops a student from the list once they pay in full', async () => {

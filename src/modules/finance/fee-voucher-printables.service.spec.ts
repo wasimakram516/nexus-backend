@@ -8,6 +8,7 @@ import { Test } from '@nestjs/testing';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { OwnedStudentsService } from '../../common/services/owned-students.service';
+import { PrintableCustomValuesService } from '../../common/services/printable-custom-values.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { PrintableMetaService } from '../../common/services/printable-meta.service';
 import { attachFeeVoucherBalances } from '../../common/utils/fee-settlement.util';
@@ -46,6 +47,7 @@ describe('FeeVoucherPrintablesService', () => {
   const campusAccessMock = { assertCampusAccess: jest.fn() };
   const metaMock = { build: jest.fn() };
   const ownedMock = { resolveOwnedStudentIds: jest.fn() };
+  const customValuesMock = { forRecords: jest.fn() };
   const balances = attachFeeVoucherBalances as jest.Mock;
 
   const row = (id: string, name: string, regNo: string) => ({
@@ -81,6 +83,10 @@ describe('FeeVoucherPrintablesService', () => {
     moduleAccessMock.assertModuleEnabledForUser.mockResolvedValue(undefined);
     campusAccessMock.assertCampusAccess.mockResolvedValue(undefined);
     metaMock.build.mockResolvedValue({ documentType: 'FEE_VOUCHER' });
+    customValuesMock.forRecords.mockImplementation(
+      (_institutionId: string, _type: string, ids: string[]) =>
+        Promise.resolve(new Map(ids.map((id) => [id, []]))),
+    );
     balances.mockImplementation((_client: unknown, rows: unknown[]) =>
       Promise.resolve(
         rows.map((voucher) => ({
@@ -110,6 +116,7 @@ describe('FeeVoucherPrintablesService', () => {
         { provide: CampusAccessService, useValue: campusAccessMock },
         { provide: PrintableMetaService, useValue: metaMock },
         { provide: OwnedStudentsService, useValue: ownedMock },
+        { provide: PrintableCustomValuesService, useValue: customValuesMock },
       ],
     }).compile();
     service = module.get(FeeVoucherPrintablesService);
@@ -186,6 +193,26 @@ describe('FeeVoucherPrintablesService', () => {
         voucherInstructions: ['Pay at the bank.', 'Keep the receipt.'],
         voucherContact: 'info@school.test',
       });
+    });
+
+    it('prints the custom values the institution chose to show, per voucher', async () => {
+      prismaMock.feeVoucher.findUnique.mockResolvedValue(
+        row('v1', 'Ayesha', 'R-1'),
+      );
+      customValuesMock.forRecords.mockResolvedValue(
+        new Map([['v1', [{ label: 'Reference', value: 'INV-9' }]]]),
+      );
+
+      const { data } = await service.getPrintable(admin, 'v1');
+
+      expect(customValuesMock.forRecords).toHaveBeenCalledWith(
+        'inst-1',
+        'fee_voucher',
+        ['v1'],
+      );
+      expect(data.voucher.customValues).toEqual([
+        { label: 'Reference', value: 'INV-9' },
+      ]);
     });
 
     it('prints a voucher with no bank and a student with no placement', async () => {
