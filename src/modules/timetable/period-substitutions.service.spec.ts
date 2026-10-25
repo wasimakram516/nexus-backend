@@ -204,7 +204,7 @@ describe('PeriodSubstitutionsService', () => {
       ]);
 
       await expect(service.create(admin, dto)).rejects.toThrow(
-        'This teacher is teaching Grade 6, section B, 08:20 to 09:00 then.',
+        'This teacher is teaching Grade 6, section B, 8:20 AM to 9:00 AM then.',
       );
     });
 
@@ -244,7 +244,7 @@ describe('PeriodSubstitutionsService', () => {
       ]);
 
       await expect(service.create(admin, dto)).rejects.toThrow(
-        'This teacher is already covering Grade 4, section D, 07:50 to 08:20 then.',
+        'This teacher is already covering Grade 4, section D, 7:50 AM to 8:20 AM then.',
       );
     });
 

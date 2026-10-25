@@ -1,11 +1,7 @@
-import {
-  drawRow,
-  drawTextBlock,
-  formatPdfDate,
-  PDF_COLORS,
-} from '../../common/pdf/pdf-draw';
+import { drawRow, drawTextBlock, PDF_COLORS } from '../../common/pdf/pdf-draw';
 import { PDF_FONTS, PdfDocument } from '../../common/pdf/pdf.service';
 import { amountInWords } from '../../common/utils/amount-in-words.util';
+import { formatDate } from '../../common/utils/date-format.util';
 import type { PrintableFeeVoucher } from './fee-voucher-printables.service';
 
 export const VOUCHER_COPIES = ['Student Copy', 'School Copy', 'Bank Copy'];
@@ -82,8 +78,8 @@ export function drawVoucherPage(
     // Invoice details.
     const details: Array<[string, string]> = [
       ['Invoice #', voucher.voucherNumber],
-      ['Invoice Date', formatPdfDate(voucher.issueDate)],
-      ['Due Date', formatPdfDate(voucher.dueDate)],
+      ['Invoice Date', formatDate(voucher.issueDate, printMeta.timezone)],
+      ['Due Date', formatDate(voucher.dueDate, printMeta.timezone)],
     ];
     const detailsHeight = details.length * 14 + 6;
     doc.rect(x, y, columnWidth, detailsHeight).stroke();

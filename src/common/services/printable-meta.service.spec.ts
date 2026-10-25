@@ -99,6 +99,35 @@ describe('PrintableMetaService', () => {
     expect(meta.institution.name).toBe('Greenfield Education Trust');
   });
 
+  it("carries the campus's own timezone when it has one, else the institution's", async () => {
+    prismaMock.institution.findUnique.mockResolvedValue({
+      id: 'inst-1',
+      name: 'Greenfield',
+      timezone: 'Asia/Karachi',
+      branding: null,
+    });
+    prismaMock.campus.findUnique.mockResolvedValue({
+      id: 'campus-1',
+      name: 'Dubai',
+      institutionId: 'inst-1',
+      timezone: 'Asia/Dubai',
+    });
+    const own = await service.build('TIMETABLE', 'inst-1', 'campus-1');
+
+    prismaMock.campus.findUnique.mockResolvedValue({
+      id: 'campus-2',
+      name: 'Lahore',
+      institutionId: 'inst-1',
+      timezone: null,
+    });
+    const inherited = await service.build('TIMETABLE', 'inst-1', 'campus-2');
+    const noCampus = await service.build('TIMETABLE', 'inst-1');
+
+    expect(own.timezone).toBe('Asia/Dubai');
+    expect(inherited.timezone).toBe('Asia/Karachi');
+    expect(noCampus.timezone).toBe('Asia/Karachi');
+  });
+
   it('404s for an unknown institution', async () => {
     prismaMock.institution.findUnique.mockResolvedValue(null);
 

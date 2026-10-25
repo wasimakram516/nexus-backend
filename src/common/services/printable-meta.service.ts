@@ -5,6 +5,8 @@ export interface PrintableMeta {
   /** e.g. 'DATESHEET' | 'ADMIT_CARD' | 'REPORT_CARD' | 'FEE_VOUCHER'. */
   documentType: string;
   generatedAt: string;
+  /** The school's IANA timezone (the campus's when it has its own), for writing times. */
+  timezone: string;
   institution: {
     id: string;
     name: string;
@@ -53,6 +55,7 @@ export class PrintableMetaService {
       select: {
         id: true,
         name: true,
+        timezone: true,
         branding: {
           select: {
             displayName: true,
@@ -75,21 +78,29 @@ export class PrintableMetaService {
     }
 
     let campus: PrintableMeta['campus'] = null;
+    let campusTimezone: string | null = null;
     if (campusId) {
       const row = await this.prisma.campus.findUnique({
         where: { id: campusId },
-        select: { id: true, name: true, institutionId: true },
+        select: {
+          id: true,
+          name: true,
+          institutionId: true,
+          timezone: true,
+        },
       });
       if (!row || row.institutionId !== institutionId) {
         throw new NotFoundException('Campus not found.');
       }
       campus = { id: row.id, name: row.name };
+      campusTimezone = row.timezone;
     }
 
     const branding = institution.branding;
     return {
       documentType,
       generatedAt: new Date().toISOString(),
+      timezone: campusTimezone ?? institution.timezone,
       institution: {
         id: institution.id,
         name: branding?.displayName || institution.name,

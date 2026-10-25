@@ -26,6 +26,7 @@ import {
   findClashes,
   normalizeRoom,
 } from './timetable-clash.util';
+import { formatClockTime } from '../../common/utils/date-format.util';
 
 /** Section's resolved scheduling scope (§ 4 of
  *  M3-SCHEDULING-COMMUNICATION-DESIGN.md: section -> class -> level ->
@@ -709,7 +710,7 @@ export class TimetableService {
     for (const other of others) {
       const kinds = clashKindsBetween(incoming, other);
       if (kinds.length === 0) continue;
-      const where = `${other.class.name}, section ${other.section.name}, ${other.startTime} to ${other.endTime}`;
+      const where = `${other.class.name}, section ${other.section.name}, ${formatClockTime(other.startTime)} to ${formatClockTime(other.endTime)}`;
       throw new ConflictException(
         kinds.includes('TEACHER')
           ? `This teacher is already teaching ${where} at that time.`

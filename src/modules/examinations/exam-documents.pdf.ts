@@ -1,10 +1,10 @@
-import {
-  drawRow,
-  formatPdfDate,
-  PDF_COLORS,
-  PdfCell,
-} from '../../common/pdf/pdf-draw';
+import { drawRow, PDF_COLORS, PdfCell } from '../../common/pdf/pdf-draw';
 import { PDF_FONTS, PdfDocument } from '../../common/pdf/pdf.service';
+import {
+  formatClockRange,
+  formatClockTime,
+  formatDate,
+} from '../../common/utils/date-format.util';
 import type { PrintableMeta } from '../../common/services/printable-meta.service';
 import type { PrintableCustomValue } from '../../common/services/printable-custom-values.service';
 import type { ExamReportCardsService } from './exam-report-cards.service';
@@ -162,14 +162,14 @@ function drawCustomValues(
 }
 
 function timeRange(start: string | null, end: string | null): string {
-  if (start && end) return `${start} - ${end}`;
-  return start ?? '-';
+  if (start && end) return formatClockRange(start, end);
+  return start ? formatClockTime(start) : '-';
 }
 
 function paperRows(papers: Datesheet['papers']): PdfCell[][] {
   return papers.map((paper) => [
     {
-      text: paper.examDate ? formatPdfDate(paper.examDate) : 'To be announced',
+      text: paper.examDate ? formatDate(paper.examDate) : 'To be announced',
       width: 0.22,
     },
     { text: paper.subjectName, width: 0.32, bold: true },

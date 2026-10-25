@@ -52,6 +52,7 @@ describe('ModuleAccessService', () => {
         theme: 'default',
         colorOverrides: { light: { 'primary.dark': '#0A2540' } },
       },
+      timezone: 'Asia/Dubai',
       settings: [
         { key: 'brandingMode', value: { compact: true } },
         { key: 'workflows', value: { admissions: true } },
@@ -80,6 +81,7 @@ describe('ModuleAccessService', () => {
 
     const config = await service.getInstitutionRuntimeConfig('institution-1');
 
+    expect(config.timezone).toBe('Asia/Dubai');
     expect(config.modules[ModuleKey.PEOPLE]).toEqual({
       enabled: true,
       configuration: {},

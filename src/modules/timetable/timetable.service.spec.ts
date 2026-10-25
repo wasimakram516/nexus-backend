@@ -635,7 +635,7 @@ describe('TimetableService', () => {
           staffProfileId: 'teacher-1',
         }),
       ).rejects.toThrow(
-        'This teacher is already teaching Grade 6, section B, 08:20 to 09:00 at that time.',
+        'This teacher is already teaching Grade 6, section B, 8:20 AM to 9:00 AM at that time.',
       );
       expect(prismaMock.periodSlot.create).not.toHaveBeenCalled();
     });
@@ -648,7 +648,7 @@ describe('TimetableService', () => {
       await expect(
         service.createPeriodSlot(adminUser, { ...baseDto, room: ' Lab 1 ' }),
       ).rejects.toThrow(
-        'LAB 1 is already used by Grade 6, section B, 08:20 to 09:00 at that time.',
+        'LAB 1 is already used by Grade 6, section B, 8:20 AM to 9:00 AM at that time.',
       );
     });
 

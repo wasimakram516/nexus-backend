@@ -10,6 +10,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 type RuntimeConfigRecord = {
   institutionId: string;
+  /** The school's IANA timezone, so screens write times the way PDFs do. */
+  timezone: string;
   branding: Record<string, unknown> | null;
   settings: Record<string, unknown>;
   modules: Record<
@@ -167,6 +169,7 @@ export class ModuleAccessService {
 
     return {
       institutionId: institution.id,
+      timezone: institution.timezone,
       branding: institution.branding
         ? {
             displayName: institution.branding.displayName,

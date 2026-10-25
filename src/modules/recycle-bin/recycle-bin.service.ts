@@ -15,6 +15,7 @@ import {
   ListRecycleBinQueryDto,
   RecycleBinEntity,
 } from './dto/recycle-bin.dto';
+import { formatDate } from '../../common/utils/date-format.util';
 
 type RecycleBinItem = {
   entity: RecycleBinEntity;
@@ -4697,7 +4698,7 @@ export class RecycleBinService {
     const eligibleAt = this.resolvePurgeEligibleAt(deletedAt, retentionDays);
     if (new Date() < eligibleAt) {
       throw new ForbiddenException(
-        `This record cannot be permanently deleted until ${eligibleAt.toISOString().slice(0, 10)} (${retentionDays}-day retention period since deletion).`,
+        `This record cannot be permanently deleted until ${formatDate(eligibleAt)} (${retentionDays}-day retention period since deletion).`,
       );
     }
   }

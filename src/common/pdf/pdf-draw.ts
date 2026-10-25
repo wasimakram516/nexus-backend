@@ -18,26 +18,6 @@ export interface PdfCell {
   align?: 'left' | 'right' | 'center';
 }
 
-/** A month and year as `Sep 2026`-style text without depending on the server's locale. */
-export function formatPdfDate(value: Date | string): string {
-  const date = new Date(value);
-  const months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-  return `${String(date.getUTCDate()).padStart(2, '0')}-${months[date.getUTCMonth()]}-${date.getUTCFullYear()}`;
-}
-
 /**
  * One bordered row of cells at a fixed width, as tall as its tallest cell.
  *

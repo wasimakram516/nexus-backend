@@ -16,6 +16,7 @@ import {
   ListPeriodSubstitutionsQueryDto,
 } from './dto/timetable.dto';
 import { timesOverlap } from './timetable-clash.util';
+import { formatClockTime } from '../../common/utils/date-format.util';
 
 const WEEKDAYS: DayOfWeek[] = [
   DayOfWeek.SUNDAY,
@@ -283,7 +284,7 @@ export class PeriodSubstitutionsService {
         )
       ) {
         throw new ConflictException(
-          `This teacher is teaching ${slot.class.name}, section ${slot.section.name}, ${slot.startTime} to ${slot.endTime} then.`,
+          `This teacher is teaching ${slot.class.name}, section ${slot.section.name}, ${formatClockTime(slot.startTime)} to ${formatClockTime(slot.endTime)} then.`,
         );
       }
     }
@@ -307,7 +308,7 @@ export class PeriodSubstitutionsService {
         )
       ) {
         throw new ConflictException(
-          `This teacher is already covering ${cover.periodSlot.class.name}, section ${cover.periodSlot.section.name}, ${cover.periodSlot.startTime} to ${cover.periodSlot.endTime} then.`,
+          `This teacher is already covering ${cover.periodSlot.class.name}, section ${cover.periodSlot.section.name}, ${formatClockTime(cover.periodSlot.startTime)} to ${formatClockTime(cover.periodSlot.endTime)} then.`,
         );
       }
     }

@@ -585,7 +585,7 @@ describe('PostgreSQL timetable cover and weekly views', () => {
 
   it('refuses cover for a teacher who is teaching then, and a date that is the wrong weekday', async () => {
     await expect(cover()).rejects.toThrow(
-      /is teaching Grade 5, section B, 08:20 to 09:00 then/,
+      /is teaching Grade 5, section B, 8:20 AM to 9:00 AM then/,
     );
     await expect(cover({ date: '2026-11-03' })).rejects.toThrow(
       /must be on a monday/,

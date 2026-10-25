@@ -1,10 +1,10 @@
-import {
-  drawRow,
-  formatPdfDate,
-  PDF_COLORS,
-  PdfCell,
-} from '../../common/pdf/pdf-draw';
+import { drawRow, PDF_COLORS, PdfCell } from '../../common/pdf/pdf-draw';
 import { PDF_FONTS, PdfDocument } from '../../common/pdf/pdf.service';
+import {
+  formatClockRange,
+  formatDate,
+  formatDateTime,
+} from '../../common/utils/date-format.util';
 import type { PrintableMeta } from '../../common/services/printable-meta.service';
 import { DayOfWeek } from '../../prisma/client';
 import { buildGrid, cellLines } from './timetable-grid.util';
@@ -96,7 +96,7 @@ export function drawTimetables(
       .text(
         [
           group.subtitle,
-          `Week of ${formatPdfDate(week.from)} to ${formatPdfDate(week.to)}`,
+          `Week of ${formatDate(week.from)} to ${formatDate(week.to)}`,
         ]
           .filter(Boolean)
           .join(' · '),
@@ -113,7 +113,7 @@ export function drawTimetables(
       { text: 'Period', width: 0.12, bold: true },
       ...grid.days.map((day) => ({
         text: grid.dates.has(day)
-          ? `${DAY_LABELS[day]}\n${formatPdfDate(grid.dates.get(day) as string)}`
+          ? `${DAY_LABELS[day]}\n${formatDate(grid.dates.get(day) as string)}`
           : DAY_LABELS[day],
         width: dayWidth,
         bold: true,
@@ -137,7 +137,7 @@ export function drawTimetables(
     for (const row of grid.rows) {
       const cells: PdfCell[] = [
         {
-          text: `${row.label}\n${row.startTime} - ${row.endTime}`,
+          text: `${row.label}\n${formatClockRange(row.startTime, row.endTime)}`,
           width: 0.12,
           bold: true,
         },
@@ -164,7 +164,7 @@ export function drawTimetables(
       .fontSize(7)
       .fillColor(PDF_COLORS.muted)
       .text(
-        `Printed ${formatPdfDate(new Date())}. A period marked cover is taken by a substitute on that date only.`,
+        `Printed ${formatDateTime(new Date(), meta.timezone)}. A period marked cover is taken by a substitute on that date only.`,
         MARGIN,
         Math.min(y + 8, doc.page.height - MARGIN - 8),
         { width },
