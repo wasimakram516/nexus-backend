@@ -13,6 +13,8 @@ export interface FinanceSettings {
   voucherInstructions: string[];
   /** The footer line of a printed voucher, such as queries email and phone. */
   voucherContact: string;
+  /** Calculate last month's attendance fines by themselves on the 1st. Off unless a school turns it on. */
+  autoCalculateFines: boolean;
 }
 
 const asObject = (value: unknown): Record<string, unknown> | null =>
@@ -46,6 +48,7 @@ export function readFinanceSettings(value: unknown): FinanceSettings {
       .filter(Boolean),
     voucherContact:
       typeof raw.voucherContact === 'string' ? raw.voucherContact.trim() : '',
+    autoCalculateFines: raw.autoCalculateFines === true,
   };
 }
 
@@ -66,6 +69,13 @@ export function validateFinanceSettingInput(value: unknown): string | null {
     (typeof day !== 'number' || !Number.isInteger(day) || day < 1 || day > 28)
   ) {
     return 'dueDayOfMonth must be a whole number from 1 to 28.';
+  }
+  if (
+    raw.autoCalculateFines !== undefined &&
+    raw.autoCalculateFines !== null &&
+    typeof raw.autoCalculateFines !== 'boolean'
+  ) {
+    return 'autoCalculateFines must be true or false.';
   }
   const text: Array<[string, number]> = [
     ['currencyLabel', MAX_CURRENCY_LENGTH],

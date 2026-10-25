@@ -7,11 +7,13 @@ import {
   VoucherStatus,
 } from '../../prisma/client';
 import { AuditLogService } from '../../common/services/audit-log.service';
+import { readFinanceSettings } from '../../common/utils/finance-settings.util';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
 import { WorkingDayResolverService } from '../../common/services/working-day-resolver.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AttendanceService } from '../attendance/attendance.service';
+import { StudentFineGenerationService } from '../finance/student-fine-generation.service';
 
 /** P0-9 (§ 7.1's batching note): chunk size for the transactional
  *  re-check-then-update sweeps, keeping each transaction's duration and
@@ -29,6 +31,23 @@ function chunk<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+/**
+ * The month before a local date, as a month number and year.
+ *
+ * @param {string} today - A local date, `YYYY-MM-DD`.
+ * @returns {{month: number, year: number}} The previous month, rolling back over January.
+ */
+export function previousMonthOf(today: string): {
+  month: number;
+  year: number;
+} {
+  const month = Number(today.slice(5, 7));
+  const year = Number(today.slice(0, 4));
+  return month === 1
+    ? { month: 12, year: year - 1 }
+    : { month: month - 1, year };
+}
+
 @Injectable()
 export class SchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
@@ -40,6 +59,7 @@ export class SchedulerService {
     private readonly auditLogService: AuditLogService,
     private readonly timezoneResolver: TimezoneResolverService,
     private readonly workingDayResolver: WorkingDayResolverService,
+    private readonly fineGenerationService: StudentFineGenerationService,
   ) {}
 
   /**
@@ -432,6 +452,98 @@ export class SchedulerService {
     this.logger.log(
       `Subscription-lifecycle job suspended ${totalSuspended} expired trial(s).`,
     );
+  }
+
+  /**
+   * On the 1st of each month, calculates the attendance fines of the month
+   * that just ended for every campus of an institution that has finance
+   * enabled and has switched automatic fines on (off unless a school turns it
+   * on, since fines change what families are charged). It is the same
+   * calculation as the front desk's "Calculate fines" action, so it never
+   * touches a fine entered by hand, a paid fine, or a month whose voucher is
+   * already issued, and running it again changes nothing that is up to date.
+   *
+   * "Last month" is read in each campus's own timezone. One campus's failure
+   * is recorded and never stops the rest.
+   */
+  @Cron('0 3 1 * *')
+  async runMonthlyFinesJob() {
+    const campuses = await this.prisma.campus.findMany({
+      where: { deletedAt: null, institutionId: { not: null } },
+      select: { id: true, institutionId: true },
+    });
+    const byInstitution = new Map<string, string[]>();
+    for (const campus of campuses) {
+      if (!campus.institutionId) continue;
+      byInstitution.set(campus.institutionId, [
+        ...(byInstitution.get(campus.institutionId) ?? []),
+        campus.id,
+      ]);
+    }
+
+    let calculated = 0;
+    let failed = 0;
+    for (const [institutionId, campusIds] of byInstitution) {
+      try {
+        if (!(await this.isModuleEligible(institutionId, ModuleKey.FINANCE))) {
+          continue;
+        }
+        const setting = await this.prisma.institutionSetting.findUnique({
+          where: {
+            institutionId_key_activeScopeKey: {
+              institutionId,
+              key: 'finance',
+              activeScopeKey: 'ACTIVE',
+            },
+          },
+          select: { value: true },
+        });
+        if (!readFinanceSettings(setting?.value).autoCalculateFines) continue;
+      } catch (error) {
+        failed += 1;
+        await this.recordFineFailure(institutionId, null, error);
+        continue;
+      }
+
+      for (const campusId of campusIds) {
+        try {
+          const timezone =
+            await this.timezoneResolver.resolveForCampus(campusId);
+          const today = this.timezoneResolver.localDateString(
+            timezone,
+            new Date(),
+          );
+          const { month, year } = previousMonthOf(today);
+          await this.fineGenerationService.generateAutomatically({
+            campusId,
+            month,
+            year,
+          });
+          calculated += 1;
+        } catch (error) {
+          failed += 1;
+          await this.recordFineFailure(institutionId, campusId, error);
+        }
+      }
+    }
+    this.logger.log(
+      `Monthly fines job calculated ${calculated} campus(es); ${failed} failed.`,
+    );
+  }
+
+  private async recordFineFailure(
+    institutionId: string,
+    campusId: string | null,
+    error: unknown,
+  ) {
+    const message = error instanceof Error ? error.message : String(error);
+    this.logger.error(`Monthly fines failed for ${institutionId}: ${message}`);
+    await this.logSafely({
+      action: 'STUDENT_FINES_AUTO_FAILED',
+      entity: 'StudentFine',
+      institutionId,
+      metadata: { campusId, error: message },
+    });
   }
 
   /** Audit persistence (success or failure) must never starve subsequent institutions or chunks. */

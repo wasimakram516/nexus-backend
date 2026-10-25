@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment -- jest asymmetric matchers are typed any */
 import { Test } from '@nestjs/testing';
 import { Prisma, SubscriptionStatus, VoucherStatus } from '../../prisma/client';
 import { AuditLogService } from '../../common/services/audit-log.service';
@@ -6,7 +7,8 @@ import { TimezoneResolverService } from '../../common/services/timezone-resolver
 import { WorkingDayResolverService } from '../../common/services/working-day-resolver.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AttendanceService } from '../attendance/attendance.service';
-import { SchedulerService } from './scheduler.service';
+import { StudentFineGenerationService } from '../finance/student-fine-generation.service';
+import { previousMonthOf, SchedulerService } from './scheduler.service';
 
 describe('SchedulerService', () => {
   let service: SchedulerService;
@@ -16,8 +18,11 @@ describe('SchedulerService', () => {
     periodSlot: { findMany: jest.fn() },
     feeVoucher: { findMany: jest.fn(), updateMany: jest.fn() },
     institutionSubscription: { findMany: jest.fn(), updateMany: jest.fn() },
+    institutionSetting: { findUnique: jest.fn() },
     $transaction: jest.fn(),
   };
+
+  const fineGenerationMock = { generateAutomatically: jest.fn() };
 
   const attendanceServiceMock = {
     markCampusAbsentees: jest.fn(),
@@ -98,6 +103,7 @@ describe('SchedulerService', () => {
           provide: WorkingDayResolverService,
           useValue: workingDayResolverMock,
         },
+        { provide: StudentFineGenerationService, useValue: fineGenerationMock },
       ],
     }).compile();
 
@@ -360,7 +366,6 @@ describe('SchedulerService', () => {
         expect.objectContaining({
           action: 'ATTENDANCE_AUTO_ABSENT_PERIOD',
           institutionId: 'institution-1',
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() is intentionally typed `any` by @types/jest
           metadata: expect.objectContaining({ periodSlotId: 'period-1' }),
         }),
       );
@@ -714,6 +719,143 @@ describe('SchedulerService', () => {
 
       expect(txSubscription.updateMany).not.toHaveBeenCalled();
       expect(auditLogServiceMock.log).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('previousMonthOf', () => {
+    it.each([
+      ['2026-11-01', { month: 10, year: 2026 }],
+      ['2026-02-01', { month: 1, year: 2026 }],
+      ['2026-01-01', { month: 12, year: 2025 }],
+    ])('the month before %s', (today, expected) => {
+      expect(previousMonthOf(today)).toEqual(expected);
+    });
+  });
+
+  describe('runMonthlyFinesJob', () => {
+    const financeConfig = {
+      subscription: { status: SubscriptionStatus.ACTIVE, endsAt: null },
+      modules: { FINANCE: { enabled: true } },
+    };
+
+    beforeEach(() => {
+      prismaMock.campus.findMany.mockResolvedValue([
+        { id: 'campus-1', institutionId: 'inst-1' },
+        { id: 'campus-2', institutionId: 'inst-1' },
+        { id: 'campus-3', institutionId: 'inst-2' },
+      ]);
+      moduleAccessServiceMock.getInstitutionRuntimeConfig.mockResolvedValue(
+        financeConfig,
+      );
+      prismaMock.institutionSetting.findUnique.mockResolvedValue({
+        value: { autoCalculateFines: true },
+      });
+      timezoneResolverMock.localDateString.mockReturnValue('2026-11-01');
+      fineGenerationMock.generateAutomatically.mockResolvedValue({ data: {} });
+    });
+
+    it("calculates last month's fines for every campus of an institution that switched it on", async () => {
+      await service.runMonthlyFinesJob();
+
+      expect(fineGenerationMock.generateAutomatically).toHaveBeenCalledTimes(3);
+      expect(fineGenerationMock.generateAutomatically).toHaveBeenCalledWith({
+        campusId: 'campus-1',
+        month: 10,
+        year: 2026,
+      });
+      expect(fineGenerationMock.generateAutomatically).toHaveBeenCalledWith({
+        campusId: 'campus-3',
+        month: 10,
+        year: 2026,
+      });
+    });
+
+    it('rolls back over the new year using the campus local date', async () => {
+      timezoneResolverMock.localDateString.mockReturnValue('2027-01-01');
+
+      await service.runMonthlyFinesJob();
+
+      expect(fineGenerationMock.generateAutomatically).toHaveBeenCalledWith(
+        expect.objectContaining({ month: 12, year: 2026 }),
+      );
+    });
+
+    it.each([
+      ['has not switched it on', { value: { autoCalculateFines: false } }],
+      ['has no finance setting at all', null],
+      ['has an unusable setting', { value: 'nonsense' }],
+    ])('does nothing for an institution that %s', async (_name, setting) => {
+      prismaMock.institutionSetting.findUnique.mockResolvedValue(setting);
+
+      await service.runMonthlyFinesJob();
+
+      expect(fineGenerationMock.generateAutomatically).not.toHaveBeenCalled();
+    });
+
+    it('skips an institution whose finance module is off or whose subscription is suspended', async () => {
+      moduleAccessServiceMock.getInstitutionRuntimeConfig
+        .mockResolvedValueOnce({
+          subscription: { status: SubscriptionStatus.ACTIVE, endsAt: null },
+          modules: { FINANCE: { enabled: false } },
+        })
+        .mockResolvedValueOnce({
+          subscription: { status: SubscriptionStatus.SUSPENDED, endsAt: null },
+          modules: { FINANCE: { enabled: true } },
+        });
+
+      await service.runMonthlyFinesJob();
+
+      expect(fineGenerationMock.generateAutomatically).not.toHaveBeenCalled();
+      expect(prismaMock.institutionSetting.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('records a failed campus and carries on with the rest', async () => {
+      fineGenerationMock.generateAutomatically
+        .mockRejectedValueOnce(
+          new Error('Set the current academic year before calculating fines.'),
+        )
+        .mockResolvedValue({ data: {} });
+
+      await service.runMonthlyFinesJob();
+
+      expect(fineGenerationMock.generateAutomatically).toHaveBeenCalledTimes(3);
+      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
+        null,
+        expect.objectContaining({
+          action: 'STUDENT_FINES_AUTO_FAILED',
+          institutionId: 'inst-1',
+          metadata: expect.objectContaining({ campusId: 'campus-1' }),
+        }),
+      );
+    });
+
+    it('records a failed institution check and still reaches the next institution', async () => {
+      moduleAccessServiceMock.getInstitutionRuntimeConfig
+        .mockRejectedValueOnce(new Error('Configuration unavailable'))
+        .mockResolvedValue(financeConfig);
+
+      await service.runMonthlyFinesJob();
+
+      expect(fineGenerationMock.generateAutomatically).toHaveBeenCalledTimes(1);
+      expect(fineGenerationMock.generateAutomatically).toHaveBeenCalledWith(
+        expect.objectContaining({ campusId: 'campus-3' }),
+      );
+      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
+        null,
+        expect.objectContaining({
+          action: 'STUDENT_FINES_AUTO_FAILED',
+          institutionId: 'inst-1',
+        }),
+      );
+    });
+
+    it('still finishes when even the failure audit cannot be written', async () => {
+      fineGenerationMock.generateAutomatically.mockRejectedValue(
+        new Error('boom'),
+      );
+      auditLogServiceMock.log.mockRejectedValue(new Error('audit down'));
+
+      await expect(service.runMonthlyFinesJob()).resolves.toBeUndefined();
     });
   });
 });

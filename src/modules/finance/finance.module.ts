@@ -19,5 +19,7 @@ import { FinanceService } from './finance.service';
     FamilyPaymentService,
     FeeVoucherPdfService,
   ],
+  // The scheduler runs the monthly fines through the same service the front desk uses.
+  exports: [StudentFineGenerationService],
 })
 export class FinanceModule {}

@@ -346,6 +346,31 @@ describe('PostgreSQL attendance fine generation', () => {
     expect(data.totals.fined).toBe(0);
   });
 
+  it('lets the scheduler calculate a month with no user, and records it as automatic', async () => {
+    await mark(ayeshaUserId, 3, 'ABSENT', { month: 12 });
+    await mark(ayeshaUserId, 4, 'ABSENT', { month: 12 });
+    await mark(ayeshaUserId, 5, 'ABSENT', { month: 12 });
+
+    const { data } = await service.generateAutomatically({
+      campusId,
+      month: 12,
+      year: 2026,
+    });
+
+    expect(data.totals.fined).toBe(1);
+    const fine = await fineOf(ayeshaId, 12);
+    expect(Number(fine?.totalFineAmount)).toBe(100);
+    expect(fine?.createdBy).toBeNull();
+    const audit = await prisma.auditLog.findFirst({
+      where: {
+        institutionId,
+        action: 'STUDENT_FINES_GENERATED',
+        metadata: { path: ['automatic'], equals: true },
+      },
+    });
+    expect(audit?.userId).toBeNull();
+  });
+
   it('records one summary audit entry per real run', async () => {
     const audit = await prisma.auditLog.findMany({
       where: { institutionId, action: 'STUDENT_FINES_GENERATED' },

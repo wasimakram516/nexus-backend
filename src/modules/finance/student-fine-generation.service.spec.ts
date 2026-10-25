@@ -322,6 +322,53 @@ describe('StudentFineGenerationService', () => {
     );
   });
 
+  it('runs without a signed-in person for the scheduled run: no access checks, nothing recorded against a user, never a preview', async () => {
+    const { data } = await service.generateAutomatically({
+      ...dto(),
+      preview: true,
+    });
+
+    expect(data.preview).toBe(false);
+    expect(moduleAccessMock.assertModuleEnabledForUser).not.toHaveBeenCalled();
+    expect(campusAccessMock.assertCampusAccess).not.toHaveBeenCalled();
+    expect(prismaMock.studentFine.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ createdBy: null }),
+    });
+    expect(auditMock.log).toHaveBeenCalledWith(
+      null,
+      expect.objectContaining({
+        action: 'STUDENT_FINES_GENERATED',
+        metadata: expect.objectContaining({ automatic: true }),
+      }),
+    );
+  });
+
+  it('refreshes its own fine in a scheduled run without naming a user either', async () => {
+    prismaMock.studentFine.findMany.mockResolvedValue([
+      {
+        id: 'fine-1',
+        studentId: 's1',
+        fineStatus: 'PENDING',
+        fineReason: 'Attendance fine: 9 absent, 0 late, 0 half day, 0 leave.',
+      },
+    ]);
+
+    await service.generateAutomatically(dto());
+
+    expect(prismaMock.studentFine.update).toHaveBeenCalledWith({
+      where: { id: 'fine-1' },
+      data: expect.objectContaining({ updatedBy: null }),
+    });
+  });
+
+  it('refuses a scheduled run for a campus with no institution', async () => {
+    prismaMock.campus.findUnique.mockResolvedValue({ institutionId: null });
+
+    await expect(service.generateAutomatically(dto())).rejects.toThrow(
+      'You do not have access to this campus.',
+    );
+  });
+
   it('refuses a run that covers too many students', async () => {
     prismaMock.studentEnrollment.findMany.mockResolvedValue(
       Array.from({ length: MAX_FINE_RUN_STUDENTS + 1 }, (_, index) =>

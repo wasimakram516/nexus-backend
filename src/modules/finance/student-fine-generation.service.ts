@@ -87,17 +87,49 @@ export class StudentFineGenerationService {
       currentUser,
       dto.campusId,
     );
+    return this.run(
+      currentUser,
+      await this.institutionOfCampus(dto.campusId),
+      dto,
+    );
+  }
+
+  /**
+   * The scheduled monthly run: the same calculation with no signed-in person,
+   * so nothing records a user. The caller (the scheduler) has already checked
+   * that the institution has finance and has switched automatic fines on.
+   *
+   * @param {GenerateStudentFinesDto} dto - Campus and period; it is never a preview.
+   * @returns {Promise<{message: string, data: object}>} Fined and unchanged students with totals.
+   * @throws {ForbiddenException} If the campus has no institution.
+   * @throws {ConflictException} If there is no current academic year.
+   */
+  async generateAutomatically(dto: GenerateStudentFinesDto) {
+    return this.run(null, await this.institutionOfCampus(dto.campusId), {
+      ...dto,
+      preview: false,
+    });
+  }
+
+  private async institutionOfCampus(campusId: string): Promise<string> {
     const campus = await this.prisma.campus.findUnique({
-      where: { id: dto.campusId },
+      where: { id: campusId },
       select: { institutionId: true },
     });
     if (!campus?.institutionId) {
       throw new ForbiddenException('You do not have access to this campus.');
     }
+    return campus.institutionId;
+  }
 
+  private async run(
+    currentUser: CurrentUser | null,
+    institutionId: string,
+    dto: GenerateStudentFinesDto,
+  ) {
     const students = await this.selectStudents(
       dto,
-      await this.currentAcademicYearId(campus.institutionId),
+      await this.currentAcademicYearId(institutionId),
     );
     if (students.length > MAX_FINE_RUN_STUDENTS) {
       throw new BadRequestException(
@@ -219,8 +251,9 @@ export class StudentFineGenerationService {
         await this.auditLogService.log(currentUser, {
           action: 'STUDENT_FINES_GENERATED',
           entity: 'StudentFine',
-          institutionId: campus.institutionId,
+          institutionId,
           metadata: {
+            automatic: currentUser === null,
             campusId: dto.campusId,
             classId: dto.classId ?? null,
             sectionId: dto.sectionId ?? null,
@@ -260,7 +293,7 @@ export class StudentFineGenerationService {
 
   /** Create or refresh one student's automatic fine; a preview writes nothing. */
   private async save(params: {
-    currentUser: CurrentUser;
+    currentUser: CurrentUser | null;
     dto: GenerateStudentFinesDto;
     studentId: string;
     counts: AttendanceCounts;
@@ -280,7 +313,7 @@ export class StudentFineGenerationService {
     if (existingId) {
       await this.prisma.studentFine.update({
         where: { id: existingId },
-        data: { ...values, updatedBy: currentUser.sub },
+        data: { ...values, updatedBy: currentUser?.sub ?? null },
       });
       return existingId;
     }
@@ -292,7 +325,7 @@ export class StudentFineGenerationService {
         year: dto.year,
         fineStatus: 'PENDING',
         ...values,
-        createdBy: currentUser.sub,
+        createdBy: currentUser?.sub ?? null,
       },
     });
     return created.id;

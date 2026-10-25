@@ -14,6 +14,7 @@ describe('readFinanceSettings', () => {
         currencyLabel: DEFAULT_CURRENCY_LABEL,
         voucherInstructions: [],
         voucherContact: '',
+        autoCalculateFines: false,
       });
     },
   );
@@ -25,14 +26,25 @@ describe('readFinanceSettings', () => {
         currencyLabel: ' SAR ',
         voucherInstructions: ' Pay at the bank. \r\n\r\nKeep the receipt.\n',
         voucherContact: ' info@school.test ',
+        autoCalculateFines: true,
       }),
     ).toEqual({
       dueDayOfMonth: 5,
       currencyLabel: 'SAR',
       voucherInstructions: ['Pay at the bank.', 'Keep the receipt.'],
       voucherContact: 'info@school.test',
+      autoCalculateFines: true,
     });
   });
+
+  it.each([true, 'yes', 1, null, undefined])(
+    'only a real true switches automatic fines on (%p)',
+    (autoCalculateFines) => {
+      expect(
+        readFinanceSettings({ autoCalculateFines }).autoCalculateFines,
+      ).toBe(autoCalculateFines === true);
+    },
+  );
 
   it.each([0, 29, 4.5, '5', null])(
     'ignores an unusable due day %p',
@@ -67,6 +79,18 @@ describe('validateFinanceSettingInput', () => {
     expect(validateFinanceSettingInput(value)).toBe(
       'The finance setting must be an object.',
     );
+  });
+
+  it.each(['yes', 1, 'true'])('rejects automatic fines set to %p', (value) => {
+    expect(validateFinanceSettingInput({ autoCalculateFines: value })).toMatch(
+      /autoCalculateFines/,
+    );
+  });
+
+  it.each([true, false, null])('accepts automatic fines set to %p', (value) => {
+    expect(
+      validateFinanceSettingInput({ autoCalculateFines: value }),
+    ).toBeNull();
   });
 
   it.each([0, 29, 1.5, '10'])('rejects due day %p', (dueDayOfMonth) => {
