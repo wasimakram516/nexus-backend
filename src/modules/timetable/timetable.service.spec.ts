@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment -- jest asymmetric matchers are typed any */
 import {
   BadRequestException,
   ConflictException,
@@ -9,6 +10,7 @@ import { AuditLogService } from '../../common/services/audit-log.service';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
+import { RequestContextService } from '../../common/services/request-context.service';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TimetableService } from './timetable.service';
@@ -25,6 +27,7 @@ describe('TimetableService', () => {
     },
     section: { findUnique: jest.fn() },
     teacherSubject: { findFirst: jest.fn() },
+    $transaction: jest.fn(),
   };
 
   const campusAccessServiceMock = {
@@ -84,6 +87,8 @@ describe('TimetableService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    // No other periods unless a test says otherwise, so no clash is found.
+    prismaMock.periodSlot.findMany.mockResolvedValue([]);
     campusAccessServiceMock.assertCampusAccess.mockResolvedValue(undefined);
     campusAccessServiceMock.assertClassAccess.mockResolvedValue(undefined);
     campusAccessServiceMock.assertSectionAccess.mockResolvedValue(undefined);
@@ -103,6 +108,12 @@ describe('TimetableService', () => {
           useValue: entityCustomFieldsServiceMock,
         },
         { provide: ModuleAccessService, useValue: moduleAccessServiceMock },
+        {
+          provide: RequestContextService,
+          useValue: {
+            runWith: (_state: unknown, callback: () => unknown) => callback(),
+          },
+        },
       ],
     }).compile();
 
@@ -127,7 +138,6 @@ describe('TimetableService', () => {
 
       expect(prismaMock.periodSlot.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() is intentionally typed `any` by @types/jest */
           data: expect.objectContaining({
             campusId: 'campus-1',
             classId: 'class-1',
@@ -206,7 +216,6 @@ describe('TimetableService', () => {
 
         expect(prismaMock.teacherSubject.findFirst).toHaveBeenCalledWith(
           expect.objectContaining({
-            /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() is intentionally typed `any` by @types/jest */
             where: expect.objectContaining({
               staffProfileId: 'staff-1',
               subjectId: 'subject-1',
@@ -326,7 +335,6 @@ describe('TimetableService', () => {
       );
       expect(prismaMock.periodSlot.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() is intentionally typed `any` by @types/jest */
           data: expect.objectContaining({
             sectionId: 'section-2',
             campusId: 'campus-2',
@@ -447,7 +455,6 @@ describe('TimetableService', () => {
 
       expect(prismaMock.periodSlot.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() is intentionally typed `any` by @types/jest */
           where: expect.objectContaining({
             campusId: { in: ['campus-1'] },
           }),
@@ -467,7 +474,6 @@ describe('TimetableService', () => {
       );
       expect(prismaMock.periodSlot.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() is intentionally typed `any` by @types/jest */
           where: expect.objectContaining({ campusId: { in: ['campus-9'] } }),
         }),
       );
@@ -484,7 +490,6 @@ describe('TimetableService', () => {
       );
       expect(prismaMock.periodSlot.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() is intentionally typed `any` by @types/jest */
           where: expect.objectContaining({ classId: 'class-1' }),
         }),
       );
@@ -504,7 +509,6 @@ describe('TimetableService', () => {
       );
       expect(prismaMock.periodSlot.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() is intentionally typed `any` by @types/jest */
           where: expect.objectContaining({
             sectionId: 'section-1',
             dayOfWeek: DayOfWeek.TUESDAY,
@@ -529,7 +533,6 @@ describe('TimetableService', () => {
       ).not.toHaveBeenCalled();
       expect(prismaMock.periodSlot.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() is intentionally typed `any` by @types/jest */
           where: expect.not.objectContaining({ campusId: expect.anything() }),
         }),
       );
@@ -578,7 +581,6 @@ describe('TimetableService', () => {
       expect(prismaMock.periodSlot.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'slot-1' },
-          /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() is intentionally typed `any` by @types/jest */
           data: expect.objectContaining({
             deletedBy: adminUser.sub,
             deleteReason: 'schedule changed',
@@ -598,6 +600,366 @@ describe('TimetableService', () => {
         service.deletePeriodSlot(adminUser, 'missing'),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(prismaMock.periodSlot.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('clash rules', () => {
+    const other = (overrides: Record<string, unknown> = {}) => ({
+      id: 'other-1',
+      sectionId: 'section-2',
+      dayOfWeek: DayOfWeek.MONDAY,
+      startTime: '08:20',
+      endTime: '09:00',
+      staffProfileId: 'teacher-1',
+      room: null,
+      section: { name: 'B' },
+      class: { name: 'Grade 6' },
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      prismaMock.section.findUnique.mockResolvedValue(sectionRow);
+      prismaMock.periodSlot.create.mockResolvedValue({
+        id: 'slot-1',
+        ...baseDto,
+        campusId: 'campus-1',
+      });
+    });
+
+    it('refuses a period that puts a teacher in two places at once, naming where', async () => {
+      prismaMock.periodSlot.findMany.mockResolvedValue([other()]);
+
+      await expect(
+        service.createPeriodSlot(adminUser, {
+          ...baseDto,
+          staffProfileId: 'teacher-1',
+        }),
+      ).rejects.toThrow(
+        'This teacher is already teaching Grade 6, section B, 08:20 to 09:00 at that time.',
+      );
+      expect(prismaMock.periodSlot.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a room that is already in use at that time, ignoring case', async () => {
+      prismaMock.periodSlot.findMany.mockResolvedValue([
+        other({ staffProfileId: null, room: 'LAB 1' }),
+      ]);
+
+      await expect(
+        service.createPeriodSlot(adminUser, { ...baseDto, room: ' Lab 1 ' }),
+      ).rejects.toThrow(
+        'LAB 1 is already used by Grade 6, section B, 08:20 to 09:00 at that time.',
+      );
+    });
+
+    it('looks only on that campus, that day, among active periods, for that teacher or room', async () => {
+      await service.createPeriodSlot(adminUser, {
+        ...baseDto,
+        staffProfileId: 'teacher-1',
+        room: 'Lab 1',
+      });
+
+      expect(prismaMock.periodSlot.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            campusId: 'campus-1',
+            dayOfWeek: DayOfWeek.MONDAY,
+            deletedAt: null,
+            id: { notIn: [] },
+            OR: [
+              { staffProfileId: 'teacher-1' },
+              { room: { equals: 'lab 1', mode: 'insensitive' } },
+            ],
+          }),
+        }),
+      );
+    });
+
+    it('allows back-to-back periods for the same teacher', async () => {
+      prismaMock.periodSlot.findMany.mockResolvedValue([
+        other({ startTime: '08:40', endTime: '09:20' }),
+      ]);
+
+      await expect(
+        service.createPeriodSlot(adminUser, {
+          ...baseDto,
+          staffProfileId: 'teacher-1',
+        }),
+      ).resolves.toMatchObject({ message: 'Period slot created successfully' });
+    });
+
+    it('does not look for clashes at all for a period with no teacher and no room', async () => {
+      prismaMock.periodSlot.findMany.mockClear();
+
+      await service.createPeriodSlot(adminUser, { ...baseDto });
+
+      expect(prismaMock.periodSlot.findMany).not.toHaveBeenCalled();
+    });
+
+    it('stores the room trimmed, or none when it is blank', async () => {
+      await service.createPeriodSlot(adminUser, {
+        ...baseDto,
+        room: '  Lab 1 ',
+      });
+      expect(prismaMock.periodSlot.create).toHaveBeenLastCalledWith({
+        data: expect.objectContaining({ room: 'Lab 1' }),
+      });
+
+      await service.createPeriodSlot(adminUser, { ...baseDto, room: '   ' });
+      expect(prismaMock.periodSlot.create).toHaveBeenLastCalledWith({
+        data: expect.objectContaining({ room: null }),
+      });
+    });
+
+    describe('updating', () => {
+      const existing = {
+        id: 'slot-1',
+        campusId: 'campus-1',
+        classId: 'class-1',
+        sectionId: 'section-1',
+        subjectId: null,
+        staffProfileId: 'teacher-1',
+        dayOfWeek: DayOfWeek.MONDAY,
+        startTime: '08:00',
+        endTime: '08:40',
+        room: null,
+      };
+
+      beforeEach(() => {
+        prismaMock.periodSlot.findFirst.mockResolvedValue(existing);
+        prismaMock.periodSlot.update.mockResolvedValue(existing);
+      });
+
+      it('checks the final day and time, leaving the period itself out of the check', async () => {
+        await service.updatePeriodSlot(adminUser, 'slot-1', {
+          dayOfWeek: DayOfWeek.TUESDAY,
+        });
+
+        expect(prismaMock.periodSlot.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              dayOfWeek: DayOfWeek.TUESDAY,
+              id: { notIn: ['slot-1'] },
+              OR: [{ staffProfileId: 'teacher-1' }],
+            }),
+          }),
+        );
+      });
+
+      it('refuses a move into a time the teacher is already teaching', async () => {
+        prismaMock.periodSlot.findMany.mockResolvedValue([other()]);
+
+        await expect(
+          service.updatePeriodSlot(adminUser, 'slot-1', {
+            startTime: '08:30',
+            endTime: '09:10',
+          }),
+        ).rejects.toBeInstanceOf(ConflictException);
+        expect(prismaMock.periodSlot.update).not.toHaveBeenCalled();
+      });
+
+      it('does not check when only the name changes', async () => {
+        prismaMock.periodSlot.findMany.mockClear();
+
+        await service.updatePeriodSlot(adminUser, 'slot-1', { name: 'Maths' });
+
+        expect(prismaMock.periodSlot.findMany).not.toHaveBeenCalled();
+      });
+
+      it('clears the room when it is set to nothing', async () => {
+        await service.updatePeriodSlot(adminUser, 'slot-1', { room: '' });
+
+        expect(prismaMock.periodSlot.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ room: null }),
+          }),
+        );
+      });
+    });
+  });
+
+  describe('swapPeriodSlots', () => {
+    const slot = (
+      id: string,
+      day: DayOfWeek,
+      number: number,
+      start: string,
+      end: string,
+      staff: string | null = null,
+    ) => ({
+      id,
+      campusId: 'campus-1',
+      sectionId: 'section-1',
+      dayOfWeek: day,
+      periodNumber: number,
+      startTime: start,
+      endTime: end,
+      staffProfileId: staff,
+      room: null,
+    });
+
+    beforeEach(() => {
+      prismaMock.$transaction.mockImplementation(
+        (callback: (client: unknown) => unknown) => callback(prismaMock),
+      );
+      prismaMock.periodSlot.update.mockImplementation(
+        ({ where, data }: { where: { id: string }; data: object }) =>
+          Promise.resolve({ id: where.id, ...data }),
+      );
+    });
+
+    it('exchanges the two places, parking one off the grid for a moment', async () => {
+      prismaMock.periodSlot.findFirst
+        .mockResolvedValueOnce(slot('a', DayOfWeek.MONDAY, 1, '08:00', '08:40'))
+        .mockResolvedValueOnce(
+          slot('b', DayOfWeek.TUESDAY, 3, '09:40', '10:20'),
+        );
+
+      const { data } = await service.swapPeriodSlots(adminUser, {
+        firstId: 'a',
+        secondId: 'b',
+      });
+
+      const updates = prismaMock.periodSlot.update.mock.calls.map(
+        (
+          call: [{ where: { id: string }; data: { periodNumber?: number } }],
+        ) => [call[0].where.id, call[0].data.periodNumber],
+      );
+      expect(updates).toEqual([
+        ['a', 0],
+        ['b', 1],
+        ['a', 3],
+      ]);
+      expect(data).toHaveLength(2);
+      expect(auditLogServiceMock.log).toHaveBeenCalledWith(
+        adminUser,
+        expect.objectContaining({ action: 'PERIOD_SLOTS_SWAPPED' }),
+        prismaMock,
+      );
+    });
+
+    it('refuses the swap when a teacher would then be in two places', async () => {
+      prismaMock.periodSlot.findFirst
+        .mockResolvedValueOnce(
+          slot('a', DayOfWeek.MONDAY, 1, '08:00', '08:40', 'teacher-1'),
+        )
+        .mockResolvedValueOnce(
+          slot('b', DayOfWeek.TUESDAY, 3, '09:40', '10:20'),
+        );
+      prismaMock.periodSlot.findMany.mockResolvedValue([
+        {
+          id: 'x',
+          sectionId: 'section-9',
+          dayOfWeek: DayOfWeek.TUESDAY,
+          startTime: '09:30',
+          endTime: '10:10',
+          staffProfileId: 'teacher-1',
+          room: null,
+          section: { name: 'C' },
+          class: { name: 'Grade 7' },
+        },
+      ]);
+
+      await expect(
+        service.swapPeriodSlots(adminUser, { firstId: 'a', secondId: 'b' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prismaMock.periodSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses the same period twice, periods of different sections, and a missing period', async () => {
+      await expect(
+        service.swapPeriodSlots(adminUser, { firstId: 'a', secondId: 'a' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      prismaMock.periodSlot.findFirst
+        .mockResolvedValueOnce(slot('a', DayOfWeek.MONDAY, 1, '08:00', '08:40'))
+        .mockResolvedValueOnce({
+          ...slot('b', DayOfWeek.MONDAY, 2, '08:40', '09:20'),
+          sectionId: 'section-2',
+        });
+      await expect(
+        service.swapPeriodSlots(adminUser, { firstId: 'a', secondId: 'b' }),
+      ).rejects.toThrow('Only periods of the same section can be swapped.');
+
+      prismaMock.periodSlot.findFirst.mockResolvedValueOnce(null);
+      await expect(
+        service.swapPeriodSlots(adminUser, { firstId: 'a', secondId: 'b' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('refuses a caller who cannot act at the campus before changing anything', async () => {
+      prismaMock.periodSlot.findFirst
+        .mockResolvedValueOnce(slot('a', DayOfWeek.MONDAY, 1, '08:00', '08:40'))
+        .mockResolvedValueOnce(
+          slot('b', DayOfWeek.MONDAY, 2, '08:40', '09:20'),
+        );
+      campusAccessServiceMock.assertCampusAccess.mockRejectedValue(
+        new Error('forbidden'),
+      );
+
+      await expect(
+        service.swapPeriodSlots(adminUser, { firstId: 'a', secondId: 'b' }),
+      ).rejects.toThrow('forbidden');
+      expect(prismaMock.periodSlot.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listClashes and listRooms', () => {
+    const full = (
+      id: string,
+      staff: string | null,
+      room: string | null,
+      start: string,
+      end: string,
+    ) => ({
+      id,
+      sectionId: id,
+      dayOfWeek: DayOfWeek.MONDAY,
+      startTime: start,
+      endTime: end,
+      staffProfileId: staff,
+      room,
+      section: { name: `S-${id}` },
+      class: { name: 'Grade 5' },
+      staffProfile: { user: { name: `Teacher ${staff}` } },
+    });
+
+    it('reports clashes that already exist, with who and where', async () => {
+      prismaMock.periodSlot.findMany.mockResolvedValue([
+        full('a', 't1', 'Lab', '08:00', '08:40'),
+        full('b', 't1', 'lab', '08:20', '09:00'),
+        full('c', 't2', null, '08:20', '09:00'),
+      ]);
+
+      const { data } = await service.listClashes(adminUser, 'campus-1');
+
+      expect(data.map((clash) => clash.kind)).toEqual(['TEACHER', 'ROOM']);
+      expect(data[0].first).toMatchObject({
+        className: 'Grade 5',
+        sectionName: 'S-a',
+        teacherName: 'Teacher t1',
+      });
+      expect(campusAccessServiceMock.assertCampusAccess).toHaveBeenCalledWith(
+        adminUser,
+        'campus-1',
+      );
+    });
+
+    it('lists the rooms already used on the campus, alphabetically', async () => {
+      prismaMock.periodSlot.findMany.mockResolvedValue([
+        { room: 'Lab 2' },
+        { room: 'Hall' },
+        { room: null },
+      ]);
+
+      const { data } = await service.listRooms(adminUser, 'campus-1');
+
+      expect(data).toEqual(['Hall', 'Lab 2']);
+      expect(prismaMock.periodSlot.findMany).toHaveBeenCalledWith({
+        where: { campusId: 'campus-1', deletedAt: null, room: { not: null } },
+        select: { room: true },
+        distinct: ['room'],
+      });
     });
   });
 });

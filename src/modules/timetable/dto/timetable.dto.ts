@@ -7,6 +7,7 @@ import {
   IsString,
   IsUUID,
   Matches,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { DayOfWeek } from '../../../prisma/client';
@@ -77,6 +78,15 @@ export class CreatePeriodSlotDto extends CustomFieldPayloadDto {
   @IsString()
   @Matches(TIME_FORMAT_REGEX, { message: 'endTime must be in HH:mm format.' })
   endTime!: string;
+  @ApiPropertyOptional({
+    example: 'Lab 1',
+    description:
+      'Where the period is taught. Two periods cannot use the same room at overlapping times on a day.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  room?: string | null;
 }
 
 export class UpdatePeriodSlotDto extends PartialType(CreatePeriodSlotDto) {}
@@ -101,4 +111,21 @@ export class ListPeriodSlotsQueryDto {
   @IsOptional()
   @IsEnum(DayOfWeek)
   dayOfWeek?: DayOfWeek;
+}
+
+export class SwapPeriodSlotsDto {
+  @ApiProperty({ description: 'A period of the section.' })
+  @IsUUID()
+  firstId!: string;
+
+  @ApiProperty({
+    description:
+      'Another period of the same section. The two exchange their day and period.',
+  })
+  @IsUUID()
+  secondId!: string;
+}
+
+export class CampusTimetableQueryDto {
+  @ApiProperty() @IsUUID() campusId!: string;
 }

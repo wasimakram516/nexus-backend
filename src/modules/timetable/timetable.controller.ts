@@ -19,8 +19,10 @@ import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { TimetableService } from './timetable.service';
 import {
+  CampusTimetableQueryDto,
   CreatePeriodSlotDto,
   ListPeriodSlotsQueryDto,
+  SwapPeriodSlotsDto,
   UpdatePeriodSlotDto,
 } from './dto/timetable.dto';
 
@@ -59,6 +61,49 @@ export class TimetableController {
     @Query() query: ListPeriodSlotsQueryDto,
   ) {
     return this.timetableService.listPeriodSlots(currentUser, query);
+  }
+
+  @Post('swap')
+  @Version('1')
+  @RequirePermission('period_slots', 'update')
+  @ApiOperation({
+    summary: 'Swap two periods of a section',
+    description:
+      'Exchanges the day and period of two periods of the same section in one step. Refused if a teacher or room would then be in two places at once.',
+  })
+  swapPeriodSlots(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: SwapPeriodSlotsDto,
+  ) {
+    return this.timetableService.swapPeriodSlots(currentUser, dto);
+  }
+
+  @Get('clashes')
+  @Version('1')
+  @RequirePermission('period_slots', 'read')
+  @ApiOperation({
+    summary: "List a campus's timetable clashes",
+    description:
+      'Teachers in two places at once and rooms used twice at once. New saves refuse these, so this finds ones that already existed.',
+  })
+  listClashes(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: CampusTimetableQueryDto,
+  ) {
+    return this.timetableService.listClashes(currentUser, query.campusId);
+  }
+
+  @Get('rooms')
+  @Version('1')
+  @RequirePermission('period_slots', 'read')
+  @ApiOperation({
+    summary: "List the rooms already used on a campus's timetable",
+  })
+  listRooms(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: CampusTimetableQueryDto,
+  ) {
+    return this.timetableService.listRooms(currentUser, query.campusId);
   }
 
   // Must be declared before 'period-slots/:id' below — 3 path segments vs.

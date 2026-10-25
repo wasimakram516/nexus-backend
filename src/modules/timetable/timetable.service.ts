@@ -10,13 +10,22 @@ import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CustomFieldEntity } from '../../common/constants/custom-field-entities.constants';
 import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
-import { ModuleKey, Prisma, UserRole } from '../../prisma/client';
+import { RequestContextService } from '../../common/services/request-context.service';
+import { runAuditedTransaction } from '../../common/utils/transaction.util';
+import { DayOfWeek, ModuleKey, Prisma, UserRole } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreatePeriodSlotDto,
   ListPeriodSlotsQueryDto,
+  SwapPeriodSlotsDto,
   UpdatePeriodSlotDto,
 } from './dto/timetable.dto';
+import {
+  ClashSlot,
+  clashKindsBetween,
+  findClashes,
+  normalizeRoom,
+} from './timetable-clash.util';
 
 /** Section's resolved scheduling scope (§ 4 of
  *  M3-SCHEDULING-COMMUNICATION-DESIGN.md: section -> class -> level ->
@@ -41,6 +50,7 @@ export class TimetableService {
     private readonly campusAccessService: CampusAccessService,
     private readonly entityCustomFieldsService: EntityCustomFieldsService,
     private readonly moduleAccessService: ModuleAccessService,
+    private readonly requestContext: RequestContextService,
   ) {}
 
   /**
@@ -75,6 +85,16 @@ export class TimetableService {
       sectionId: dto.sectionId,
     });
 
+    await this.assertNoClash({
+      campusId: scope.campusId,
+      dayOfWeek: dto.dayOfWeek,
+      startTime: dto.startTime,
+      endTime: dto.endTime,
+      staffProfileId: dto.staffProfileId,
+      room: dto.room,
+      excludeIds: [],
+    });
+
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         scope.campusId,
@@ -103,6 +123,7 @@ export class TimetableService {
               dayOfWeek: periodSlotFields.dayOfWeek,
               startTime: periodSlotFields.startTime,
               endTime: periodSlotFields.endTime,
+              room: periodSlotFields.room?.trim() || null,
               createdBy: currentUser.sub,
             },
           });
@@ -322,6 +343,24 @@ export class TimetableService {
       });
     }
 
+    const timingChanged =
+      dto.dayOfWeek !== undefined ||
+      dto.startTime !== undefined ||
+      dto.endTime !== undefined ||
+      dto.staffProfileId !== undefined ||
+      dto.room !== undefined;
+    if (timingChanged) {
+      await this.assertNoClash({
+        campusId,
+        dayOfWeek: dto.dayOfWeek ?? existing.dayOfWeek,
+        startTime: dto.startTime ?? existing.startTime,
+        endTime: dto.endTime ?? existing.endTime,
+        staffProfileId: finalStaffProfileId,
+        room: dto.room !== undefined ? dto.room : existing.room,
+        excludeIds: [id],
+      });
+    }
+
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         campusId,
@@ -368,6 +407,9 @@ export class TimetableService {
                 : {}),
               ...(periodSlotFields.endTime !== undefined
                 ? { endTime: periodSlotFields.endTime }
+                : {}),
+              ...(periodSlotFields.room !== undefined
+                ? { room: periodSlotFields.room?.trim() || null }
                 : {}),
               updatedBy: currentUser.sub,
             },
@@ -451,6 +493,230 @@ export class TimetableService {
   // ---------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------
+
+  /**
+   * Exchanges the day and period of two periods of one section, as one
+   * change: dragging a period onto an occupied cell in the builder. Doing it
+   * as two separate updates would trip the one-period-per-cell rule midway.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {SwapPeriodSlotsDto} dto - The two periods.
+   * @returns {Promise<{message: string, data: object[]}>} The two periods in their new places.
+   * @throws {NotFoundException} If either period does not exist.
+   * @throws {BadRequestException} If they are the same period or belong to different sections.
+   * @throws {ForbiddenException} If the caller lacks access to the campus.
+   * @throws {ConflictException} If a teacher or room would then be in two places at once.
+   */
+  async swapPeriodSlots(currentUser: CurrentUser, dto: SwapPeriodSlotsDto) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.TIMETABLE,
+    );
+    if (dto.firstId === dto.secondId) {
+      throw new BadRequestException('Choose two different periods to swap.');
+    }
+    const first = await this.findPeriodSlotOrThrow(dto.firstId);
+    const second = await this.findPeriodSlotOrThrow(dto.secondId);
+    if (first.sectionId !== second.sectionId) {
+      throw new BadRequestException(
+        'Only periods of the same section can be swapped.',
+      );
+    }
+    await this.campusAccessService.assertCampusAccess(
+      currentUser,
+      first.campusId,
+    );
+
+    const place = (slot: typeof first) => ({
+      dayOfWeek: slot.dayOfWeek,
+      periodNumber: slot.periodNumber,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+    });
+    const intoFirst = place(second);
+    const intoSecond = place(first);
+    const excludeIds = [first.id, second.id];
+    await this.assertNoClash({
+      campusId: first.campusId,
+      ...intoFirst,
+      staffProfileId: first.staffProfileId,
+      room: first.room,
+      excludeIds,
+    });
+    await this.assertNoClash({
+      campusId: second.campusId,
+      ...intoSecond,
+      staffProfileId: second.staffProfileId,
+      room: second.room,
+      excludeIds,
+    });
+
+    const data = await runAuditedTransaction(
+      this.prisma,
+      this.requestContext,
+      async (transaction) => {
+        // Park one period off the grid so the two never share a cell mid-swap.
+        await transaction.periodSlot.update({
+          where: { id: first.id },
+          data: { periodNumber: 0, updatedBy: currentUser.sub },
+        });
+        const movedSecond = await transaction.periodSlot.update({
+          where: { id: second.id },
+          data: { ...intoSecond, updatedBy: currentUser.sub },
+        });
+        const movedFirst = await transaction.periodSlot.update({
+          where: { id: first.id },
+          data: { ...intoFirst, updatedBy: currentUser.sub },
+        });
+        await this.auditLogService.log(
+          currentUser,
+          {
+            action: 'PERIOD_SLOTS_SWAPPED',
+            entity: 'PeriodSlot',
+            institutionId: currentUser.institutionId ?? null,
+            metadata: { firstId: first.id, secondId: second.id },
+          },
+          transaction,
+        );
+        return [movedFirst, movedSecond];
+      },
+    );
+    return { message: 'Periods swapped successfully', data };
+  }
+
+  /**
+   * Every clash in a campus's timetable: a teacher in two places at once, or
+   * a room used twice at once. The saves refuse to create these, so this
+   * finds ones that already existed before the checks, or came from outside.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} campusId - The campus.
+   * @returns {Promise<{message: string, data: object[]}>} The clashes with who and where.
+   * @throws {ForbiddenException} If the caller lacks access to the campus.
+   */
+  async listClashes(currentUser: CurrentUser, campusId: string) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.TIMETABLE,
+    );
+    await this.campusAccessService.assertCampusAccess(currentUser, campusId);
+    const slots = await this.prisma.periodSlot.findMany({
+      where: { campusId, deletedAt: null },
+      include: {
+        section: { select: { name: true } },
+        class: { select: { name: true } },
+        staffProfile: { select: { user: { select: { name: true } } } },
+      },
+    });
+    const byId = new Map(slots.map((slot) => [slot.id, slot]));
+    const describe = (id: string) => {
+      const slot = byId.get(id);
+      return {
+        id,
+        className: slot?.class.name ?? null,
+        sectionName: slot?.section.name ?? null,
+        teacherName: slot?.staffProfile?.user.name ?? null,
+        room: slot?.room ?? null,
+        dayOfWeek: slot?.dayOfWeek ?? null,
+        startTime: slot?.startTime ?? null,
+        endTime: slot?.endTime ?? null,
+      };
+    };
+    const data = findClashes(slots).map((clash) => ({
+      kind: clash.kind,
+      first: describe(clash.first.id),
+      second: describe(clash.second.id),
+    }));
+    return { message: 'Timetable clashes retrieved successfully', data };
+  }
+
+  /**
+   * The rooms already used on a campus, so the builder can offer them back
+   * instead of every period being typed from scratch.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {string} campusId - The campus.
+   * @returns {Promise<{message: string, data: string[]}>} The distinct rooms, alphabetically.
+   * @throws {ForbiddenException} If the caller lacks access to the campus.
+   */
+  async listRooms(currentUser: CurrentUser, campusId: string) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.TIMETABLE,
+    );
+    await this.campusAccessService.assertCampusAccess(currentUser, campusId);
+    const rows = await this.prisma.periodSlot.findMany({
+      where: { campusId, deletedAt: null, room: { not: null } },
+      select: { room: true },
+      distinct: ['room'],
+    });
+    const rooms = rows
+      .map((row) => row.room)
+      .filter((room): room is string => Boolean(room))
+      .sort((a, b) => a.localeCompare(b));
+    return { message: 'Rooms retrieved successfully', data: rooms };
+  }
+
+  /**
+   * Refuses a period that would put a teacher in two places, or two periods
+   * in one room, at the same time on the same day of the campus.
+   *
+   * @param {object} candidate - The period as it would be saved.
+   * @throws {ConflictException} Naming who and where the clash is with.
+   */
+  private async assertNoClash(candidate: {
+    campusId: string;
+    dayOfWeek: string;
+    startTime: string;
+    endTime: string;
+    staffProfileId?: string | null;
+    room?: string | null;
+    excludeIds: string[];
+  }) {
+    const room = normalizeRoom(candidate.room);
+    if (!candidate.staffProfileId && !room) return;
+
+    const others = await this.prisma.periodSlot.findMany({
+      where: {
+        campusId: candidate.campusId,
+        dayOfWeek: candidate.dayOfWeek as DayOfWeek,
+        deletedAt: null,
+        id: { notIn: candidate.excludeIds },
+        OR: [
+          ...(candidate.staffProfileId
+            ? [{ staffProfileId: candidate.staffProfileId }]
+            : []),
+          ...(room
+            ? [{ room: { equals: room, mode: 'insensitive' as const } }]
+            : []),
+        ],
+      },
+      include: {
+        section: { select: { name: true } },
+        class: { select: { name: true } },
+      },
+    });
+
+    const incoming: ClashSlot = {
+      id: 'incoming',
+      sectionId: 'incoming',
+      dayOfWeek: candidate.dayOfWeek,
+      startTime: candidate.startTime,
+      endTime: candidate.endTime,
+      staffProfileId: candidate.staffProfileId ?? null,
+      room: candidate.room ?? null,
+    };
+    for (const other of others) {
+      const kinds = clashKindsBetween(incoming, other);
+      if (kinds.length === 0) continue;
+      const where = `${other.class.name}, section ${other.section.name}, ${other.startTime} to ${other.endTime}`;
+      throw new ConflictException(
+        kinds.includes('TEACHER')
+          ? `This teacher is already teaching ${where} at that time.`
+          : `${other.room ?? 'That room'} is already used by ${where} at that time.`,
+      );
+    }
+  }
 
   private async findPeriodSlotOrThrow(id: string) {
     const periodSlot = await this.prisma.periodSlot.findFirst({
