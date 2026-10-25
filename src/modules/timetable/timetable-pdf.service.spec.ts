@@ -50,12 +50,15 @@ describe('TimetablePdfService', () => {
 
   const viewsMock = {
     sectionSchedule: jest.fn(),
+    classSchedule: jest.fn(),
+    campusSchedule: jest.fn(),
     teacherSchedule: jest.fn(),
     mySchedule: jest.fn(),
   };
   const metaMock = { build: jest.fn() };
   const prismaMock = {
     section: { findUnique: jest.fn() },
+    academicClass: { findUnique: jest.fn() },
     staffProfile: { findUnique: jest.fn() },
     student: { findUnique: jest.fn() },
     campus: { findUnique: jest.fn() },
@@ -218,6 +221,70 @@ describe('TimetablePdfService', () => {
 
     await expect(service.forSection(admin, 'sec-1')).rejects.toThrow(
       'forbidden',
+    );
+  });
+
+  it('draws every section of a class on its own page, named after the class', async () => {
+    viewsMock.classSchedule.mockResolvedValue({
+      data: {
+        week,
+        groups: [
+          group('SECTION', 'sec-1', 'Grade 5, section A'),
+          group('SECTION', 'sec-2', 'Grade 5, section B'),
+        ],
+      },
+    });
+    prismaMock.academicClass.findUnique.mockResolvedValue({
+      name: 'Grade 5',
+      level: { campusId: 'campus-1' },
+    });
+
+    const file = await service.forClass(admin, 'class-1', '2026-11-04');
+
+    expect(viewsMock.classSchedule).toHaveBeenCalledWith(
+      admin,
+      'class-1',
+      '2026-11-04',
+    );
+    expect(file.filename).toBe('timetable-grade-5-2026-11-02.pdf');
+    expect(pageCount(file.buffer)).toBe(2);
+  });
+
+  it('draws a whole campus, a page per section, and says when there is nothing to print', async () => {
+    viewsMock.campusSchedule.mockResolvedValue({
+      data: {
+        week,
+        groups: [
+          group('SECTION', 'sec-1', 'Grade 5, section A'),
+          group('SECTION', 'sec-2', 'Grade 6, section A'),
+          group('SECTION', 'sec-3', 'Grade 7, section A'),
+        ],
+      },
+    });
+
+    const file = await service.forCampus(admin, 'campus-1');
+
+    expect(file.filename).toBe('timetable-campus-2026-11-02.pdf');
+    expect(pageCount(file.buffer)).toBe(3);
+
+    viewsMock.campusSchedule.mockResolvedValue({ data: { week, groups: [] } });
+    await expect(service.forCampus(admin, 'campus-1')).rejects.toThrow(
+      'There is no timetable to print yet.',
+    );
+    viewsMock.classSchedule.mockResolvedValue({ data: { week, groups: [] } });
+    await expect(service.forClass(admin, 'class-1')).rejects.toThrow(
+      'There is no timetable to print yet.',
+    );
+  });
+
+  it('is not found for a class that does not exist', async () => {
+    viewsMock.classSchedule.mockResolvedValue({
+      data: { week, groups: [group('SECTION', 'sec-1', 'x')] },
+    });
+    prismaMock.academicClass.findUnique.mockResolvedValue(null);
+
+    await expect(service.forClass(admin, 'class-1')).rejects.toBeInstanceOf(
+      NotFoundException,
     );
   });
 });

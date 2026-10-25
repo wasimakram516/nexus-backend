@@ -21,6 +21,8 @@ describe('TimetableViewsService', () => {
   const campusAccessMock = {
     assertSectionAccess: jest.fn(),
     assertStaffProfileAccess: jest.fn(),
+    assertClassAccess: jest.fn(),
+    assertCampusAccess: jest.fn(),
   };
   const ownedMock = { resolveOwnedStudentIds: jest.fn() };
 
@@ -250,6 +252,73 @@ describe('TimetableViewsService', () => {
 
       expect(data.week.from <= data.week.to).toBe(true);
       expect(data.week.dates.MONDAY).toBe(data.week.from);
+    });
+  });
+
+  describe('class and campus timetables', () => {
+    beforeEach(() => {
+      campusAccessMock.assertClassAccess.mockResolvedValue(undefined);
+      campusAccessMock.assertCampusAccess.mockResolvedValue(undefined);
+    });
+
+    it("gives each section of a class its own timetable, in order, with that section's cover only", async () => {
+      prismaMock.periodSlot.findMany.mockResolvedValue([
+        row('b1', { sectionId: 'sec-b', section: { name: 'B' } }),
+        row('a1'),
+      ]);
+      prismaMock.periodSubstitution.findMany.mockResolvedValue([
+        { ...coverRow, periodSlotId: 'a1' },
+      ]);
+
+      const { data } = await service.classSchedule(
+        user(UserRole.ADMIN),
+        'class-1',
+        '2026-11-04',
+      );
+
+      expect(campusAccessMock.assertClassAccess).toHaveBeenCalledWith(
+        expect.anything(),
+        'class-1',
+      );
+      expect(prismaMock.periodSlot.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { classId: 'class-1', deletedAt: null },
+        }),
+      );
+      expect(data.groups.map((group) => group.title)).toEqual([
+        'Grade 5, section A',
+        'Grade 5, section B',
+      ]);
+      expect(data.groups[0].entries[0].isCovered).toBe(true);
+      expect(data.groups[1].entries[0].isCovered).toBe(false);
+      expect(data.week.from).toBe('2026-11-02');
+    });
+
+    it('gives a campus a timetable per section that has periods, and none when it has none', async () => {
+      prismaMock.periodSlot.findMany.mockResolvedValueOnce([row('a1')]);
+
+      const found = await service.campusSchedule(
+        user(UserRole.ADMIN),
+        'campus-1',
+      );
+
+      expect(campusAccessMock.assertCampusAccess).toHaveBeenCalledWith(
+        expect.anything(),
+        'campus-1',
+      );
+      expect(found.data.groups).toHaveLength(1);
+      expect(prismaMock.periodSlot.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { campusId: 'campus-1', deletedAt: null },
+        }),
+      );
+
+      prismaMock.periodSlot.findMany.mockResolvedValueOnce([]);
+      const empty = await service.campusSchedule(
+        user(UserRole.ADMIN),
+        'campus-1',
+      );
+      expect(empty.data.groups).toEqual([]);
     });
   });
 });

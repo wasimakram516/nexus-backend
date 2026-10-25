@@ -98,6 +98,52 @@ export class TimetableViewsService {
   }
 
   /**
+   * Every section of a class, one timetable each, for staff.
+   *
+   * @param {CurrentUser} currentUser - Authenticated staff caller.
+   * @param {string} classId - The class.
+   * @param {string} [date] - Any date in the week wanted; defaults to today.
+   * @returns {Promise<{message: string, data: {week: TimetableWeek, groups: TimetableGroup[]}}>} One group per section, in section order.
+   * @throws {ForbiddenException} If the caller lacks access to the class's campus.
+   */
+  async classSchedule(
+    currentUser: CurrentUser,
+    classId: string,
+    date?: string,
+  ) {
+    await this.assertModule(currentUser);
+    await this.campusAccessService.assertClassAccess(currentUser, classId);
+    const week = this.weekOf(date);
+    return {
+      message: 'Class timetable retrieved successfully',
+      data: { week, groups: await this.sectionGroups({ classId }, week) },
+    };
+  }
+
+  /**
+   * Every section of a campus, one timetable each, for staff.
+   *
+   * @param {CurrentUser} currentUser - Authenticated staff caller.
+   * @param {string} campusId - The campus.
+   * @param {string} [date] - Any date in the week wanted; defaults to today.
+   * @returns {Promise<{message: string, data: {week: TimetableWeek, groups: TimetableGroup[]}}>} One group per section that has periods.
+   * @throws {ForbiddenException} If the caller lacks access to the campus.
+   */
+  async campusSchedule(
+    currentUser: CurrentUser,
+    campusId: string,
+    date?: string,
+  ) {
+    await this.assertModule(currentUser);
+    await this.campusAccessService.assertCampusAccess(currentUser, campusId);
+    const week = this.weekOf(date);
+    return {
+      message: 'Campus timetable retrieved successfully',
+      data: { week, groups: await this.sectionGroups({ campusId }, week) },
+    };
+  }
+
+  /**
    * One teacher's week, for staff: their own periods (marked when someone
    * else covers them) and the periods they are covering.
    *
@@ -214,6 +260,46 @@ export class TimetableViewsService {
       subtitle: null,
       entries: decorateWeek(slots.map(toWeekSlot), covers, week.dates),
     };
+  }
+
+  /** A timetable per section for every period matching a filter, in class then section order. */
+  private async sectionGroups(
+    filter: Prisma.PeriodSlotWhereInput,
+    week: TimetableWeek,
+  ): Promise<TimetableGroup[]> {
+    const slots = await this.prisma.periodSlot.findMany({
+      where: { ...filter, deletedAt: null },
+      include: slotInclude,
+    });
+    const covers = await this.coversFor(
+      { periodSlotId: { in: slots.map((slot) => slot.id) } },
+      week,
+    );
+    const bySection = new Map<string, SlotRow[]>();
+    for (const slot of slots) {
+      bySection.set(slot.sectionId, [
+        ...(bySection.get(slot.sectionId) ?? []),
+        slot,
+      ]);
+    }
+    return [...bySection.entries()]
+      .map(([sectionId, rows]): TimetableGroup => {
+        const rowIds = new Set(rows.map((row) => row.id));
+        return {
+          kind: 'SECTION',
+          id: sectionId,
+          title: `${rows[0].class.name}, section ${rows[0].section.name}`,
+          subtitle: null,
+          entries: decorateWeek(
+            rows.map(toWeekSlot),
+            covers.filter((cover) => rowIds.has(cover.periodSlotId)),
+            week.dates,
+          ),
+        };
+      })
+      .sort((a, b) =>
+        a.title.localeCompare(b.title, undefined, { numeric: true }),
+      );
   }
 
   private async teacherGroup(

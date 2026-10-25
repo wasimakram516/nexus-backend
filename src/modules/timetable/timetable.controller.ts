@@ -21,6 +21,7 @@ import { TimetableService } from './timetable.service';
 import {
   CampusTimetableQueryDto,
   CreatePeriodSlotDto,
+  DuplicatePeriodSlotsDto,
   ListPeriodSlotsQueryDto,
   SwapPeriodSlotsDto,
   UpdatePeriodSlotDto,
@@ -46,6 +47,21 @@ export class TimetableController {
     @Body() dto: CreatePeriodSlotDto,
   ) {
     return this.timetableService.createPeriodSlot(currentUser, dto);
+  }
+
+  @Post('duplicate')
+  @Version('1')
+  @RequirePermission('period_slots', 'create')
+  @ApiOperation({
+    summary: 'Copy periods onto other days',
+    description:
+      'Copies each period onto every target day with the same checks as adding one by hand. Copies that cannot be made are skipped and reported with the reason.',
+  })
+  duplicatePeriodSlots(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Body() dto: DuplicatePeriodSlotsDto,
+  ) {
+    return this.timetableService.duplicatePeriodSlots(currentUser, dto);
   }
 
   @Get()

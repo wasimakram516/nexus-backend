@@ -100,6 +100,62 @@ export class TimetablePdfService {
   }
 
   /**
+   * Every section of a class, a page each.
+   *
+   * @param {CurrentUser} currentUser - Authenticated staff caller.
+   * @param {string} classId - The class.
+   * @param {string} [date] - Any date in the week wanted.
+   * @returns {Promise<PdfFile>} The PDF and a file name.
+   * @throws {NotFoundException} If the class does not exist or has no periods.
+   */
+  async forClass(
+    currentUser: CurrentUser,
+    classId: string,
+    date?: string,
+  ): Promise<PdfFile> {
+    const { data } = await this.views.classSchedule(currentUser, classId, date);
+    if (data.groups.length === 0) {
+      throw new NotFoundException('There is no timetable to print yet.');
+    }
+    const academicClass = await this.prisma.academicClass.findUnique({
+      where: { id: classId },
+      select: { name: true, level: { select: { campusId: true } } },
+    });
+    if (!academicClass) throw new NotFoundException('Class not found.');
+    return this.render(
+      data.groups,
+      data.week,
+      academicClass.level.campusId,
+      `timetable-${safe(academicClass.name)}`,
+    );
+  }
+
+  /**
+   * Every section of a campus, a page each.
+   *
+   * @param {CurrentUser} currentUser - Authenticated staff caller.
+   * @param {string} campusId - The campus.
+   * @param {string} [date] - Any date in the week wanted.
+   * @returns {Promise<PdfFile>} The PDF and a file name.
+   * @throws {NotFoundException} If the campus has no periods.
+   */
+  async forCampus(
+    currentUser: CurrentUser,
+    campusId: string,
+    date?: string,
+  ): Promise<PdfFile> {
+    const { data } = await this.views.campusSchedule(
+      currentUser,
+      campusId,
+      date,
+    );
+    if (data.groups.length === 0) {
+      throw new NotFoundException('There is no timetable to print yet.');
+    }
+    return this.render(data.groups, data.week, campusId, 'timetable-campus');
+  }
+
+  /**
    * The signed-in person's own timetable: a student's, each of a guardian's
    * children's, or a teacher's.
    *

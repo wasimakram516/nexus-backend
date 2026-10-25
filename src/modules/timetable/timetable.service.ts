@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -16,6 +17,7 @@ import { DayOfWeek, ModuleKey, Prisma, UserRole } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreatePeriodSlotDto,
+  DuplicatePeriodSlotsDto,
   ListPeriodSlotsQueryDto,
   SwapPeriodSlotsDto,
   UpdatePeriodSlotDto,
@@ -440,6 +442,87 @@ export class TimetableService {
     } catch (error) {
       this.rethrowUniqueConflict(error);
     }
+  }
+
+  /**
+   * Copies periods onto other days of the week in one step, so a day that
+   * repeats does not have to be typed in again. Every copy goes through the
+   * same checks as a period added by hand; a copy that cannot be made (the
+   * day already has that period number, a teacher or room is busy) is skipped
+   * and reported, and the rest are still made.
+   *
+   * @param {CurrentUser} currentUser - Authenticated caller.
+   * @param {DuplicatePeriodSlotsDto} dto - The periods and the days to copy onto.
+   * @returns {Promise<{message: string, data: {created: number, skipped: object[]}}>} How many were made and which were not, with the reason.
+   * @throws {NotFoundException} If none of the periods exist.
+   * @throws {ForbiddenException} If the caller lacks access to a period's campus.
+   */
+  async duplicatePeriodSlots(
+    currentUser: CurrentUser,
+    dto: DuplicatePeriodSlotsDto,
+  ) {
+    await this.moduleAccessService.assertModuleEnabledForUser(
+      currentUser,
+      ModuleKey.TIMETABLE,
+    );
+    const rows = await this.prisma.periodSlot.findMany({
+      where: { id: { in: dto.sourceIds }, deletedAt: null },
+      orderBy: [{ dayOfWeek: 'asc' }, { periodNumber: 'asc' }],
+    });
+    if (rows.length === 0)
+      throw new NotFoundException('Period slot not found.');
+    for (const campusId of new Set(rows.map((row) => row.campusId))) {
+      await this.campusAccessService.assertCampusAccess(currentUser, campusId);
+    }
+    const sources = await this.entityCustomFieldsService.attachToItems(
+      rows,
+      CustomFieldEntity.PERIOD_SLOT,
+    );
+
+    let created = 0;
+    const skipped: {
+      sourceId: string;
+      name: string;
+      dayOfWeek: DayOfWeek;
+      reason: string;
+    }[] = [];
+    for (const source of sources) {
+      for (const dayOfWeek of dto.targetDays) {
+        if (dayOfWeek === source.dayOfWeek) continue;
+        try {
+          await this.createPeriodSlot(currentUser, {
+            classId: source.classId,
+            sectionId: source.sectionId,
+            subjectId: source.subjectId ?? undefined,
+            staffProfileId: source.staffProfileId ?? undefined,
+            name: source.name,
+            periodNumber: source.periodNumber,
+            dayOfWeek,
+            startTime: source.startTime,
+            endTime: source.endTime,
+            room: source.room,
+            customFields: source.customFields,
+          });
+          created += 1;
+        } catch (error) {
+          if (!(error instanceof HttpException) || error.getStatus() >= 500)
+            throw error;
+          skipped.push({
+            sourceId: source.id,
+            name: source.name,
+            dayOfWeek,
+            reason: error.message,
+          });
+        }
+      }
+    }
+    return {
+      message:
+        skipped.length === 0
+          ? `${created} period slot${created === 1 ? '' : 's'} copied.`
+          : `${created} copied, ${skipped.length} skipped.`,
+      data: { created, skipped },
+    };
   }
 
   /**

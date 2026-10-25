@@ -109,6 +109,72 @@ export class TimetableViewsController {
     return this.views.sectionSchedule(currentUser, sectionId, query.date);
   }
 
+  @Get('class/:classId/schedule')
+  @Version('1')
+  @RequirePermission('period_slots', 'read')
+  @ApiOperation({
+    summary:
+      "Get every section's timetable of a class for a week, with cover applied",
+  })
+  getClassSchedule(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Param('classId') classId: string,
+    @Query() query: WeekQueryDto,
+  ) {
+    return this.views.classSchedule(currentUser, classId, query.date);
+  }
+
+  @Get('campus/:campusId/schedule')
+  @Version('1')
+  @RequirePermission('period_slots', 'read')
+  @ApiOperation({
+    summary:
+      "Get every section's timetable of a campus for a week, with cover applied",
+  })
+  getCampusSchedule(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Param('campusId') campusId: string,
+    @Query() query: WeekQueryDto,
+  ) {
+    return this.views.campusSchedule(currentUser, campusId, query.date);
+  }
+
+  @Get('class/:classId/pdf')
+  @Version('1')
+  @RequirePermission('period_slots', 'read')
+  @ApiOperation({
+    summary: "Download a class's timetables for a week as a PDF",
+  })
+  async downloadClass(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Param('classId') classId: string,
+    @Query() query: WeekQueryDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return sendPdf(
+      response,
+      await this.pdfService.forClass(currentUser, classId, query.date),
+    );
+  }
+
+  @Get('campus/:campusId/pdf')
+  @Version('1')
+  @RequirePermission('period_slots', 'read')
+  @ApiOperation({
+    summary: "Download a campus's timetables for a week as a PDF",
+  })
+  async downloadCampus(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Param('campusId') campusId: string,
+    @Query() query: WeekQueryDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return sendPdf(
+      response,
+      await this.pdfService.forCampus(currentUser, campusId, query.date),
+    );
+  }
+
   @Get('teacher/:staffProfileId/schedule')
   @Version('1')
   @RequirePermission('period_slots', 'read')

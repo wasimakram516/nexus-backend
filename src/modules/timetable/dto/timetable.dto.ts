@@ -1,5 +1,9 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  ArrayUnique,
+  IsArray,
   IsEnum,
   IsInt,
   IsNotEmpty,
@@ -200,4 +204,30 @@ export class WeekQueryDto {
   @IsOptional()
   @IsDateString()
   date?: string;
+}
+
+export class DuplicatePeriodSlotsDto {
+  @ApiProperty({
+    type: [String],
+    description:
+      'The periods to copy. Each is copied, with its subject, teacher, room and extra fields, onto every target day.',
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(60)
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  sourceIds!: string[];
+
+  @ApiProperty({
+    enum: DayOfWeek,
+    isArray: true,
+    description:
+      "The days to copy onto. A source's own day is ignored, and a day that already has that period number is skipped.",
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayUnique()
+  @IsEnum(DayOfWeek, { each: true })
+  targetDays!: DayOfWeek[];
 }

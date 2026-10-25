@@ -962,4 +962,120 @@ describe('TimetableService', () => {
       });
     });
   });
+
+  describe('duplicatePeriodSlots', () => {
+    const source = (id: string, overrides: Record<string, unknown> = {}) => ({
+      id,
+      campusId: 'campus-1',
+      classId: 'class-1',
+      sectionId: 'section-1',
+      subjectId: 'subject-1',
+      staffProfileId: 'teacher-1',
+      name: 'Period 1',
+      periodNumber: 1,
+      dayOfWeek: DayOfWeek.MONDAY,
+      startTime: '08:00',
+      endTime: '08:40',
+      room: 'Lab 1',
+      customFields: { note: 'x' },
+      ...overrides,
+    });
+
+    it('copies each period onto every other target day with its teacher, room and extra values', async () => {
+      prismaMock.periodSlot.findMany.mockResolvedValueOnce([source('s1')]);
+      const create = jest
+        .spyOn(service, 'createPeriodSlot')
+        .mockResolvedValue({} as never);
+
+      const result = await service.duplicatePeriodSlots(adminUser, {
+        sourceIds: ['s1'],
+        targetDays: [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY],
+      });
+
+      expect(create).toHaveBeenCalledTimes(2);
+      expect(create).toHaveBeenCalledWith(adminUser, {
+        classId: 'class-1',
+        sectionId: 'section-1',
+        subjectId: 'subject-1',
+        staffProfileId: 'teacher-1',
+        name: 'Period 1',
+        periodNumber: 1,
+        dayOfWeek: DayOfWeek.TUESDAY,
+        startTime: '08:00',
+        endTime: '08:40',
+        room: 'Lab 1',
+        customFields: { note: 'x' },
+      });
+      expect(result.data).toEqual({ created: 2, skipped: [] });
+      expect(result.message).toBe('2 period slots copied.');
+    });
+
+    it('skips a copy that is refused and reports why, still making the rest', async () => {
+      prismaMock.periodSlot.findMany.mockResolvedValueOnce([source('s1')]);
+      jest
+        .spyOn(service, 'createPeriodSlot')
+        .mockRejectedValueOnce(
+          new ConflictException('Tuesday already has a period 1.'),
+        )
+        .mockResolvedValueOnce({} as never);
+
+      const result = await service.duplicatePeriodSlots(adminUser, {
+        sourceIds: ['s1'],
+        targetDays: [DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY],
+      });
+
+      expect(result.data.created).toBe(1);
+      expect(result.data.skipped).toEqual([
+        {
+          sourceId: 's1',
+          name: 'Period 1',
+          dayOfWeek: DayOfWeek.TUESDAY,
+          reason: 'Tuesday already has a period 1.',
+        },
+      ]);
+      expect(result.message).toBe('1 copied, 1 skipped.');
+    });
+
+    it('does not hide a server error as a skipped copy', async () => {
+      prismaMock.periodSlot.findMany.mockResolvedValueOnce([source('s1')]);
+      jest
+        .spyOn(service, 'createPeriodSlot')
+        .mockRejectedValue(new Error('database down'));
+
+      await expect(
+        service.duplicatePeriodSlots(adminUser, {
+          sourceIds: ['s1'],
+          targetDays: [DayOfWeek.TUESDAY],
+        }),
+      ).rejects.toThrow('database down');
+    });
+
+    it('checks the campus of every period and says when none exist', async () => {
+      prismaMock.periodSlot.findMany.mockResolvedValueOnce([]);
+      await expect(
+        service.duplicatePeriodSlots(adminUser, {
+          sourceIds: ['missing'],
+          targetDays: [DayOfWeek.TUESDAY],
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prismaMock.periodSlot.findMany.mockResolvedValueOnce([
+        source('s1'),
+        source('s2', { campusId: 'campus-2' }),
+      ]);
+      jest.spyOn(service, 'createPeriodSlot').mockResolvedValue({} as never);
+      await service.duplicatePeriodSlots(adminUser, {
+        sourceIds: ['s1', 's2'],
+        targetDays: [DayOfWeek.TUESDAY],
+      });
+      expect(campusAccessServiceMock.assertCampusAccess).toHaveBeenCalledWith(
+        adminUser,
+        'campus-1',
+      );
+      expect(campusAccessServiceMock.assertCampusAccess).toHaveBeenCalledWith(
+        adminUser,
+        'campus-2',
+      );
+    });
+  });
 });

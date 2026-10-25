@@ -332,6 +332,57 @@ describe('PostgreSQL timetable clashes and swaps', () => {
       }),
     ).resolves.toMatchObject({ message: 'Period slot updated successfully' });
   });
+
+  it('copies a period onto other days with its teacher and room, skipping days where it cannot go', async () => {
+    const copier = await newTeacher('Teacher Copier');
+    const source = await periodId(
+      sectionB,
+      DayOfWeek.THURSDAY,
+      7,
+      '15:00',
+      '15:40',
+      { staffProfileId: copier, room: 'Copy Room' },
+    );
+    // Friday: the same teacher is busy in another section then.
+    await periodId(sectionA, DayOfWeek.FRIDAY, 7, '15:10', '15:50', {
+      staffProfileId: copier,
+    });
+    // Saturday: this section already has a period 7.
+    await periodId(sectionB, DayOfWeek.SATURDAY, 7, '09:00', '09:40');
+
+    const result = await service.duplicatePeriodSlots(superadmin, {
+      sourceIds: [source],
+      targetDays: [
+        DayOfWeek.THURSDAY,
+        DayOfWeek.FRIDAY,
+        DayOfWeek.SATURDAY,
+        DayOfWeek.SUNDAY,
+      ],
+    });
+
+    expect(result.data.created).toBe(1);
+    expect(result.data.skipped.map((entry) => entry.dayOfWeek).sort()).toEqual(
+      [DayOfWeek.FRIDAY, DayOfWeek.SATURDAY].sort(),
+    );
+    const copy = await prisma.periodSlot.findFirstOrThrow({
+      where: {
+        sectionId: sectionB,
+        dayOfWeek: DayOfWeek.SUNDAY,
+        periodNumber: 7,
+      },
+    });
+    expect(copy).toMatchObject({
+      startTime: '15:00',
+      endTime: '15:40',
+      room: 'Copy Room',
+      staffProfileId: copier,
+    });
+    expect(
+      await prisma.periodSlot.count({
+        where: { sectionId: sectionB, periodNumber: 7, deletedAt: null },
+      }),
+    ).toBe(3);
+  });
 });
 
 describe('PostgreSQL timetable cover and weekly views', () => {
