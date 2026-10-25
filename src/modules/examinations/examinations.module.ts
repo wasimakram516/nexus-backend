@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ExamPrintablesController } from './exam-printables.controller';
+import { ExamPdfService } from './exam-pdf.service';
 import { ExamPrintablesService } from './exam-printables.service';
 import { ExamReportCardsController } from './exam-report-cards.controller';
 import { ExamReportCardsService } from './exam-report-cards.service';
@@ -27,6 +28,7 @@ import { ExaminationsService } from './examinations.service';
     ExamResultsService,
     ExamResultsViewService,
     ExamPrintablesService,
+    ExamPdfService,
     ExamReportCardsService,
   ],
   exports: [

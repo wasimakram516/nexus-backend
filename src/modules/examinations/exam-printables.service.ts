@@ -7,6 +7,10 @@ import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import {
+  PrintableCustomValue,
+  PrintableCustomValuesService,
+} from '../../common/services/printable-custom-values.service';
+import {
   PrintableMeta,
   PrintableMetaService,
 } from '../../common/services/printable-meta.service';
@@ -32,6 +36,8 @@ interface DatesheetExam {
   className: string;
   termName: string;
   academicYearName: string;
+  /** Custom field values the institution chose to show on the printed documents. */
+  customValues: PrintableCustomValue[];
   papers: Array<{
     examSubjectId: string;
     subjectName: string;
@@ -58,6 +64,7 @@ export class ExamPrintablesService {
     private readonly userPermissionsService: UserPermissionsService,
     private readonly printableMetaService: PrintableMetaService,
     private readonly viewService: ExamResultsViewService,
+    private readonly customValues: PrintableCustomValuesService,
   ) {}
 
   /**
@@ -250,6 +257,7 @@ export class ExamPrintablesService {
         className: exam.className,
         termName: exam.termName,
         academicYearName: exam.academicYearName,
+        customValues: exam.customValues,
       },
       papers: exam.papers,
     };
@@ -361,6 +369,10 @@ export class ExamPrintablesService {
       className: exam.class.name,
       termName: exam.examTerm.name,
       academicYearName: exam.academicYear.name,
+      customValues:
+        (
+          await this.customValues.forRecords(institutionId, 'exam', [exam.id])
+        ).get(exam.id) ?? [],
       papers,
     };
   }

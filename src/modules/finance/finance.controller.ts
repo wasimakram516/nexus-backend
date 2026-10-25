@@ -8,11 +8,11 @@ import {
   Post,
   Query,
   Res,
-  StreamableFile,
   UseGuards,
   Version,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { sendPdf } from '../../common/pdf/send-pdf';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUserDecorator } from '../../common/decorators/current-user.decorator';
 import { DeleteRecordDto } from '../../common/dto/delete-record.dto';
@@ -902,7 +902,7 @@ export class FinanceController {
     @Query() query: PrintFeeVouchersQueryDto,
     @Res({ passthrough: true }) response: Response,
   ) {
-    return this.sendPdf(
+    return sendPdf(
       response,
       await this.voucherPdfService.forBatch(currentUser, query),
     );
@@ -917,7 +917,7 @@ export class FinanceController {
     @Param('voucherId') voucherId: string,
     @Res({ passthrough: true }) response: Response,
   ) {
-    return this.sendPdf(
+    return sendPdf(
       response,
       await this.voucherPdfService.forVoucher(currentUser, voucherId),
     );
@@ -935,7 +935,7 @@ export class FinanceController {
     @Param('voucherId') voucherId: string,
     @Res({ passthrough: true }) response: Response,
   ) {
-    return this.sendPdf(
+    return sendPdf(
       response,
       await this.voucherPdfService.forOwnVoucher(currentUser, voucherId),
     );
@@ -1101,17 +1101,5 @@ export class FinanceController {
       paymentId,
       dto.reason,
     );
-  }
-  /** Sends a generated file as a download. */
-  private sendPdf(
-    response: Response,
-    file: { buffer: Buffer; filename: string },
-  ) {
-    response.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="${file.filename}"`,
-      'Cache-Control': 'no-store',
-    });
-    return new StreamableFile(file.buffer);
   }
 }

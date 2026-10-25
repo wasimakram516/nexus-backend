@@ -6,6 +6,10 @@ import {
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
+import {
+  PrintableCustomValue,
+  PrintableCustomValuesService,
+} from '../../common/services/printable-custom-values.service';
 import { PrintableMetaService } from '../../common/services/printable-meta.service';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
 import {
@@ -61,6 +65,8 @@ interface ClassData {
   className: string;
   terms: TermExam[];
   retakes: RetakeExam[];
+  /** examId -> the custom values the institution chose to print for that exam. */
+  customValues: Map<string, PrintableCustomValue[]>;
   enrollments: Array<{
     studentId: string;
     name: string;
@@ -110,6 +116,7 @@ export class ExamReportCardsService {
     private readonly userPermissionsService: UserPermissionsService,
     private readonly printableMetaService: PrintableMetaService,
     private readonly viewService: ExamResultsViewService,
+    private readonly customValues: PrintableCustomValuesService,
   ) {}
 
   /**
@@ -321,7 +328,11 @@ export class ExamReportCardsService {
     const position = data.literal.get(term.examId)?.get(studentId);
     return {
       term: { id: term.termId, name: term.termName, weight: term.termWeight },
-      exam: { id: term.examId, name: term.name },
+      exam: {
+        id: term.examId,
+        name: term.name,
+        customValues: data.customValues.get(term.examId) ?? [],
+      },
       outcome: { ...outcome, subjects },
       positionInClass: position?.positionInClass ?? null,
       classSize: position?.classSize ?? 0,
@@ -594,6 +605,12 @@ export class ExamReportCardsService {
     }));
     const policy = parsePassPolicy(setting?.value);
 
+    const customValues = await this.customValues.forRecords(
+      academicYear.institutionId,
+      'exam',
+      terms.map((term) => term.examId),
+    );
+
     return {
       institutionId: academicYear.institutionId,
       campusId: academicClass.level.campusId,
@@ -602,6 +619,7 @@ export class ExamReportCardsService {
       className: academicClass.name,
       terms,
       retakes,
+      customValues,
       enrollments: people,
       results,
       literal: this.computeLiteralPositions(terms, people, results, policy),

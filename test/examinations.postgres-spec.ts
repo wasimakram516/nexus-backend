@@ -22,6 +22,7 @@ import { ExamSubjectsService } from '../src/modules/examinations/exam-subjects.s
 import { ExaminationsService } from '../src/modules/examinations/examinations.service';
 import { UserRole } from '../src/prisma/client';
 import { OwnedStudentsService } from '../src/common/services/owned-students.service';
+import { PrintableCustomValuesService } from '../src/common/services/printable-custom-values.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
@@ -112,6 +113,7 @@ describe('PostgreSQL examinations setup', () => {
       permissions,
       new PrintableMetaService(prisma),
       view,
+      new PrintableCustomValuesService(prisma),
     );
     reportCards = new ExamReportCardsService(
       prisma,
@@ -120,6 +122,7 @@ describe('PostgreSQL examinations setup', () => {
       permissions,
       new PrintableMetaService(prisma),
       view,
+      new PrintableCustomValuesService(prisma),
     );
 
     const institution = await prisma.institution.create({
@@ -1783,6 +1786,64 @@ describe('PostgreSQL examinations setup', () => {
       await expect(
         reportCards.getReportCards(ayeshaUser, yearId, classId),
       ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('prints only the exam custom values the institution flagged, on the datesheet, admit card and report card', async () => {
+      const shown = await prisma.customFieldDefinition.create({
+        data: {
+          institutionId,
+          moduleKey: 'EXAMINATIONS',
+          entityType: 'exam',
+          fieldKey: 'venue_print',
+          label: 'Venue',
+          inputType: 'TEXT',
+          showOnPrint: true,
+        },
+      });
+      const hidden = await prisma.customFieldDefinition.create({
+        data: {
+          institutionId,
+          moduleKey: 'EXAMINATIONS',
+          entityType: 'exam',
+          fieldKey: 'invigilator_note',
+          label: 'Invigilator note',
+          inputType: 'TEXT',
+        },
+      });
+      await prisma.customFieldValue.createMany({
+        data: [
+          {
+            institutionId,
+            definitionId: shown.id,
+            entityId: term1Exam,
+            value: 'Main Hall',
+          },
+          {
+            institutionId,
+            definitionId: hidden.id,
+            entityId: term1Exam,
+            value: 'private',
+          },
+        ],
+      });
+
+      const sheet = dataOf(
+        await printables.getDatesheet(superadmin, term1Exam),
+      );
+      const card = dataOf(
+        await printables.getAdmitCard(superadmin, term1Exam, ayeshaId),
+      );
+      const report = dataOf(
+        await reportCards.getReportCard(superadmin, ayeshaId, yearId),
+      );
+
+      const expected = [{ label: 'Venue', value: 'Main Hall' }];
+      expect(sheet.exam.customValues).toEqual(expected);
+      expect(card.exam.customValues).toEqual(expected);
+      expect(
+        report.terms.find((term) => term.exam.id === term1Exam)?.exam
+          .customValues,
+      ).toEqual(expected);
     });
 
     it('switches the pass rule when the institution changes its exams setting', async () => {

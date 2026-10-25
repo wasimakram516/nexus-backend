@@ -6,6 +6,7 @@ import { ModuleAccessService } from '../../common/services/module-access.service
 import { PrintableMetaService } from '../../common/services/printable-meta.service';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
 import { ModuleKey, UserRole } from '../../prisma/client';
+import { PrintableCustomValuesService } from '../../common/services/printable-custom-values.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExamPrintablesService } from './exam-printables.service';
 import { ExamResultsViewService } from './exam-results-view.service';
@@ -105,6 +106,16 @@ describe('ExamPrintablesService', () => {
         { provide: UserPermissionsService, useValue: permissionsMock },
         { provide: PrintableMetaService, useValue: metaMock },
         { provide: ExamResultsViewService, useValue: viewMock },
+        {
+          provide: PrintableCustomValuesService,
+          useValue: {
+            forRecords: (
+              _institutionId: string,
+              _type: string,
+              ids: string[],
+            ) => Promise.resolve(new Map(ids.map((id) => [id, []]))),
+          },
+        },
       ],
     }).compile();
     service = moduleRef.get(ExamPrintablesService);
