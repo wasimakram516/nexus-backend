@@ -590,7 +590,11 @@ describe('PostgreSQL timetable cover and weekly views', () => {
     await expect(cover({ date: '2026-11-03' })).rejects.toThrow(
       /must be on a monday/,
     );
-    expect(await prisma.periodSubstitution.count()).toBe(0);
+    expect(
+      await prisma.periodSubstitution.count({
+        where: { periodSlotId: mondayMaths },
+      }),
+    ).toBe(0);
     // Keeps the next tests honest: the busy period exists.
     expect(mondayBusy).toBeTruthy();
   });

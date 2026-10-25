@@ -178,6 +178,7 @@ describe('PostgreSQL custom-field extension rollback (M4.5 shared blocker #2)', 
       new CampusAccessService(prisma),
       fields,
       new ModuleAccessService(prisma),
+      context,
     );
     const account = await prisma.user.create({
       data: {
