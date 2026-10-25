@@ -176,7 +176,9 @@ describe('PostgreSQL timetable clashes and swaps', () => {
       period(sectionB, DayOfWeek.MONDAY, 1, '08:20', '09:00', {
         staffProfileId: teacher1,
       }),
-    ).rejects.toThrow(/already teaching Grade 5, section A, 08:00 to 08:40/);
+    ).rejects.toThrow(
+      /already teaching Grade 5, section A, 8:00 AM to 8:40 AM/,
+    );
 
     await expect(
       period(sectionB, DayOfWeek.MONDAY, 2, '08:40', '09:20', {
