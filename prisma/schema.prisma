@@ -378,6 +378,7 @@ model Campus {
   notices               Notice[]
   // M3 (Timetable M1 track, decision #26).
   periodSlots           PeriodSlot[]
+  periodSubstitutions   PeriodSubstitution[]
   // P0-7: optional per-campus override for institutions with campuses in a
   // different city/timezone than the institution default. Null = "use
   // Institution.timezone" (the common case). Validated as a real IANA zone
@@ -1080,6 +1081,7 @@ model StaffProfile {
   contacts       Contact[]        @relation("StaffProfileContacts")
   // M3 (Timetable M1 track, decision #26).
   periodSlots    PeriodSlot[]
+  substitutions  PeriodSubstitution[] @relation("SubstituteStaff")
 
   @@index([campusId])
   @@index([employmentType])
@@ -1159,6 +1161,9 @@ model PeriodSlot {
   dayOfWeek      DayOfWeek @map("day_of_week")
   startTime      String    @map("start_time") // "HH:mm" — same convention as Campus.studentStartTime, not a DateTime
   endTime        String    @map("end_time")
+  // Where the period is taught. Free text, offered back from the rooms already
+  // used on the campus, and checked so two periods never share a room at once.
+  room           String?
   createdBy      String?   @map("created_by") @db.Uuid
   updatedBy      String?   @map("updated_by") @db.Uuid
   deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(3)
@@ -1178,6 +1183,7 @@ model PeriodSlot {
   // by that map's own documented convention — editing/removing a PeriodSlot
   // must never delete historical attendance facts.
   attendanceRecords Attendance[]
+  substitutions     PeriodSubstitution[]
 
   @@unique([sectionId, dayOfWeek, periodNumber, activeScopeKey], map: "period_slot_section_day_number_unique")
   @@index([campusId])
@@ -1185,6 +1191,36 @@ model PeriodSlot {
   @@index([subjectId])
   @@index([staffProfileId])
   @@map("period_slots")
+}
+
+/// One teacher covering one period on one date, instead of the teacher the
+/// weekly timetable names. The weekly template is never changed; the cover
+/// applies to that date only. Cancelling a substitution soft-deletes it.
+model PeriodSubstitution {
+  id                       String      @id @default(uuid()) @db.Uuid
+  // Denormalized from the period's section, like PeriodSlot.campusId.
+  campusId                 String      @map("campus_id") @db.Uuid
+  periodSlotId             String      @map("period_slot_id") @db.Uuid
+  date                     DateTime    @db.Date
+  substituteStaffProfileId String      @map("substitute_staff_profile_id") @db.Uuid
+  reason                   String?
+  createdBy                String?     @map("created_by") @db.Uuid
+  updatedBy                String?     @map("updated_by") @db.Uuid
+  deletedAt                DateTime?   @map("deleted_at") @db.Timestamptz(3)
+  deletedBy                String?     @map("deleted_by") @db.Uuid
+  deleteReason             String?     @map("delete_reason")
+  activeScopeKey           String      @default("ACTIVE") @map("active_scope_key")
+  createdAt                DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  campus     Campus       @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  periodSlot PeriodSlot   @relation(fields: [periodSlotId], references: [id], onDelete: Cascade)
+  substitute StaffProfile @relation("SubstituteStaff", fields: [substituteStaffProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([periodSlotId, date, activeScopeKey], map: "period_substitution_unique")
+  @@index([campusId, date])
+  @@index([substituteStaffProfileId, date])
+  @@map("period_substitutions")
 }
 
 // M3 (Attendance dual-mode track, § 5.3 of M3-SCHEDULING-COMMUNICATION-DESIGN.md).
