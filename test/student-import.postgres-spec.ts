@@ -9,7 +9,10 @@ import { ModuleAccessService } from '../src/common/services/module-access.servic
 import { RequestContextService } from '../src/common/services/request-context.service';
 import { AuthService } from '../src/modules/auth/auth.service';
 import { PeopleService } from '../src/modules/people/people.service';
+import { StudentIdCardsService } from '../src/modules/people/student-id-cards.service';
 import { StudentImportService } from '../src/modules/people/student-import.service';
+import { PrintableCustomValuesService } from '../src/common/services/printable-custom-values.service';
+import { PrintableMetaService } from '../src/common/services/printable-meta.service';
 import { UserRole } from '../src/prisma/client';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -27,6 +30,7 @@ describe('PostgreSQL student import', () => {
   const context = new RequestContextService();
   let prisma: PrismaService;
   let service: StudentImportService;
+  let idCards: StudentIdCardsService;
   let institutionId: string;
   let campusId: string;
   let admin: CurrentUser;
@@ -67,6 +71,15 @@ describe('PostgreSQL student import', () => {
       fields,
       people,
       auth,
+    );
+
+    idCards = new StudentIdCardsService(
+      prisma,
+      allowModule,
+      campusAccess,
+      fields,
+      new PrintableCustomValuesService(prisma),
+      new PrintableMetaService(prisma),
     );
 
     institutionId = (
@@ -236,6 +249,33 @@ describe('PostgreSQL student import', () => {
         guardians[0].user.passwordHash,
       ),
     ).toBe(true);
+  });
+
+  it('prints ID cards for the imported students, with the guardian number and the end of the year', async () => {
+    const result = await idCards.getCards(admin, { campusId });
+
+    const cards = result.data.cards;
+    expect(cards.map((card) => card.name)).toEqual([
+      'Ayesha Khan',
+      'Bilal Khan',
+      'Cyrus Ali',
+    ]);
+    expect(cards[0]).toMatchObject({
+      className: 'Grade 5',
+      sectionName: 'A',
+      dob: '2016-06-12',
+      validUntil: '2027-03-31',
+      guardianPhone: phone,
+      customValues: [],
+    });
+    expect(cards[2].guardianPhone).toBeNull();
+    expect(result.data.printMeta.documentType).toBe('ID_CARD');
+
+    const one = await idCards.getCards(admin, {
+      campusId,
+      studentId: cards[1].studentId,
+    });
+    expect(one.data.cards.map((card) => card.name)).toEqual(['Bilal Khan']);
   });
 
   it('refuses a second import of the same people, line by line, and changes nothing', async () => {

@@ -35,8 +35,10 @@ import {
   UpdateStudentEnrollmentDto,
   WithdrawStudentDto,
 } from './dto/people.dto';
+import { IdCardsQueryDto } from './dto/student-id-cards.dto';
 import { ImportCommitDto, ImportPreviewDto } from './dto/student-import.dto';
 import { PeopleService } from './people.service';
+import { StudentIdCardsService } from './student-id-cards.service';
 import { StudentImportService } from './student-import.service';
 
 @ApiTags('People')
@@ -47,6 +49,7 @@ export class PeopleController {
   constructor(
     private readonly peopleService: PeopleService,
     private readonly studentImport: StudentImportService,
+    private readonly idCards: StudentIdCardsService,
   ) {}
 
   @Post('students')
@@ -127,6 +130,21 @@ export class PeopleController {
     @Query('campusId') campusId: string,
   ) {
     return this.peopleService.resolveNextRegNo(currentUser, campusId);
+  }
+
+  @Get('students/id-cards')
+  @Version('1')
+  @RequirePermission('students', 'read')
+  @ApiOperation({
+    summary: 'Student ID cards for printing',
+    description:
+      "One card for each enrolled student of the current academic year at a campus, or of one class, section or student, with the school's print header and any fields it chose to show on print.",
+  })
+  getIdCards(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Query() query: IdCardsQueryDto,
+  ) {
+    return this.idCards.getCards(currentUser, query);
   }
 
   @Get('students/:studentId')
