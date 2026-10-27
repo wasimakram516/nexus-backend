@@ -2,6 +2,7 @@ import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
@@ -11,9 +12,11 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 import { AppLoggerService } from './common/services/app-logger.service';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
   });
+  // A spreadsheet of students is sent as JSON, and a thousand lines is more than the 100 kb default.
+  app.useBodyParser('json', { limit: '2mb' });
   const logger = app.get(AppLoggerService);
 
   app.useLogger(logger);

@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -34,14 +35,19 @@ import {
   UpdateStudentEnrollmentDto,
   WithdrawStudentDto,
 } from './dto/people.dto';
+import { ImportCommitDto, ImportPreviewDto } from './dto/student-import.dto';
 import { PeopleService } from './people.service';
+import { StudentImportService } from './student-import.service';
 
 @ApiTags('People')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('people')
 export class PeopleController {
-  constructor(private readonly peopleService: PeopleService) {}
+  constructor(
+    private readonly peopleService: PeopleService,
+    private readonly studentImport: StudentImportService,
+  ) {}
 
   @Post('students')
   @Version('1')
@@ -56,6 +62,38 @@ export class PeopleController {
     @Body() dto: CreateStudentDto,
   ) {
     return this.peopleService.createStudent(currentUser, dto);
+  }
+
+  @Post('students/import/preview')
+  @Version('1')
+  @HttpCode(200)
+  @RequirePermission('students', 'create')
+  @ApiOperation({
+    summary: 'Check a file of students before importing it',
+    description:
+      'Reads every line, says what is wrong with each, and writes nothing.',
+  })
+  previewStudentImport(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Body() dto: ImportPreviewDto,
+  ) {
+    return this.studentImport.preview(currentUser, dto);
+  }
+
+  @Post('students/import')
+  @Version('1')
+  @HttpCode(200)
+  @RequirePermission('students', 'create')
+  @ApiOperation({
+    summary: 'Import a few students',
+    description:
+      'Admits each line as a student exactly as admitting one by hand does, with an account and a first password, and optionally a guardian. Lines with a problem are skipped and reported.',
+  })
+  importStudents(
+    @CurrentUserDecorator() currentUser: CurrentUserPayload,
+    @Body() dto: ImportCommitDto,
+  ) {
+    return this.studentImport.commit(currentUser, dto);
   }
 
   @Get('students')
