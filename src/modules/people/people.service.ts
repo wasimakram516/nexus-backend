@@ -51,6 +51,8 @@ const DEFAULT_REG_NO_SEQ_SCOPE: 'ALL_TIME' | 'PER_ACADEMIC_YEAR' =
   'PER_ACADEMIC_YEAR';
 /** Bounded retry count for a generated regNo that collides on create (§ 7.2). */
 const MAX_REG_NO_GENERATION_ATTEMPTS = 5;
+/** How many numbers another school may already hold before generation gives up. */
+const MAX_REG_NO_SKIPS = 500;
 
 /** Computed "current placement" view attached to Student list/detail
  *  responses now that classId/sectionId no longer live on Student itself
@@ -2342,15 +2344,26 @@ export class PeopleService {
           : {}),
       },
     });
-    const seqToken = String(seqCount + 1 + attemptOffset).padStart(
-      seqPadding,
-      '0',
-    );
+    const regNoFor = (sequence: number) =>
+      regNoPattern
+        .replace('{CAMPUS}', campusToken)
+        .replace('{YEAR}', yearToken)
+        .replace('{SEQ}', String(sequence).padStart(seqPadding, '0'));
 
-    return regNoPattern
-      .replace('{CAMPUS}', campusToken)
-      .replace('{YEAR}', yearToken)
-      .replace('{SEQ}', seqToken);
+    // A registration number is also the student's sign-in name, and a sign-in
+    // name is unique across every school, so a number another school already
+    // uses is skipped rather than offered.
+    for (let skipped = 0; skipped < MAX_REG_NO_SKIPS; skipped += 1) {
+      const candidate = regNoFor(seqCount + 1 + attemptOffset + skipped);
+      const taken = await this.prisma.user.findFirst({
+        where: { identifier: candidate },
+        select: { id: true },
+      });
+      if (!taken) return candidate;
+    }
+    throw new ConflictException(
+      'No free registration number could be generated. Give the campus a code of its own, or change the registration number pattern, so numbers differ from other schools.',
+    );
   }
 
   /**

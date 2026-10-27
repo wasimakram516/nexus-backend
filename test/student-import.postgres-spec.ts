@@ -318,6 +318,82 @@ describe('PostgreSQL student import', () => {
     expect(guardians[0].students).toHaveLength(4);
   });
 
+  it('gives a student of another school a different registration number when the first school already holds it, since sign-in names are shared by every school', async () => {
+    const otherInstitution = (
+      await prisma.institution.create({
+        data: { name: 'Second school', slug: randomUUID() },
+      })
+    ).id;
+    const otherYear = await prisma.academicYear.create({
+      data: {
+        institutionId: otherInstitution,
+        name: '2026-27',
+        startDate: new Date('2026-04-01'),
+        endDate: new Date('2027-03-31'),
+      },
+    });
+    await prisma.institution.update({
+      where: { id: otherInstitution },
+      data: { currentAcademicYearId: otherYear.id },
+    });
+    // The same campus code as the first school, so the same pattern gives the same numbers.
+    const otherCampus = await prisma.campus.create({
+      data: {
+        institutionId: otherInstitution,
+        name: 'Second campus',
+        code: `T${tail}`,
+        location: 'Test',
+        studentStartTime: '08:00',
+        studentEndTime: '14:00',
+        staffStartTime: '08:00',
+        staffEndTime: '14:00',
+        lateThreshold: 10,
+        earlyLeaveThreshold: 10,
+      },
+    });
+    const otherLevel = await prisma.level.create({
+      data: { name: 'Primary', campusId: otherCampus.id },
+    });
+    await prisma.academicClass.create({
+      data: { name: 'Grade 5', levelId: otherLevel.id },
+    });
+    const otherAdmin = await prisma.user.create({
+      data: {
+        institutionId: otherInstitution,
+        name: 'Second admin',
+        email: `${randomUUID()}@example.test`,
+        passwordHash: 'unused-test-value',
+        role: 'ADMIN',
+      },
+    });
+
+    const result = await service.commit(
+      {
+        sub: otherAdmin.id,
+        email: otherAdmin.email,
+        role: UserRole.ADMIN,
+        institutionId: otherInstitution,
+      },
+      {
+        campusId: otherCampus.id,
+        rows: [
+          {
+            name: 'Zain',
+            dob: '01/01/2015',
+            gender: 'm',
+            className: 'Grade 5',
+          },
+        ],
+      },
+    );
+
+    expect(result.data.results[0].status).toBe('IMPORTED');
+    const firstSchoolNumbers = (
+      await prisma.student.findMany({ where: { institutionId } })
+    ).map((student) => student.regNo);
+    expect(firstSchoolNumbers).not.toContain(result.data.results[0].regNo);
+  });
+
   it('refuses everyone who is not allowed in the campus', async () => {
     const outsider: CurrentUser = {
       sub: randomUUID(),

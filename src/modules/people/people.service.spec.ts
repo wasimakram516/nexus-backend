@@ -33,6 +33,7 @@ describe('PeopleService', () => {
   const prismaMock = {
     user: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
     },
     student: {
@@ -876,6 +877,66 @@ describe('PeopleService', () => {
       expect(result).toMatchObject({
         data: { suggestedRegNo: 'GUL-26-0001' },
       });
+    });
+
+    it('skips a number another school already uses as a sign-in name, since sign-in names are unique across schools', async () => {
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      prismaMock.institution.findUnique.mockResolvedValue({
+        currentAcademicYearId: 'year-1',
+      });
+      prismaMock.institutionSetting.findUnique.mockResolvedValue(null);
+      prismaMock.campus.findUnique.mockResolvedValue({
+        code: 'GUL',
+        name: 'Gulberg Campus',
+      });
+      prismaMock.academicYear.findUnique.mockResolvedValue({
+        startDate: new Date('2026-04-01T00:00:00.000Z'),
+      });
+      prismaMock.student.count.mockResolvedValue(0);
+      // Another school holds 0001 and 0002.
+      prismaMock.user.findFirst
+        .mockResolvedValueOnce({ id: 'other-1' })
+        .mockResolvedValueOnce({ id: 'other-2' })
+        .mockResolvedValueOnce(null);
+
+      const result = await service.resolveNextRegNo(currentUser, 'campus-1');
+
+      expect(prismaMock.user.findFirst).toHaveBeenCalledWith({
+        where: { identifier: 'GUL-26-0001' },
+        select: { id: true },
+      });
+      expect(result).toMatchObject({
+        data: { suggestedRegNo: 'GUL-26-0003' },
+      });
+    });
+
+    it('says what to change when no free registration number can be found', async () => {
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      prismaMock.institution.findUnique.mockResolvedValue({
+        currentAcademicYearId: 'year-1',
+      });
+      prismaMock.institutionSetting.findUnique.mockResolvedValue(null);
+      prismaMock.campus.findUnique.mockResolvedValue({
+        code: 'GUL',
+        name: 'Gulberg Campus',
+      });
+      prismaMock.academicYear.findUnique.mockResolvedValue({
+        startDate: new Date('2026-04-01T00:00:00.000Z'),
+      });
+      prismaMock.student.count.mockResolvedValue(0);
+      prismaMock.user.findFirst.mockResolvedValue({ id: 'someone' });
+
+      await expect(
+        service.resolveNextRegNo(currentUser, 'campus-1'),
+      ).rejects.toThrow('Give the campus a code of its own');
+      // Do not leave every number looking taken for the tests that follow.
+      prismaMock.user.findFirst.mockReset();
     });
 
     it('scopes the sequence count institution-wide (ALL_TIME) when the student_admission setting overrides the PER_ACADEMIC_YEAR default', async () => {
