@@ -31,6 +31,7 @@ import { NoticesModule } from './modules/notices/notices.module';
 import { TimetableModule } from './modules/timetable/timetable.module';
 import { ExaminationsModule } from './modules/examinations/examinations.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -68,6 +69,7 @@ import { ReportsModule } from './modules/reports/reports.module';
     TimetableModule,
     ExaminationsModule,
     ReportsModule,
+    NotificationsModule,
   ],
   providers: [
     AppLoggerService,

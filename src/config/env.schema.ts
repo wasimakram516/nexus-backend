@@ -48,8 +48,40 @@ export const envSchema = z
       .enum(['true', 'false'])
       .default('false')
       .transform((value) => value === 'true'),
+    // The address of the web app, used to build links in emails (password reset).
+    APP_URL: z.string().url().default('http://localhost:3000'),
+    // How messages leave the system. `log` (default) sends nothing and only
+    // records that a message would have been sent; `smtp` sends real email.
+    NOTIFICATIONS_PROVIDER: z.enum(['log', 'smtp']).default('log'),
+    NOTIFICATIONS_FROM: z.string().min(3).optional(),
+    SMTP_HOST: z.string().min(1).optional(),
+    SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+    SMTP_SECURE: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    SMTP_USER: z.string().min(1).optional(),
+    SMTP_PASSWORD: z.string().min(1).optional(),
   })
   .superRefine((config, context) => {
+    if (config.NOTIFICATIONS_PROVIDER === 'smtp') {
+      for (const key of ['SMTP_HOST', 'NOTIFICATIONS_FROM'] as const) {
+        if (!config[key]) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${key} is required when NOTIFICATIONS_PROVIDER is smtp.`,
+            path: [key],
+          });
+        }
+      }
+    }
+    if (Boolean(config.SMTP_USER) !== Boolean(config.SMTP_PASSWORD)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'SMTP_USER and SMTP_PASSWORD must be provided together.',
+        path: config.SMTP_USER ? ['SMTP_PASSWORD'] : ['SMTP_USER'],
+      });
+    }
     const hasSuperadminEmail = Boolean(config.SUPERADMIN_SEED_EMAIL);
     const hasSuperadminPassword = Boolean(config.SUPERADMIN_SEED_PASSWORD);
 
