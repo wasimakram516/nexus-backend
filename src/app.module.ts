@@ -30,6 +30,7 @@ import { SchedulerModule } from './modules/scheduler/scheduler.module';
 import { NoticesModule } from './modules/notices/notices.module';
 import { TimetableModule } from './modules/timetable/timetable.module';
 import { ExaminationsModule } from './modules/examinations/examinations.module';
+import { ReportsModule } from './modules/reports/reports.module';
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { ExaminationsModule } from './modules/examinations/examinations.module';
     NoticesModule,
     TimetableModule,
     ExaminationsModule,
+    ReportsModule,
   ],
   providers: [
     AppLoggerService,
