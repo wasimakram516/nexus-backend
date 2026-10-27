@@ -11,7 +11,11 @@ import { RequestContextService } from '../common/services/request-context.servic
 // InstitutionBranding/InstitutionSetting/InstitutionEntitlement/
 // InstitutionSubscription/Role bespoke-audit set) now gets the same
 // automatic before/after snapshot auditing as the rest of the schema.
-const AUTO_AUDIT_EXCLUDED_MODELS = new Set(['AuditLog', 'RefreshSession']);
+const AUTO_AUDIT_EXCLUDED_MODELS = new Set([
+  'AuditLog',
+  'RefreshSession',
+  'PasswordResetToken',
+]);
 
 type ModelCapabilities = {
   createdBy: boolean;

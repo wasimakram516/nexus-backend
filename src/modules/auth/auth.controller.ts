@@ -24,12 +24,23 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { AuthService } from './auth.service';
-import { LoginDto, RegisterDto, RevokeSessionDto } from './dto/auth.dto';
+import { PasswordService } from './password.service';
+import {
+  ChangePasswordDto,
+  ForgotPasswordDto,
+  LoginDto,
+  RegisterDto,
+  ResetPasswordDto,
+  RevokeSessionDto,
+} from './dto/auth.dto';
 
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly passwordService: PasswordService,
+  ) {}
 
   @Post('register')
   @Version('1')
@@ -66,6 +77,54 @@ export class AuthController {
       userAgent: req.headers['user-agent'],
       ipAddress: req.ip,
     });
+  }
+
+  @Post('forgot-password')
+  @Version('1')
+  @HttpCode(200)
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Ask for a link to choose a new password',
+    description:
+      'Always answers the same way, whether or not the account exists, so it cannot be used to find out who has one.',
+  })
+  forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
+    return this.passwordService.requestReset(dto.identifier, req.ip);
+  }
+
+  @Post('reset-password')
+  @Version('1')
+  @HttpCode(200)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Choose a new password with the link that was emailed',
+    description:
+      'The link works once and for a short time. Every session of the account is signed out.',
+  })
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.passwordService.reset(dto.token, dto.password);
+  }
+
+  @Post('change-password')
+  @Version('1')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Change your own password',
+    description:
+      'Needs the present password. Your other sessions are signed out; this one stays.',
+  })
+  changePassword(
+    @Body() dto: ChangePasswordDto,
+    @CurrentUserDecorator() currentUser: CurrentUser,
+  ) {
+    return this.passwordService.change(
+      currentUser,
+      dto.currentPassword,
+      dto.newPassword,
+    );
   }
 
   @Post('refresh')

@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
   MinLength,
   ValidateIf,
 } from 'class-validator';
@@ -30,7 +31,15 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   @MinLength(8)
+  @MaxLength(72)
   password?: string;
+
+  @ApiPropertyOptional({
+    description: 'Required when setting a new password.',
+  })
+  @IsOptional()
+  @IsString()
+  currentPassword?: string;
 }
 
 export class UpdateUserRoleDto extends CustomFieldPayloadDto {

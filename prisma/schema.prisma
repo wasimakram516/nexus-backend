@@ -180,6 +180,9 @@ model User {
   name                String
   email               String
   passwordHash        String             @map("password_hash")
+  // Set when an administrator provisions the account, so the person chooses their own
+  // password at first sign-in. Cleared when they change it.
+  mustChangePassword  Boolean            @default(false) @map("must_change_password")
   role                UserRole
   status              UserStatus         @default(ACTIVE)
   createdBy           String?            @map("created_by") @db.Uuid
@@ -197,6 +200,7 @@ model User {
   institution         Institution?       @relation(fields: [institutionId], references: [id], onDelete: SetNull)
   assignedRole        Role?              @relation(fields: [roleId], references: [id], onDelete: SetNull)
   refreshSessions     RefreshSession[]
+  passwordResetTokens PasswordResetToken[]
   campuses            UserCampus[]
   student             Student?
   guardian            Guardian?
@@ -309,6 +313,22 @@ model PlanDefinition {
   @@unique([key, activeScopeKey], map: "plan_definition_key_active_scope_unique")
   @@index([institutionId])
   @@map("plan_definitions")
+}
+
+/// A single-use link for choosing a new password. Only a hash of the token is
+/// stored, so the database cannot be used to reset anyone's password.
+model PasswordResetToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  tokenHash   String    @unique @map("token_hash")
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt      DateTime? @map("used_at") @db.Timestamptz(3)
+  requestedIp String?   @map("requested_ip")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 model RefreshSession {

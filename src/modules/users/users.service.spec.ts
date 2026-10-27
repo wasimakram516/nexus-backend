@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import * as bcrypt from 'bcrypt';
 import { Prisma, UserRole, UserStatus } from '../../prisma/client';
 // DTOs (UpdateUserAccessDto etc.) are typed against the hand-maintained
 // domain enums, not the Prisma client enum — both share the same values,
@@ -357,6 +358,53 @@ describe('UsersService', () => {
       expect(result).toEqual({
         message: 'Users resolved successfully',
         data: {},
+      });
+    });
+  });
+
+  describe('updateProfile — changing your own password', () => {
+    beforeEach(async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        passwordHash: await bcrypt.hash('old-password', 4),
+      });
+      prismaMock.user.update.mockResolvedValue({ id: 'admin-1' });
+    });
+
+    it('needs the current password, so a stolen session cannot take over the account', async () => {
+      await expect(
+        service.updateProfile(adminUser, { password: 'brand-new-pass' }),
+      ).rejects.toThrow('Enter your current password to set a new one.');
+      await expect(
+        service.updateProfile(adminUser, {
+          password: 'brand-new-pass',
+          currentPassword: 'wrong',
+        }),
+      ).rejects.toThrow('Enter your current password to set a new one.');
+      expect(prismaMock.user.update).not.toHaveBeenCalled();
+    });
+
+    it('sets the new password and clears the must-change flag when the current one is right', async () => {
+      await service.updateProfile(adminUser, {
+        password: 'brand-new-pass',
+        currentPassword: 'old-password',
+      });
+
+      const data = prismaMock.user.update.mock.calls[0][0].data as {
+        passwordHash: string;
+        mustChangePassword: boolean;
+      };
+      expect(await bcrypt.compare('brand-new-pass', data.passwordHash)).toBe(
+        true,
+      );
+      expect(data.mustChangePassword).toBe(false);
+    });
+
+    it('changes the name without asking for a password', async () => {
+      await service.updateProfile(adminUser, { name: 'New Name' });
+
+      expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
+      expect(prismaMock.user.update.mock.calls[0][0].data).toEqual({
+        name: 'New Name',
       });
     });
   });

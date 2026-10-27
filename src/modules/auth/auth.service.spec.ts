@@ -394,4 +394,61 @@ describe('AuthService', () => {
       });
     });
   });
+
+  describe('register — accounts someone else sets up', () => {
+    const actor: CurrentUser = {
+      sub: 'admin-1',
+      email: 'admin@nexus.test',
+      role: UserRole.ADMIN,
+      institutionId: 'institution-1',
+    };
+
+    beforeEach(() => {
+      prismaMock.user.findFirst.mockResolvedValue(null);
+      prismaMock.user.create.mockResolvedValue({
+        id: 'new-1',
+        name: 'N',
+        email: 'n@x.test',
+        role: UserRole.STAFF,
+        institutionId: 'institution-1',
+      });
+    });
+
+    it('must choose their own password at first sign-in when an administrator made the account', async () => {
+      await service.register(
+        {
+          name: 'N',
+          email: 'n@x.test',
+          password: 'password-1',
+          role: DtoUserRole.STAFF,
+        },
+        actor,
+      );
+
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment -- untyped Prisma mock */
+      expect(prismaMock.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ mustChangePassword: true }),
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
+    });
+
+    it('keeps the password of someone who signs themselves up', async () => {
+      await service.register({
+        name: 'N',
+        email: 'n@x.test',
+        password: 'password-1',
+        role: DtoUserRole.ADMIN,
+      });
+
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment -- untyped Prisma mock */
+      expect(prismaMock.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ mustChangePassword: false }),
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
+    });
+  });
 });

@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ModuleKey, Prisma, UserRole } from '../../prisma/client';
 // UpdateUserAccessDto.role is typed against this hand-maintained mirror;
@@ -57,12 +58,35 @@ export class UsersService {
   }
 
   async updateProfile(currentUser: CurrentUser, dto: UpdateProfileDto) {
-    const payload: { name?: string; email?: string; passwordHash?: string } =
-      {};
+    const payload: {
+      name?: string;
+      email?: string;
+      passwordHash?: string;
+      mustChangePassword?: boolean;
+    } = {};
     if (dto.name) payload.name = dto.name;
     if (dto.email) payload.email = dto.email.toLowerCase();
-    if (dto.password)
+    if (dto.password) {
+      // A stolen session must not be enough to take over the account.
+      const account = await this.prisma.user.findUnique({
+        where: { id: currentUser.sub },
+        select: { passwordHash: true },
+      });
+      const confirmed =
+        Boolean(dto.currentPassword) &&
+        Boolean(account) &&
+        (await bcrypt.compare(
+          dto.currentPassword as string,
+          account!.passwordHash,
+        ));
+      if (!confirmed) {
+        throw new UnauthorizedException(
+          'Enter your current password to set a new one.',
+        );
+      }
       payload.passwordHash = await bcrypt.hash(dto.password, 12);
+      payload.mustChangePassword = false;
+    }
 
     const user = await this.prisma.user.update({
       where: { id: currentUser.sub },

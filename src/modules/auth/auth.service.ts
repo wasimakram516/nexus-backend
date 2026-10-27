@@ -75,6 +75,8 @@ export class AuthService {
         passwordHash,
         role: dto.role,
         institutionId,
+        // An account someone else sets up starts with a password they chose, so the person picks their own.
+        mustChangePassword: Boolean(actor),
       },
       select: {
         id: true,
@@ -500,6 +502,7 @@ export class AuthService {
       role: user.role,
       status: user.status,
       institutionId: user.institutionId,
+      mustChangePassword: user.mustChangePassword,
     };
   }
 
