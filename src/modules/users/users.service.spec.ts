@@ -362,6 +362,7 @@ describe('UsersService', () => {
     });
   });
 
+  /* eslint-disable @typescript-eslint/no-unsafe-member-access -- jest mock calls are typed any */
   describe('updateProfile — changing your own password', () => {
     beforeEach(async () => {
       prismaMock.user.findUnique.mockResolvedValue({
@@ -408,4 +409,5 @@ describe('UsersService', () => {
       });
     });
   });
+  /* eslint-enable @typescript-eslint/no-unsafe-member-access */
 });
