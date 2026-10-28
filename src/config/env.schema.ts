@@ -62,6 +62,29 @@ export const envSchema = z
       .transform((value) => value === 'true'),
     SMTP_USER: z.string().min(1).optional(),
     SMTP_PASSWORD: z.string().min(1).optional(),
+    // Automated database backups. Built but OFF: only the real production
+    // environment turns this on, after a manual restore drill.
+    BACKUP_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    BACKUP_S3_BUCKET: z.string().min(3).optional(),
+    BACKUP_S3_REGION: z.string().min(2).optional(),
+    BACKUP_KMS_KEY_ID: z.string().min(1).optional(),
+    // 64 hex characters (256 bits). The dump is encrypted with this before upload.
+    BACKUP_ENCRYPTION_KEY: z
+      .string()
+      .regex(/^[0-9a-fA-F]{64}$/, 'must be 64 hex characters')
+      .optional(),
+    BACKUP_OBJECT_LOCK: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((value) => value === 'true'),
+    BACKUP_RETENTION_INTRADAY_DAYS: z.coerce.number().int().min(1).default(3),
+    BACKUP_RETENTION_DAILY_DAYS: z.coerce.number().int().min(1).default(30),
+    BACKUP_RETENTION_WEEKLY_DAYS: z.coerce.number().int().min(1).default(84),
+    BACKUP_RETENTION_MONTHLY_DAYS: z.coerce.number().int().min(1).default(365),
+    BACKUP_RETENTION_YEARLY_DAYS: z.coerce.number().int().min(1).default(3650),
   })
   .superRefine((config, context) => {
     if (config.NOTIFICATIONS_PROVIDER === 'smtp') {
@@ -70,6 +93,21 @@ export const envSchema = z
           context.addIssue({
             code: z.ZodIssueCode.custom,
             message: `${key} is required when NOTIFICATIONS_PROVIDER is smtp.`,
+            path: [key],
+          });
+        }
+      }
+    }
+    if (config.BACKUP_ENABLED) {
+      for (const key of [
+        'BACKUP_S3_BUCKET',
+        'BACKUP_S3_REGION',
+        'BACKUP_ENCRYPTION_KEY',
+      ] as const) {
+        if (!config[key]) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${key} is required when BACKUP_ENABLED is true.`,
             path: [key],
           });
         }

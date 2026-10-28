@@ -102,6 +102,36 @@ describe('notification templates', () => {
     expect(message.html).toContain('<p');
   });
 
+  it('writes a backup alert that names the step and the reason', () => {
+    const message = renderTemplate('BACKUP_ALERT', {
+      jobName: 'intraday backup',
+      reason: 'pg_dump exited with 1',
+      at: '28 Oct 2026, 3:00 AM',
+    });
+
+    expect(message.subject).toBe('Nexus backup problem: intraday backup');
+    expect(message.text).toContain('Reason: pg_dump exited with 1');
+  });
+
+  it('writes the backup report with its lines, and says when attention is needed', () => {
+    const lines = ['Daily: 28 Oct 2026, 1.2 MB', 'Restore check: passed'];
+
+    const well = renderTemplate('BACKUP_REPORT', {
+      date: '28 Oct 2026',
+      lines,
+      healthy: true,
+    });
+    const bad = renderTemplate('BACKUP_REPORT', {
+      date: '28 Oct 2026',
+      lines,
+      healthy: false,
+    });
+
+    expect(well.subject).toContain('all well');
+    expect(well.text).toContain('Restore check: passed');
+    expect(bad.subject).toContain('needs attention');
+  });
+
   it('says days in the plural except for one', () => {
     const many = renderTemplate('TRIAL_EXPIRING', {
       adminName: 'A',

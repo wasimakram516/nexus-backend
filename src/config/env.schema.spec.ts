@@ -34,3 +34,52 @@ describe('envSchema database transaction limits', () => {
     expect(() => envSchema.parse({ ...base, [key]: value })).toThrow();
   });
 });
+
+describe('envSchema backups', () => {
+  const base = {
+    DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/nexus',
+    JWT_ACCESS_SECRET: 'a'.repeat(32),
+    JWT_REFRESH_SECRET: 'b'.repeat(32),
+  };
+  const complete = {
+    ...base,
+    BACKUP_ENABLED: 'true',
+    BACKUP_S3_BUCKET: 'nexus-backups',
+    BACKUP_S3_REGION: 'me-south-1',
+    BACKUP_ENCRYPTION_KEY: 'ab'.repeat(32),
+  };
+
+  it('is off by default and needs no backup settings', () => {
+    const config = envSchema.parse(base);
+
+    expect(config.BACKUP_ENABLED).toBe(false);
+    expect(config.BACKUP_OBJECT_LOCK).toBe(true);
+    expect(config.BACKUP_RETENTION_YEARLY_DAYS).toBe(3650);
+  });
+
+  it('treats the text "false" as off, not as a truthy string', () => {
+    expect(
+      envSchema.parse({ ...base, BACKUP_ENABLED: 'false' }).BACKUP_ENABLED,
+    ).toBe(false);
+  });
+
+  it('accepts a complete set of settings when turned on', () => {
+    expect(envSchema.parse(complete).BACKUP_ENABLED).toBe(true);
+  });
+
+  it.each(['BACKUP_S3_BUCKET', 'BACKUP_S3_REGION', 'BACKUP_ENCRYPTION_KEY'])(
+    'refuses to start with backups on and %s missing',
+    (key) => {
+      const { [key]: _omitted, ...rest } = complete as Record<string, string>;
+      void _omitted;
+
+      expect(() => envSchema.parse(rest)).toThrow(key);
+    },
+  );
+
+  it('refuses an encryption key that is not 64 hex characters', () => {
+    expect(() =>
+      envSchema.parse({ ...complete, BACKUP_ENCRYPTION_KEY: 'too-short' }),
+    ).toThrow('64 hex characters');
+  });
+});

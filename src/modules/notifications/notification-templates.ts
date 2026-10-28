@@ -40,6 +40,17 @@ export interface TemplateData {
     daysLeft: number;
     endsOn: string;
   };
+  BACKUP_ALERT: {
+    jobName: string;
+    reason: string;
+    at: string;
+  };
+  BACKUP_REPORT: {
+    date: string;
+    /** One line per fact, already written for people. */
+    lines: string[];
+    healthy: boolean;
+  };
 }
 
 export type TemplateKey = keyof TemplateData;
@@ -165,6 +176,26 @@ const RENDERERS: {
         `Hello ${data.adminName},`,
         `The free trial for ${data.institutionName} ends on ${data.endsOn}, in ${data.daysLeft} day${data.daysLeft === 1 ? '' : 's'}. Choose a plan before then to keep every module.`,
       ],
+    }),
+  }),
+  BACKUP_ALERT: (data) => ({
+    subject: `Nexus backup problem: ${data.jobName}`,
+    ...compose({
+      heading: 'A backup did not complete',
+      paragraphs: [
+        `The ${data.jobName} step failed at ${data.at}.`,
+        `Reason: ${data.reason}`,
+        'The next scheduled run will try again, but please look at this today.',
+      ],
+    }),
+  }),
+  BACKUP_REPORT: (data) => ({
+    subject: `Nexus backups, ${data.date}: ${data.healthy ? 'all well' : 'needs attention'}`,
+    ...compose({
+      heading: data.healthy
+        ? 'Backups are running normally'
+        : 'Backups need attention',
+      paragraphs: data.lines,
     }),
   }),
 };
