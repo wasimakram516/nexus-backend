@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcrypt';
 import { Prisma, UserRole, UserStatus } from '../../prisma/client';
@@ -63,9 +67,13 @@ describe('UsersService', () => {
   const prismaMock = {
     user: {
       findUnique: jest.fn(),
-      update: jest.fn(),
+      findFirst: jest.fn(),
+      update: jest.fn<Promise<unknown>, [{ data: Record<string, unknown> }]>(),
       findMany: jest.fn(),
       count: jest.fn(),
+    },
+    refreshSession: {
+      updateMany: jest.fn(),
     },
     role: {
       findFirst: jest.fn(),
@@ -199,6 +207,86 @@ describe('UsersService', () => {
           roleId: 'role-1',
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('updateUserRole — name, email and password', () => {
+    const target = {
+      ...staffTargetSameInstitution,
+      email: 'old@nexus.test',
+    };
+
+    beforeEach(() => {
+      prismaMock.user.findUnique.mockResolvedValue(target);
+      prismaMock.user.findFirst.mockResolvedValue(null);
+      prismaMock.user.update.mockResolvedValue(target);
+    });
+
+    const savedData = () => prismaMock.user.update.mock.calls[0][0].data;
+
+    it('lets an administrator rename a user and change their email', async () => {
+      await service.updateUserRole(adminUser, 'target-staff-1', {
+        name: '  Fatima Khan ',
+        email: 'Fatima@Nexus.test',
+      });
+
+      expect(savedData()).toMatchObject({
+        name: 'Fatima Khan',
+        email: 'fatima@nexus.test',
+      });
+    });
+
+    it('refuses an email another account already uses', async () => {
+      prismaMock.user.findFirst.mockResolvedValue({ id: 'someone-else' });
+
+      await expect(
+        service.updateUserRole(adminUser, 'target-staff-1', {
+          email: 'taken@nexus.test',
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prismaMock.user.update).not.toHaveBeenCalled();
+    });
+
+    it('stores a new password hashed, makes them replace it, and signs every device out', async () => {
+      await service.updateUserRole(adminUser, 'target-staff-1', {
+        password: 'a-new-password',
+      });
+
+      const data = savedData();
+      expect(data.mustChangePassword).toBe(true);
+      expect(
+        await bcrypt.compare('a-new-password', data.passwordHash as string),
+      ).toBe(true);
+      expect(prismaMock.refreshSession.updateMany).toHaveBeenCalledWith({
+        where: { userId: 'target-staff-1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) as Date },
+      });
+    });
+
+    it('does not sign anyone out when no password is set', async () => {
+      await service.updateUserRole(adminUser, 'target-staff-1', {
+        name: 'Fatima',
+      });
+
+      expect(prismaMock.refreshSession.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('lets a delegated user rename someone but not change their email or password', async () => {
+      await service.updateUserRole(staffCaller, 'target-staff-1', {
+        name: 'Renamed',
+      });
+      expect(savedData()).toMatchObject({ name: 'Renamed' });
+
+      await expect(
+        service.updateUserRole(staffCaller, 'target-staff-1', {
+          email: 'x@nexus.test',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.updateUserRole(staffCaller, 'target-staff-1', {
+          password: 'a-new-password',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 
@@ -362,7 +450,6 @@ describe('UsersService', () => {
     });
   });
 
-  /* eslint-disable @typescript-eslint/no-unsafe-member-access -- jest mock calls are typed any */
   describe('updateProfile — changing your own password', () => {
     beforeEach(async () => {
       prismaMock.user.findUnique.mockResolvedValue({
@@ -409,5 +496,4 @@ describe('UsersService', () => {
       });
     });
   });
-  /* eslint-enable @typescript-eslint/no-unsafe-member-access */
 });

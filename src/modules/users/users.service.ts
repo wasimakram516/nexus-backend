@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -267,6 +268,12 @@ export class UsersService {
     const updateData: Prisma.UserUncheckedUpdateInput = {};
     if (dto.role !== undefined) updateData.role = dto.role;
     if (dto.status !== undefined) updateData.status = dto.status;
+    const passwordChanged = await this.applyIdentityChanges(
+      currentUser,
+      target,
+      dto,
+      updateData,
+    );
 
     const touchesPermissions =
       dto.roleId !== undefined || dto.permissionOverrides !== undefined;
@@ -359,7 +366,66 @@ export class UsersService {
       user,
       CustomFieldEntity.USER,
     );
+    if (passwordChanged) {
+      // A new password signs every device out, so the old one stops working at once.
+      await this.prisma.refreshSession.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    }
     return { message: 'User updated successfully', data };
+  }
+
+  /**
+   * Applies a name, email or password change to the update about to be saved.
+   * A name is open to anyone allowed to edit the user, but email and password
+   * decide who can sign in as them, so only an administrator may change those.
+   *
+   * @param {CurrentUser} currentUser - Who is making the change.
+   * @param {{ id: string; email: string }} target - The account being edited.
+   * @param {UpdateUserAccessDto} dto - The requested changes.
+   * @param {Prisma.UserUncheckedUpdateInput} updateData - The update to add to.
+   * @returns {Promise<boolean>} Whether the password is being replaced.
+   */
+  private async applyIdentityChanges(
+    currentUser: CurrentUser,
+    target: { id: string; email: string },
+    dto: UpdateUserAccessDto,
+    updateData: Prisma.UserUncheckedUpdateInput,
+  ): Promise<boolean> {
+    if (dto.name !== undefined) updateData.name = dto.name.trim();
+
+    if (dto.email === undefined && dto.password === undefined) return false;
+    if (
+      currentUser.role !== UserRole.ADMIN &&
+      currentUser.role !== UserRole.SUPERADMIN
+    ) {
+      throw new ForbiddenException(
+        'Only an administrator can change a user’s email or password.',
+      );
+    }
+
+    if (dto.email !== undefined) {
+      const email = dto.email.toLowerCase();
+      if (email !== target.email.toLowerCase()) {
+        const taken = await this.prisma.user.findFirst({
+          where: { email, id: { not: target.id } },
+          select: { id: true },
+        });
+        if (taken) {
+          throw new ConflictException('A user with this email already exists.');
+        }
+        updateData.email = email;
+      }
+    }
+
+    if (dto.password !== undefined) {
+      updateData.passwordHash = await bcrypt.hash(dto.password, 12);
+      // They sign in with the password they were given, then choose their own.
+      updateData.mustChangePassword = true;
+      return true;
+    }
+    return false;
   }
 
   async deleteUser(currentUser: CurrentUser, userId: string, reason?: string) {

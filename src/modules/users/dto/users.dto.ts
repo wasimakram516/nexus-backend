@@ -62,6 +62,31 @@ export class UpdateUserRoleDto extends CustomFieldPayloadDto {
 }
 
 export class UpdateUserAccessDto extends UpdateUserRoleDto {
+  @ApiPropertyOptional({ description: 'The person’s display name.' })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Sign-in email. Only an administrator can change it, and it must be unused.',
+  })
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'A new password set by an administrator. The person must replace it at their next sign-in and every device is signed out.',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(72)
+  password?: string;
+
   @ApiPropertyOptional({
     nullable: true,
     description:
