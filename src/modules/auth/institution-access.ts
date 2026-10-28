@@ -14,7 +14,7 @@ export function assertInstitutionActive(
 ): void {
   if (institution && institution.status !== InstitutionStatus.ACTIVE) {
     throw new UnauthorizedException(
-      'Your institution account is on hold. Please contact Nexus support.',
+      'Your institution account is not active. Please contact Nexus support.',
     );
   }
 }

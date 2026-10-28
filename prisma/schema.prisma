@@ -116,7 +116,6 @@ enum PaymentMethod {
 enum InstitutionStatus {
   ACTIVE
   INACTIVE
-  SUSPENDED
 }
 
 enum DeploymentMode {

@@ -145,7 +145,7 @@ export class PlatformController {
   @ApiOperation({
     summary: 'Update institution settings or status',
     description:
-      'Use this endpoint to edit institution profile fields or change institution status such as ACTIVE, INACTIVE, or SUSPENDED.',
+      'Use this endpoint to edit institution profile fields or change institution status ACTIVE or INACTIVE. An inactive institution is locked out of sign-in and every request.',
   })
   updateInstitution(
     @Param('institutionId') institutionId: string,

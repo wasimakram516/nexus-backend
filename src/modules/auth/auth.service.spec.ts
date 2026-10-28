@@ -186,7 +186,7 @@ describe('AuthService', () => {
         role: UserRole.ADMIN,
         status: UserStatus.ACTIVE,
         institutionId: 'institution-1',
-        institution: { status: 'SUSPENDED' },
+        institution: { status: 'INACTIVE' },
       });
 
       await expect(

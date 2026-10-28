@@ -14,12 +14,9 @@ describe('assertInstitutionActive', () => {
     expect(() => assertInstitutionActive(undefined)).not.toThrow();
   });
 
-  it.each([InstitutionStatus.SUSPENDED, InstitutionStatus.INACTIVE])(
-    'blocks a %s institution',
-    (status) => {
-      expect(() => assertInstitutionActive({ status })).toThrow(
-        UnauthorizedException,
-      );
-    },
-  );
+  it('blocks an INACTIVE institution', () => {
+    expect(() =>
+      assertInstitutionActive({ status: InstitutionStatus.INACTIVE }),
+    ).toThrow(UnauthorizedException);
+  });
 });

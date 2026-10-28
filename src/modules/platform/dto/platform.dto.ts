@@ -102,7 +102,7 @@ export class UpdateInstitutionDto {
   @ApiPropertyOptional({
     enum: InstitutionStatus,
     description:
-      'Optional institution lifecycle change. Use this to activate, inactivate, or suspend an institution without deleting it.',
+      'Optional institution lifecycle change. Use this to activate or inactivate an institution without deleting it. An inactive institution is locked out.',
   })
   @IsOptional()
   @IsEnum(InstitutionStatus)

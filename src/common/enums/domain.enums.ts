@@ -100,7 +100,6 @@ export enum PaymentMethod {
 export enum InstitutionStatus {
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE',
-  SUSPENDED = 'SUSPENDED',
 }
 
 export enum DeploymentMode {

@@ -75,7 +75,7 @@ describe('JwtStrategy', () => {
     );
   });
 
-  it.each(['SUSPENDED', 'INACTIVE'])(
+  it.each(['INACTIVE'])(
     'rejects a token for a user whose institution is %s',
     async (status) => {
       prismaMock.user.findUnique.mockResolvedValue({
