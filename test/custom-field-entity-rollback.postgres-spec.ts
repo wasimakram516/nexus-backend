@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { PlanLimitsService } from '../src/common/services/plan-limits.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { RequestContextService } from '../src/common/services/request-context.service';
 import { AuditLogService } from '../src/common/services/audit-log.service';
@@ -118,6 +119,7 @@ describe('PostgreSQL per-entity custom-field rollback', () => {
       moduleAccess,
       context,
       new TimezoneResolverService(prisma),
+      new PlanLimitsService(prisma),
     );
     finance = new FinanceService(
       prisma,
@@ -132,6 +134,7 @@ describe('PostgreSQL per-entity custom-field rollback', () => {
       fields,
       moduleAccess,
       context,
+      new PlanLimitsService(prisma),
     );
 
     const institution = await prisma.institution.create({

@@ -1,5 +1,6 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import { Prisma } from '../src/prisma/client';
+import { PlanLimitsService } from '../src/common/services/plan-limits.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { RequestContextService } from '../src/common/services/request-context.service';
 import { EntityCustomFieldsService } from '../src/common/services/entity-custom-fields.service';
@@ -138,6 +139,7 @@ describe('PostgreSQL audited transactions', () => {
       fields,
       new ModuleAccessService(prisma),
       context,
+      new PlanLimitsService(prisma),
     );
     const account = await prisma.user.create({
       data: {
@@ -286,6 +288,7 @@ describe('PostgreSQL audited transactions', () => {
       fields,
       new ModuleAccessService(prisma),
       context,
+      new PlanLimitsService(prisma),
     );
     const account = await prisma.user.create({
       data: {
@@ -358,6 +361,7 @@ describe('PostgreSQL audited transactions', () => {
       fields,
       new ModuleAccessService(prisma),
       context,
+      new PlanLimitsService(prisma),
     );
     const account = await prisma.user.create({
       data: {

@@ -11,6 +11,7 @@ import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { CampusAccessService } from '../../common/services/campus-access.service';
 import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
+import { PlanLimitsService } from '../../common/services/plan-limits.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import {
   buildContactOwnerFields,
@@ -108,6 +109,7 @@ export class PeopleService {
     private readonly entityCustomFieldsService: EntityCustomFieldsService,
     private readonly moduleAccessService: ModuleAccessService,
     private readonly requestContext: RequestContextService,
+    private readonly planLimits: PlanLimitsService,
   ) {}
 
   async createStudent(currentUser: CurrentUser, dto: CreateStudentDto) {
@@ -155,6 +157,10 @@ export class PeopleService {
         'Set an academic year as current before admitting students (Academics, Academic Years, then Set as current).',
       );
     }
+
+    await this.planLimits.assertRoomForOne(institutionId, 'maxStudents', () =>
+      this.prisma.student.count({ where: { institutionId, deletedAt: null } }),
+    );
 
     const { customFields, classId, sectionId, regNo, ...studentRest } = dto;
     // Prisma DateTime columns reject date-only strings like "2016-06-12".
@@ -713,6 +719,11 @@ export class PeopleService {
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
+    await this.planLimits.assertRoomForOne(institutionId, 'maxStaff', () =>
+      this.prisma.staffProfile.count({
+        where: { deletedAt: null, campus: { institutionId } },
+      }),
+    );
     let item;
     try {
       item = await this.entityCustomFieldsService.saveRecord(

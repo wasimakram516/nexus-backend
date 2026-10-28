@@ -3,6 +3,10 @@ import { BillingCycle } from '../enums/domain.enums';
 
 export type PlanLimits = {
   maxCampuses: number | null;
+  /** Students on the roll; null means no limit. */
+  maxStudents: number | null;
+  /** Staff members with a profile; null means no limit. */
+  maxStaff: number | null;
 };
 
 export type PlanBlueprint = {
@@ -42,6 +46,8 @@ export const PLAN_BLUEPRINTS: PlanBlueprint[] = [
     ],
     limits: {
       maxCampuses: 1,
+      maxStudents: null,
+      maxStaff: null,
     },
   },
   {
@@ -69,6 +75,8 @@ export const PLAN_BLUEPRINTS: PlanBlueprint[] = [
     ],
     limits: {
       maxCampuses: 3,
+      maxStudents: null,
+      maxStaff: null,
     },
   },
   {
@@ -98,6 +106,8 @@ export const PLAN_BLUEPRINTS: PlanBlueprint[] = [
     ],
     limits: {
       maxCampuses: 10,
+      maxStudents: null,
+      maxStaff: null,
     },
   },
   {
@@ -116,6 +126,8 @@ export const PLAN_BLUEPRINTS: PlanBlueprint[] = [
     defaultModules: Object.values(ModuleKey),
     limits: {
       maxCampuses: null,
+      maxStudents: null,
+      maxStaff: null,
     },
   },
 ];

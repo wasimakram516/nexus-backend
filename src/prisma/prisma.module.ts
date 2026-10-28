@@ -11,6 +11,7 @@ import { PrintableMetaService } from '../common/services/printable-meta.service'
 import { OwnedStudentsService } from '../common/services/owned-students.service';
 import { PrintableCustomValuesService } from '../common/services/printable-custom-values.service';
 import { PdfService } from '../common/pdf/pdf.service';
+import { PlanLimitsService } from '../common/services/plan-limits.service';
 import { PrismaService } from './prisma.service';
 
 @Global()
@@ -29,6 +30,7 @@ import { PrismaService } from './prisma.service';
     OwnedStudentsService,
     PrintableCustomValuesService,
     PdfService,
+    PlanLimitsService,
   ],
   exports: [
     PrismaService,
@@ -44,6 +46,7 @@ import { PrismaService } from './prisma.service';
     OwnedStudentsService,
     PrintableCustomValuesService,
     PdfService,
+    PlanLimitsService,
   ],
 })
 export class PrismaModule {}

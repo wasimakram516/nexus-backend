@@ -14,6 +14,7 @@ import { StudentImportService } from '../src/modules/people/student-import.servi
 import { PrintableCustomValuesService } from '../src/common/services/printable-custom-values.service';
 import { PrintableMetaService } from '../src/common/services/printable-meta.service';
 import { UserRole } from '../src/prisma/client';
+import { PlanLimitsService } from '../src/common/services/plan-limits.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
@@ -59,6 +60,7 @@ describe('PostgreSQL student import', () => {
       fields,
       allowModule,
       context,
+      new PlanLimitsService(prisma),
     );
     const auth = new AuthService(prisma, new JwtService({}), {
       get: () => undefined,
@@ -432,6 +434,93 @@ describe('PostgreSQL student import', () => {
       await prisma.student.findMany({ where: { institutionId } })
     ).map((student) => student.regNo);
     expect(firstSchoolNumbers).not.toContain(result.data.results[0].regNo);
+  });
+
+  it('stops at the school’s student limit part way through a file, saving those that fit', async () => {
+    const limited = (
+      await prisma.institution.create({
+        data: { name: 'Limited school', slug: randomUUID() },
+      })
+    ).id;
+    const limitedYear = await prisma.academicYear.create({
+      data: {
+        institutionId: limited,
+        name: '2026-27',
+        startDate: new Date('2026-04-01'),
+        endDate: new Date('2027-03-31'),
+      },
+    });
+    await prisma.institution.update({
+      where: { id: limited },
+      data: { currentAcademicYearId: limitedYear.id },
+    });
+    await prisma.institutionSetting.create({
+      data: {
+        institutionId: limited,
+        key: 'limits',
+        value: { maxStudents: 2 },
+      },
+    });
+    const limitedCampus = await prisma.campus.create({
+      data: {
+        institutionId: limited,
+        name: 'Limited campus',
+        code: `L${tail}`,
+        location: 'Test',
+        studentStartTime: '08:00',
+        studentEndTime: '14:00',
+        staffStartTime: '08:00',
+        staffEndTime: '14:00',
+        lateThreshold: 10,
+        earlyLeaveThreshold: 10,
+      },
+    });
+    const limitedLevel = await prisma.level.create({
+      data: { name: 'Primary', campusId: limitedCampus.id },
+    });
+    await prisma.academicClass.create({
+      data: { name: 'Grade 5', levelId: limitedLevel.id },
+    });
+    const limitedAdmin = await prisma.user.create({
+      data: {
+        institutionId: limited,
+        name: 'Limited admin',
+        email: `${randomUUID()}@example.test`,
+        passwordHash: 'unused-test-value',
+        role: 'ADMIN',
+      },
+    });
+    const row = (name: string) => ({
+      name,
+      dob: '01/01/2015',
+      gender: 'f',
+      className: 'Grade 5',
+    });
+
+    const result = await service.commit(
+      {
+        sub: limitedAdmin.id,
+        email: limitedAdmin.email,
+        role: UserRole.ADMIN,
+        institutionId: limited,
+      },
+      {
+        campusId: limitedCampus.id,
+        rows: [row('One'), row('Two'), row('Three')],
+      },
+    );
+
+    expect(result.data.results.map((r) => r.status)).toEqual([
+      'IMPORTED',
+      'IMPORTED',
+      'FAILED',
+    ]);
+    expect(result.data.results[2].error).toContain(
+      'Student limit reached for this institution. Current limit: 2.',
+    );
+    expect(
+      await prisma.student.count({ where: { institutionId: limited } }),
+    ).toBe(2);
   });
 
   it('refuses everyone who is not allowed in the campus', async () => {

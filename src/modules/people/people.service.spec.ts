@@ -18,6 +18,7 @@ import { ModuleAccessService } from '../../common/services/module-access.service
 import { RequestContextService } from '../../common/services/request-context.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PromotionOverrideAction } from './dto/people.dto';
+import { PlanLimitsService } from '../../common/services/plan-limits.service';
 import { PeopleService } from './people.service';
 
 describe('PeopleService', () => {
@@ -28,6 +29,12 @@ describe('PeopleService', () => {
     email: 'admin@nexus.test',
     role: UserRole.ADMIN,
     institutionId: 'institution-1',
+  };
+
+  const planLimitsMock = {
+    assertRoomForOne: jest
+      .fn<Promise<void>, [string, string, () => Promise<number>]>()
+      .mockResolvedValue(undefined),
   };
 
   const prismaMock = {
@@ -53,6 +60,7 @@ describe('PeopleService', () => {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
       findMany: jest.fn(),
+      count: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
     },
@@ -147,6 +155,10 @@ describe('PeopleService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         PeopleService,
+        {
+          provide: PlanLimitsService,
+          useValue: planLimitsMock,
+        },
         {
           provide: PrismaService,
           useValue: prismaMock,
@@ -490,6 +502,39 @@ describe('PeopleService', () => {
       campusId: 'campus-1',
       joiningDate: '2026-01-05',
     };
+
+    it('counts the institution’s staff against the plan limit, and refuses a new profile when it is reached', async () => {
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        institutionId: 'institution-1',
+        role: UserRole.STAFF,
+      });
+      prismaMock.staffProfile.findFirst.mockResolvedValue(null);
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      planLimitsMock.assertRoomForOne.mockRejectedValueOnce(
+        new ForbiddenException('Staff limit reached for this institution.'),
+      );
+
+      await expect(
+        service.createStaffProfile(currentUser, baseDto),
+      ).rejects.toThrow('Staff limit reached');
+
+      expect(prismaMock.staffProfile.create).not.toHaveBeenCalled();
+      expect(planLimitsMock.assertRoomForOne).toHaveBeenCalledWith(
+        'institution-1',
+        'maxStaff',
+        expect.any(Function),
+      );
+      const count = planLimitsMock.assertRoomForOne.mock.calls[0][2];
+      prismaMock.staffProfile.count.mockResolvedValue(7);
+      expect(await count()).toBe(7);
+      expect(prismaMock.staffProfile.count).toHaveBeenCalledWith({
+        where: { deletedAt: null, campus: { institutionId: 'institution-1' } },
+      });
+    });
 
     it('creates a new staff profile when no soft-deleted row exists for the user', async () => {
       campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
@@ -1100,6 +1145,47 @@ describe('PeopleService', () => {
       expect(prismaMock.student.create.mock.calls[1][0].data.regNo).toBe(
         'GUL-26-0011',
       );
+    });
+
+    it('counts the institution’s students against the plan limit, and refuses an admission when it is reached', async () => {
+      campusAccessServiceMock.assertCampusAccess.mockResolvedValue('campus-1');
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        institutionId: 'institution-1',
+        role: UserRole.STUDENT,
+      });
+      entityCustomFieldsServiceMock.resolveInstitutionIdByCampus.mockResolvedValue(
+        'institution-1',
+      );
+      prismaMock.institution.findUnique.mockResolvedValue({
+        currentAcademicYearId: 'year-1',
+      });
+      planLimitsMock.assertRoomForOne.mockRejectedValueOnce(
+        new ForbiddenException('Student limit reached for this institution.'),
+      );
+
+      await expect(
+        service.createStudent(currentUser, {
+          userId: 'user-1',
+          dob: '2020-01-01',
+          gender: Gender.MALE,
+          campusId: 'campus-1',
+          admissionDate: '2026-01-01',
+        }),
+      ).rejects.toThrow('Student limit reached');
+
+      expect(prismaMock.student.create).not.toHaveBeenCalled();
+      expect(planLimitsMock.assertRoomForOne).toHaveBeenCalledWith(
+        'institution-1',
+        'maxStudents',
+        expect.any(Function),
+      );
+      const count = planLimitsMock.assertRoomForOne.mock.calls[0][2];
+      prismaMock.student.count.mockResolvedValue(42);
+      expect(await count()).toBe(42);
+      expect(prismaMock.student.count).toHaveBeenCalledWith({
+        where: { institutionId: 'institution-1', deletedAt: null },
+      });
     });
 
     it('throws ConflictException from createStudent when the institution has no current academic year', async () => {

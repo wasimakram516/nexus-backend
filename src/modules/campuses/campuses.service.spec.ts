@@ -9,6 +9,7 @@ import { RequestContextService } from '../../common/services/request-context.ser
 import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PlanLimitsService } from '../../common/services/plan-limits.service';
 import { CampusesService } from './campuses.service';
 
 describe('CampusesService', () => {
@@ -66,6 +67,7 @@ describe('CampusesService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         CampusesService,
+        PlanLimitsService,
         {
           provide: PrismaService,
           useValue: prismaMock,

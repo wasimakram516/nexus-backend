@@ -5,15 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AuditLogService } from '../../common/services/audit-log.service';
-import { Prisma, SubscriptionStatus, UserRole } from '../../prisma/client';
-import {
-  DEFAULT_PLAN_KEY,
-  getPlanBlueprint,
-} from '../../common/constants/plan.constants';
+import { Prisma, UserRole } from '../../prisma/client';
 import { CustomFieldEntity } from '../../common/constants/custom-field-entities.constants';
 import { EntityCustomFieldsService } from '../../common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
+import { PlanLimitsService } from '../../common/services/plan-limits.service';
 import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
 import { runAuditedTransaction } from '../../common/utils/transaction.util';
 import { ModuleKey } from '../../prisma/client';
@@ -38,6 +35,7 @@ export class CampusesService {
     private readonly moduleAccessService: ModuleAccessService,
     private readonly requestContext: RequestContextService,
     private readonly timezoneResolver: TimezoneResolverService,
+    private readonly planLimits: PlanLimitsService,
   ) {}
 
   async createCampus(currentUser: CurrentUser, dto: CreateCampusDto) {
@@ -405,60 +403,9 @@ export class CampusesService {
   }
 
   private async assertCampusLimit(institutionId: string) {
-    const subscription = await this.prisma.institutionSubscription.findFirst({
-      where: {
-        institutionId,
-        status: {
-          in: [
-            SubscriptionStatus.TRIAL,
-            SubscriptionStatus.ACTIVE,
-            SubscriptionStatus.PAST_DUE,
-          ],
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        plan: {
-          select: {
-            key: true,
-            limits: true,
-          },
-        },
-      },
-    });
-    const setting = await this.prisma.institutionSetting.findUnique({
-      where: {
-        institutionId_key_activeScopeKey: {
-          institutionId,
-          key: 'limits',
-          activeScopeKey: 'ACTIVE',
-        },
-      },
-      select: {
-        value: true,
-      },
-    });
-
-    const maxCampuses =
-      this.readMaxCampusesOverride(setting?.value) ??
-      this.readMaxCampusesOverride(subscription?.metadata) ??
-      this.readMaxCampusesOverride(subscription?.plan?.limits) ??
-      getPlanBlueprint(subscription?.plan?.key ?? DEFAULT_PLAN_KEY)?.limits
-        .maxCampuses;
-
-    if (maxCampuses === undefined || maxCampuses === null) {
-      return;
-    }
-
-    const campusCount = await this.prisma.campus.count({
-      where: { institutionId, deletedAt: null },
-    });
-
-    if (campusCount >= maxCampuses) {
-      throw new ForbiddenException(
-        `Campus limit reached for this institution. Current limit: ${maxCampuses}.`,
-      );
-    }
+    await this.planLimits.assertRoomForOne(institutionId, 'maxCampuses', () =>
+      this.prisma.campus.count({ where: { institutionId, deletedAt: null } }),
+    );
   }
 
   private async ensureInstitutionExists(institutionId: string) {
@@ -484,39 +431,5 @@ export class CampusesService {
         'You can only manage campuses within your own institution.',
       );
     }
-  }
-
-  private readMaxCampusesOverride(
-    value: Prisma.JsonValue | null | undefined,
-  ): number | null | undefined {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      return undefined;
-    }
-
-    const record = value as Record<string, Prisma.JsonValue>;
-
-    const directLimit = record.maxCampuses;
-    if (directLimit === null) {
-      return null;
-    }
-    if (typeof directLimit === 'number' && Number.isFinite(directLimit)) {
-      return directLimit;
-    }
-
-    const limits = record.limits;
-    if (!limits || typeof limits !== 'object' || Array.isArray(limits)) {
-      return undefined;
-    }
-
-    const nestedRecord = limits as Record<string, Prisma.JsonValue>;
-    const nestedLimit = nestedRecord.maxCampuses;
-    if (nestedLimit === null) {
-      return null;
-    }
-    if (typeof nestedLimit === 'number' && Number.isFinite(nestedLimit)) {
-      return nestedLimit;
-    }
-
-    return undefined;
   }
 }
