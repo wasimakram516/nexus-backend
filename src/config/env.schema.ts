@@ -76,6 +76,8 @@ export const envSchema = z
       .string()
       .regex(/^[0-9a-fA-F]{64}$/, 'must be 64 hex characters')
       .optional(),
+    // A PostgreSQL server where the weekly restore check may create and drop scratch databases.
+    BACKUP_VERIFY_ADMIN_URL: z.string().min(1).optional(),
     BACKUP_OBJECT_LOCK: z
       .enum(['true', 'false'])
       .default('true')

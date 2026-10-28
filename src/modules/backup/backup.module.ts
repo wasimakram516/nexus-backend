@@ -7,6 +7,8 @@ import { BackupRetentionDays } from './backup-policy';
 import { BackupScheduler } from './backup.scheduler';
 import { BackupConfig, BackupService } from './backup.service';
 import { BackupStorage, S3BackupStorage } from './backup-storage';
+import { PgDatabaseInspector } from './restore-verification';
+import { RestoreVerifier } from './restore-verifier.service';
 
 /**
  * Builds the backup settings from the environment. While backups are off, no
@@ -70,6 +72,18 @@ export function createBackupStorage(
           createBackupStorage(config),
           prisma,
           notifications,
+        ),
+    },
+    {
+      provide: RestoreVerifier,
+      inject: [ConfigService, BackupService],
+      useFactory: (config: ConfigService, backups: BackupService) =>
+        new RestoreVerifier(
+          createBackupConfig(config),
+          createBackupStorage(config),
+          backups,
+          new PgDatabaseInspector(),
+          config.get<string>('BACKUP_VERIFY_ADMIN_URL') ?? null,
         ),
     },
     BackupScheduler,
