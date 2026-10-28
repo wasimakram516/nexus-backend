@@ -5,6 +5,7 @@ import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
 import { InstitutionConfigService } from './institution-config.service';
+import { PlatformService } from './platform.service';
 
 describe('InstitutionConfigService', () => {
   let service: InstitutionConfigService;
@@ -15,6 +16,7 @@ describe('InstitutionConfigService', () => {
   const userPermissionsServiceMock = {
     getEffectivePermissionsForUser: jest.fn(),
   };
+  const platformServiceMock = { updateBranding: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -27,6 +29,7 @@ describe('InstitutionConfigService', () => {
           provide: UserPermissionsService,
           useValue: userPermissionsServiceMock,
         },
+        { provide: PlatformService, useValue: platformServiceMock },
       ],
     }).compile();
 
@@ -96,5 +99,68 @@ describe('InstitutionConfigService', () => {
     const result = await service.getMyRuntimeConfig(user);
 
     expect(result.data.permissions).toBeNull();
+  });
+
+  describe('updateMyBranding', () => {
+    const colours = { primaryColorLight: '#aa0000', theme: 'dark' };
+
+    it("lets an institution administrator change their own school's branding, and only theirs", async () => {
+      platformServiceMock.updateBranding.mockResolvedValue({
+        data: { saved: true },
+      });
+
+      const result = await service.updateMyBranding(
+        {
+          sub: 'admin-1',
+          email: 'a@school.test',
+          role: UserRole.ADMIN,
+          institutionId: 'institution-1',
+        },
+        colours,
+      );
+
+      expect(platformServiceMock.updateBranding).toHaveBeenCalledWith(
+        'institution-1',
+        colours,
+      );
+      expect(result).toEqual({ data: { saved: true } });
+    });
+
+    it.each([
+      UserRole.STAFF,
+      UserRole.STUDENT,
+      UserRole.GUARDIAN,
+      UserRole.SUPERADMIN,
+    ])(
+      'refuses %s, since the platform console is where the superadmin works',
+      async (role) => {
+        await expect(
+          service.updateMyBranding(
+            {
+              sub: 'u',
+              email: 'u@x.test',
+              role,
+              institutionId: 'institution-1',
+            },
+            colours,
+          ),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+        expect(platformServiceMock.updateBranding).not.toHaveBeenCalled();
+      },
+    );
+
+    it('refuses an administrator who has no institution', async () => {
+      await expect(
+        service.updateMyBranding(
+          {
+            sub: 'a',
+            email: 'a@x.test',
+            role: UserRole.ADMIN,
+            institutionId: null,
+          },
+          colours,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
   });
 });
