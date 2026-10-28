@@ -12,6 +12,8 @@ type RuntimeConfigRecord = {
   institutionId: string;
   /** The school's IANA timezone, so screens write times the way PDFs do. */
   timezone: string;
+  /** The country (ISO code) the school's phone numbers usually belong to. */
+  defaultCountry: string;
   branding: Record<string, unknown> | null;
   settings: Record<string, unknown>;
   modules: Record<
@@ -170,6 +172,7 @@ export class ModuleAccessService {
     return {
       institutionId: institution.id,
       timezone: institution.timezone,
+      defaultCountry: institution.defaultCountry,
       branding: institution.branding
         ? {
             displayName: institution.branding.displayName,

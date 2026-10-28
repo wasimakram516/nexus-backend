@@ -271,6 +271,8 @@ model Institution {
   // Campuses without their own override resolve through this field via
   // TimezoneResolverService.
   timezone               String                      @default("Asia/Karachi") @map("timezone")
+  /// ISO 3166-1 alpha-2 code ("PK", "AE"): the country phone numbers of this school usually belong to.
+  defaultCountry         String                      @default("PK") @map("default_country")
   // P0-6: institution-wide weekly working-days pattern (nullable — no row
   // means "not configured yet," which WorkingDayResolverService resolves as
   // fail-closed, i.e. zero working days, per the locked product decision).

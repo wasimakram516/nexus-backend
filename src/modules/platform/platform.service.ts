@@ -19,6 +19,7 @@ import { BillingCycle } from '../../common/enums/domain.enums';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
+import { requireE164, resolveCountry } from '../../common/utils/phone.util';
 import { generateUniqueSlug } from '../../common/utils/slug.util';
 import { validateFinanceSettingInput } from '../../common/utils/finance-settings.util';
 import { validatePassPolicyInput } from '../examinations/exam-computation';
@@ -258,9 +259,18 @@ export class PlatformService {
               deploymentMode,
               primaryDomain: dto.primaryDomain,
               contactEmail: dto.contactEmail,
-              contactPhone: dto.contactPhone,
+              contactPhone: dto.contactPhone
+                ? requireE164(
+                    dto.contactPhone,
+                    dto.defaultCountry,
+                    'Contact phone',
+                  )
+                : dto.contactPhone,
               notes: dto.notes,
               ...(dto.timezone ? { timezone: dto.timezone } : {}),
+              ...(dto.defaultCountry
+                ? { defaultCountry: dto.defaultCountry }
+                : {}),
               branding: {
                 create: {
                   displayName: dto.name,
@@ -363,10 +373,24 @@ export class PlatformService {
   }
 
   async updateInstitution(institutionId: string, dto: UpdateInstitutionDto) {
-    await this.ensureInstitutionExists(institutionId);
+    const existing = await this.prisma.institution.findUnique({
+      where: { id: institutionId },
+      select: { defaultCountry: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Institution not found.');
+    }
     if (dto.timezone) {
       this.timezoneResolver.assertValidTimezone(dto.timezone);
     }
+    // A number written without a country code belongs to the school's country.
+    const contactPhone = dto.contactPhone
+      ? requireE164(
+          dto.contactPhone,
+          resolveCountry(dto.defaultCountry ?? existing.defaultCountry),
+          'Contact phone',
+        )
+      : dto.contactPhone;
 
     // Audited automatically by PrismaService (real before/after snapshot).
     const institution = await runAuditedTransaction(
@@ -377,6 +401,7 @@ export class PlatformService {
           where: { id: institutionId },
           data: {
             ...dto,
+            ...(contactPhone !== undefined ? { contactPhone } : {}),
             ...(dto.slug ? { slug: this.toSlug(dto.slug) } : {}),
           },
           include: this.institutionInclude,

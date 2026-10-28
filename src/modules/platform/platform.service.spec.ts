@@ -1,4 +1,8 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   DeploymentMode,
   ModuleKey,
@@ -259,6 +263,34 @@ describe('PlatformService', () => {
     ).toHaveBeenCalledWith('Asia/Karachi');
   });
 
+  it('stores the default country and writes the contact phone in international form', async () => {
+    await service.createInstitution({
+      name: 'Nexus Academy',
+      slug: 'nexus-academy',
+      contactPhone: '050 123 4567',
+      defaultCountry: 'AE',
+    });
+
+    expect(txMock.institution.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          contactPhone: '+971501234567',
+          defaultCountry: 'AE',
+        }) as never,
+      }),
+    );
+  });
+
+  it('refuses a contact phone that is not a real number', async () => {
+    await expect(
+      service.createInstitution({
+        name: 'Nexus Academy',
+        slug: 'nexus-academy',
+        contactPhone: '12',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('translates a unique-constraint violation on institution creation into ConflictException', async () => {
     prismaMock.$transaction.mockImplementationOnce(() => {
       throw new Prisma.PrismaClientKnownRequestError('duplicate', {
@@ -497,6 +529,62 @@ describe('PlatformService', () => {
   });
 
   describe('updateInstitution', () => {
+    it('reads a local contact phone as a number of the school country, and any international number as written', async () => {
+      prismaMock.institution.findUnique.mockResolvedValueOnce({
+        id: 'institution-1',
+        defaultCountry: 'AE',
+      });
+      await service.updateInstitution('institution-1', {
+        contactPhone: '050 123 4567',
+      });
+      expect(txMock.institution.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            contactPhone: '+971501234567',
+          }) as never,
+        }),
+      );
+
+      await service.updateInstitution('institution-1', {
+        contactPhone: '+44 7911 123456',
+      });
+      expect(txMock.institution.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            contactPhone: '+447911123456',
+          }) as never,
+        }),
+      );
+    });
+
+    it('uses a country given in the same request to read the phone', async () => {
+      await service.updateInstitution('institution-1', {
+        contactPhone: '050 123 4567',
+        defaultCountry: 'AE',
+      });
+
+      expect(txMock.institution.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            contactPhone: '+971501234567',
+            defaultCountry: 'AE',
+          }) as never,
+        }),
+      );
+    });
+
+    it('leaves the phone alone when it is not part of the request', async () => {
+      await service.updateInstitution('institution-1', { notes: 'x' });
+
+      expect(txMock.institution.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          data: expect.not.objectContaining({
+            contactPhone: expect.anything() as never,
+          }) as never,
+        }),
+      );
+    });
+
     it('throws NotFoundException when the institution does not exist', async () => {
       prismaMock.institution.findUnique.mockResolvedValueOnce(null);
 
