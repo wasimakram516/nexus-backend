@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import {
   CountryCode,
   getCountries,
+  getCountryCallingCode,
   parsePhoneNumberFromString,
 } from 'libphonenumber-js/min';
 
@@ -106,6 +107,77 @@ export function signInCandidates(raw: string): string[] {
     }
   }
   return Array.from(new Set(candidates));
+}
+
+/** A phone number in international form, with the country it was entered for. */
+export interface PhoneWithCountry {
+  number: string;
+  /** ISO country code such as `PK`, or null when the number does not identify one. */
+  country: string | null;
+}
+
+/**
+ * Reads a number and decides which country to keep beside it. Countries share
+ * calling codes (+1, +7, +44), so when a country is chosen the number must be
+ * valid for that country, not just somewhere: a Bahamas number is refused for
+ * Canada. A choice that contradicts the calling code itself (Pakistan chosen
+ * for a +971 number) is ignored and the number's own country is used.
+ *
+ * @param {string} raw - The number as written.
+ * @param {string | null | undefined} chosen - The country the person picked, if any.
+ * @param {string | null | undefined} [fallback] - The country a number without a calling code belongs to.
+ * @returns {PhoneWithCountry | null} The number and its country, or null when it is not a valid number.
+ */
+export function readPhone(
+  raw: string | null | undefined,
+  chosen?: string | null,
+  fallback?: string | null,
+): PhoneWithCountry | null {
+  const text = (raw ?? '').trim();
+  if (!text) return null;
+  const international = text.startsWith('00') ? `+${text.slice(2)}` : text;
+  const parsed = parsePhoneNumberFromString(
+    international,
+    resolveCountry(chosen ?? fallback),
+  );
+  if (!parsed?.isValid()) return null;
+  const region = isCountryCode(chosen)
+    ? (chosen.toUpperCase() as CountryCode)
+    : null;
+  const sameCode =
+    region !== null &&
+    getCountryCallingCode(region) === parsed.countryCallingCode;
+  // Shared calling code: the digits must belong to the chosen country.
+  if (sameCode && parsed.country && parsed.country !== region) return null;
+  return {
+    number: parsed.number,
+    country: sameCode ? region : (parsed.country ?? null),
+  };
+}
+
+/**
+ * Like {@link readPhone} but refuses a number that cannot be right, naming what it was for.
+ *
+ * @param {string} raw - The number as written.
+ * @param {string | null | undefined} chosen - The country the person picked, if any.
+ * @param {string | null | undefined} fallback - The country a number without a calling code belongs to.
+ * @param {string} [label] - What the number is, for the message.
+ * @returns {PhoneWithCountry} The number and its country.
+ * @throws {BadRequestException} When it is not a valid number.
+ */
+export function requirePhone(
+  raw: string,
+  chosen: string | null | undefined,
+  fallback: string | null | undefined,
+  label = 'Phone number',
+): PhoneWithCountry {
+  const phone = readPhone(raw, chosen, fallback);
+  if (!phone) {
+    throw new BadRequestException(
+      `${label} "${raw.trim()}" is not a valid phone number. Include the country code for a number from another country.`,
+    );
+  }
+  return phone;
 }
 
 /**

@@ -23,6 +23,7 @@ import {
   GuardianRelation,
   Religion,
 } from '../../../common/enums/domain.enums';
+import { CountryCodeField } from '../../../common/decorators/country-code.decorator';
 import { CustomFieldPayloadDto } from '../../../common/dto/custom-field-payload.dto';
 
 export class CreateStudentDto extends CustomFieldPayloadDto {
@@ -247,7 +248,13 @@ export class CreateContactDto extends CustomFieldPayloadDto {
   @IsString()
   personType!: string;
   @ApiProperty() @IsString() phone1!: string;
+  @CountryCodeField('Country the primary phone was entered for.')
+  phone1Country?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() phone2?: string;
+  @CountryCodeField('Country the alternate phone was entered for.')
+  phone2Country?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() whatsapp?: string;
+  @CountryCodeField('Country the WhatsApp number was entered for.')
+  whatsappCountry?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() address?: string;
 }

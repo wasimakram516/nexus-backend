@@ -275,7 +275,26 @@ describe('PlatformService', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           contactPhone: '+971501234567',
+          contactPhoneCountry: 'AE',
           defaultCountry: 'AE',
+        }) as never,
+      }),
+    );
+  });
+
+  it('keeps the chosen country for a contact phone on a shared calling code', async () => {
+    await service.createInstitution({
+      name: 'Nexus Academy',
+      slug: 'nexus-academy',
+      contactPhone: '+1 604 555 0123',
+      contactPhoneCountry: 'CA',
+    });
+
+    expect(txMock.institution.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          contactPhone: '+16045550123',
+          contactPhoneCountry: 'CA',
         }) as never,
       }),
     );

@@ -227,6 +227,8 @@ model Institution {
   primaryDomain          String?                     @map("primary_domain")
   contactEmail           String?                     @map("contact_email")
   contactPhone           String?                     @map("contact_phone")
+  /// ISO country the contact phone was entered for.
+  contactPhoneCountry    String?                     @map("contact_phone_country")
   notes                  String?
   createdBy              String?                     @map("created_by") @db.Uuid
   updatedBy              String?                     @map("updated_by") @db.Uuid
@@ -1046,8 +1048,12 @@ model Contact {
   staffProfileId String?           @map("staff_profile_id") @db.Uuid
   personType     ContactPersonType @map("person_type")
   phone1         String
+  /// ISO country the number was entered for; keeps US vs Canada (+1) and similar shared codes apart.
+  phone1Country  String?           @map("phone1_country")
   phone2         String?
+  phone2Country  String?           @map("phone2_country")
   whatsapp       String?
+  whatsappCountry String?          @map("whatsapp_country")
   address        String?
   createdBy      String?           @map("created_by") @db.Uuid
   updatedBy      String?           @map("updated_by") @db.Uuid

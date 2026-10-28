@@ -1,4 +1,4 @@
-import { requireE164 } from '../../common/utils/phone.util';
+import { requirePhone } from '../../common/utils/phone.util';
 import { runAuditedTransaction } from '../../common/utils/transaction.util';
 import {
   ConflictException,
@@ -1935,14 +1935,34 @@ export class PeopleService {
         select: { defaultCountry: true },
       })
     )?.defaultCountry;
+    const phone1 = requirePhone(
+      dto.phone1,
+      dto.phone1Country,
+      country,
+      'Primary phone',
+    );
+    const phone2 = dto.phone2
+      ? requirePhone(dto.phone2, dto.phone2Country, country, 'Second phone')
+      : null;
+    const whatsapp = dto.whatsapp
+      ? requirePhone(
+          dto.whatsapp,
+          dto.whatsappCountry,
+          country,
+          'WhatsApp number',
+        )
+      : null;
     const createData: Prisma.ContactUncheckedCreateInput = {
-      phone1: requireE164(dto.phone1, country, 'Primary phone'),
-      phone2: dto.phone2
-        ? requireE164(dto.phone2, country, 'Second phone')
-        : dto.phone2,
-      whatsapp: dto.whatsapp
-        ? requireE164(dto.whatsapp, country, 'WhatsApp number')
-        : dto.whatsapp,
+      phone1: phone1.number,
+      phone1Country: phone1.country,
+      ...(phone2 && {
+        phone2: phone2.number,
+        phone2Country: phone2.country,
+      }),
+      ...(whatsapp && {
+        whatsapp: whatsapp.number,
+        whatsappCountry: whatsapp.country,
+      }),
       address: dto.address,
       personType: resolvedOwner.personType,
       ...resolvedOwner.ownerFields,

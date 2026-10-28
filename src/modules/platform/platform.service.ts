@@ -19,7 +19,7 @@ import { BillingCycle } from '../../common/enums/domain.enums';
 import { ModuleAccessService } from '../../common/services/module-access.service';
 import { RequestContextService } from '../../common/services/request-context.service';
 import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
-import { requireE164, resolveCountry } from '../../common/utils/phone.util';
+import { requirePhone, resolveCountry } from '../../common/utils/phone.util';
 import { generateUniqueSlug } from '../../common/utils/slug.util';
 import { validateFinanceSettingInput } from '../../common/utils/finance-settings.util';
 import { validatePassPolicyInput } from '../examinations/exam-computation';
@@ -193,6 +193,14 @@ export class PlatformService {
     if (dto.timezone) {
       this.timezoneResolver.assertValidTimezone(dto.timezone);
     }
+    const contact = dto.contactPhone
+      ? requirePhone(
+          dto.contactPhone,
+          dto.contactPhoneCountry,
+          dto.defaultCountry,
+          'Contact phone',
+        )
+      : null;
     const plans = await this.syncBootstrapPlans();
     const plan = await this.resolvePlan(dto.planId, plans);
     const deploymentModes = this.readDeploymentModes(plan.deploymentModes);
@@ -259,13 +267,12 @@ export class PlatformService {
               deploymentMode,
               primaryDomain: dto.primaryDomain,
               contactEmail: dto.contactEmail,
-              contactPhone: dto.contactPhone
-                ? requireE164(
-                    dto.contactPhone,
-                    dto.defaultCountry,
-                    'Contact phone',
-                  )
-                : dto.contactPhone,
+              ...(contact
+                ? {
+                    contactPhone: contact.number,
+                    contactPhoneCountry: contact.country,
+                  }
+                : {}),
               notes: dto.notes,
               ...(dto.timezone ? { timezone: dto.timezone } : {}),
               ...(dto.defaultCountry
@@ -384,13 +391,16 @@ export class PlatformService {
       this.timezoneResolver.assertValidTimezone(dto.timezone);
     }
     // A number written without a country code belongs to the school's country.
-    const contactPhone = dto.contactPhone
-      ? requireE164(
+    const contact = dto.contactPhone
+      ? requirePhone(
           dto.contactPhone,
+          dto.contactPhoneCountry,
           resolveCountry(dto.defaultCountry ?? existing.defaultCountry),
           'Contact phone',
         )
-      : dto.contactPhone;
+      : null;
+    const { contactPhoneCountry: _ignored, ...rest } = dto;
+    void _ignored;
 
     // Audited automatically by PrismaService (real before/after snapshot).
     const institution = await runAuditedTransaction(
@@ -400,8 +410,15 @@ export class PlatformService {
         return tx.institution.update({
           where: { id: institutionId },
           data: {
-            ...dto,
-            ...(contactPhone !== undefined ? { contactPhone } : {}),
+            ...rest,
+            ...(contact
+              ? {
+                  contactPhone: contact.number,
+                  contactPhoneCountry: contact.country,
+                }
+              : dto.contactPhone !== undefined
+                ? { contactPhone: dto.contactPhone, contactPhoneCountry: null }
+                : {}),
             ...(dto.slug ? { slug: this.toSlug(dto.slug) } : {}),
           },
           include: this.institutionInclude,

@@ -5,8 +5,7 @@ import {
   SubscriptionStatus,
 } from '../../../prisma/client';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
-import { COUNTRY_CODE_LIST } from '../../../common/utils/phone.util';
+import { CountryCodeField } from '../../../common/decorators/country-code.decorator';
 import {
   IsArray,
   IsBoolean,
@@ -14,7 +13,6 @@ import {
   IsDefined,
   IsEmail,
   IsEnum,
-  IsIn,
   IsNumber,
   IsNotEmpty,
   IsObject,
@@ -86,16 +84,13 @@ export class CreateInstitutionDto {
   @IsNotEmpty()
   timezone?: string;
 
-  @ApiPropertyOptional({
-    description:
-      'Country (ISO code such as "PK" or "AE") the phone numbers of the school usually belong to. People enter a local number without choosing a code; numbers from any other country can still be given with their code.',
-  })
-  @IsOptional()
-  @Transform(({ value }: { value: unknown }) =>
-    typeof value === 'string' ? value.toUpperCase() : value,
+  @CountryCodeField(
+    'Country (ISO code such as "PK" or "AE") the phone numbers of the school usually belong to. People enter a local number without choosing a code; numbers from any other country can still be given with their code.',
   )
-  @IsIn(COUNTRY_CODE_LIST)
   defaultCountry?: string;
+
+  @CountryCodeField('Country the contact phone was entered for.')
+  contactPhoneCountry?: string;
 }
 
 export class UpdateInstitutionDto {
@@ -156,16 +151,13 @@ export class UpdateInstitutionDto {
   @IsNotEmpty()
   timezone?: string;
 
-  @ApiPropertyOptional({
-    description:
-      'Country (ISO code such as "PK" or "AE") the phone numbers of the school usually belong to. People enter a local number without choosing a code; numbers from any other country can still be given with their code.',
-  })
-  @IsOptional()
-  @Transform(({ value }: { value: unknown }) =>
-    typeof value === 'string' ? value.toUpperCase() : value,
+  @CountryCodeField(
+    'Country (ISO code such as "PK" or "AE") the phone numbers of the school usually belong to. People enter a local number without choosing a code; numbers from any other country can still be given with their code.',
   )
-  @IsIn(COUNTRY_CODE_LIST)
   defaultCountry?: string;
+
+  @CountryCodeField('Country the contact phone was entered for.')
+  contactPhoneCountry?: string;
 }
 
 export class UpdateBrandingDto {

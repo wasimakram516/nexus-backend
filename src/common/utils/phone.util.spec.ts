@@ -3,6 +3,7 @@ import {
   COUNTRY_CODE_LIST,
   isCountryCode,
   requireE164,
+  readPhone,
   resolveCountry,
   signInCandidates,
   storedPhoneVariants,
@@ -71,6 +72,36 @@ describe('phone util', () => {
     ]);
     expect(signInCandidates('2026-0001')).toEqual(['2026-0001']);
     expect(signInCandidates('parent@home.test')).toEqual(['parent@home.test']);
+  });
+
+  describe('readPhone — countries that share a calling code', () => {
+    it('keeps the country that was chosen when the number belongs to it', () => {
+      expect(readPhone('+1 604 555 0123', 'CA')).toEqual({
+        number: '+16045550123',
+        country: 'CA',
+      });
+      expect(readPhone('+1 212 555 0123', 'US')).toEqual({
+        number: '+12125550123',
+        country: 'US',
+      });
+    });
+
+    it('refuses a number that is valid, but for another country than the one chosen', () => {
+      expect(readPhone('+1 212 555 0123', 'CA')).toBeNull();
+      expect(readPhone('+1 242 555 0123', 'US')).toBeNull();
+    });
+
+    it('works out the country when none was chosen', () => {
+      expect(readPhone('+1 604 555 0123')?.country).toBe('CA');
+      expect(readPhone('0300 1234567', undefined, 'PK')?.country).toBe('PK');
+    });
+
+    it('lets a calling code that contradicts the chosen country win', () => {
+      expect(readPhone('+971 50 123 4567', 'PK')).toEqual({
+        number: '+971501234567',
+        country: 'AE',
+      });
+    });
   });
 
   it('requireE164 returns the number or names what was wrong', () => {
