@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -67,6 +68,8 @@ export class AuthService {
       );
     }
 
+    const roleId = await this.resolveAssignableRole(dto, institutionId);
+
     const passwordHash = await bcrypt.hash(dto.password, 12);
     const user = await this.prisma.user.create({
       data: {
@@ -75,6 +78,7 @@ export class AuthService {
         passwordHash,
         role: dto.role,
         institutionId,
+        roleId,
         // An account someone else sets up starts with a password they chose, so the person picks their own.
         mustChangePassword: Boolean(actor),
       },
@@ -97,6 +101,7 @@ export class AuthService {
           role: dto.role,
           email: user.email,
           institutionId,
+          ...(roleId && { roleId }),
         },
       },
     });
@@ -105,6 +110,37 @@ export class AuthService {
       message: 'User registered successfully',
       data: user,
     };
+  }
+
+  /**
+   * Checks the role picked for a new account: it must exist in the account's
+   * institution, and admin-level accounts already have full access so they
+   * take none.
+   *
+   * @param {RegisterDto} dto - The registration request.
+   * @param {string | null} institutionId - The institution the account joins.
+   * @returns {Promise<string | null>} The role id to store, or null for none.
+   */
+  private async resolveAssignableRole(
+    dto: RegisterDto,
+    institutionId: string | null,
+  ): Promise<string | null> {
+    if (!dto.roleId) return null;
+    if ([UserRole.SUPERADMIN, UserRole.ADMIN].includes(dto.role)) {
+      throw new BadRequestException(
+        'Roles cannot be applied to admin-level users — they already have full institution access.',
+      );
+    }
+    const role = institutionId
+      ? await this.prisma.role.findFirst({
+          where: { id: dto.roleId, institutionId, deletedAt: null },
+          select: { id: true },
+        })
+      : null;
+    if (!role) {
+      throw new BadRequestException('Role not found for this institution.');
+    }
+    return role.id;
   }
 
   async login(

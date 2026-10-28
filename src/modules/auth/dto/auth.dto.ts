@@ -33,6 +33,14 @@ export class RegisterDto {
   @IsOptional()
   @IsUUID()
   institutionId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Role that gives the new account its base permissions. Not allowed for admin-level accounts. Without one, staff have no access until a role is assigned.',
+  })
+  @IsOptional()
+  @IsUUID()
+  roleId?: string;
 }
 
 export class LoginDto {

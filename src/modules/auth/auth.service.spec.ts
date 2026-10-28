@@ -1,4 +1,8 @@
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -19,6 +23,9 @@ describe('AuthService', () => {
     user: {
       findFirst: jest.fn(),
       create: jest.fn(),
+    },
+    role: {
+      findFirst: jest.fn(),
     },
     refreshSession: {
       create: jest.fn(),
@@ -465,6 +472,90 @@ describe('AuthService', () => {
       expect(prismaMock.user.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ mustChangePassword: true }),
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
+    });
+
+    it('gives the new account the chosen role from the same institution', async () => {
+      prismaMock.role.findFirst.mockResolvedValue({ id: 'role-1' });
+
+      await service.register(
+        {
+          name: 'N',
+          email: 'n@x.test',
+          password: 'password-1',
+          role: DtoUserRole.STAFF,
+          roleId: 'role-1',
+        },
+        actor,
+      );
+
+      expect(prismaMock.role.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: 'role-1',
+          institutionId: 'institution-1',
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment -- untyped Prisma mock */
+      expect(prismaMock.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ roleId: 'role-1' }),
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
+    });
+
+    it('refuses a role that is not in the institution, creating nothing', async () => {
+      prismaMock.role.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.register(
+          {
+            name: 'N',
+            email: 'n@x.test',
+            password: 'password-1',
+            role: DtoUserRole.STAFF,
+            roleId: 'other-schools-role',
+          },
+          actor,
+        ),
+      ).rejects.toThrow(
+        new BadRequestException('Role not found for this institution.'),
+      );
+      expect(prismaMock.user.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a role for an admin-level account', async () => {
+      await expect(
+        service.register({
+          name: 'N',
+          email: 'n@x.test',
+          password: 'password-1',
+          role: DtoUserRole.ADMIN,
+          roleId: 'role-1',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prismaMock.user.create).not.toHaveBeenCalled();
+    });
+
+    it('stores no role when none is chosen', async () => {
+      await service.register(
+        {
+          name: 'N',
+          email: 'n@x.test',
+          password: 'password-1',
+          role: DtoUserRole.STAFF,
+        },
+        actor,
+      );
+
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment -- untyped Prisma mock */
+      expect(prismaMock.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ roleId: null }),
         }),
       );
       /* eslint-enable @typescript-eslint/no-unsafe-assignment */
