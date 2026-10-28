@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma, UserRole } from '../../prisma/client';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
+import { resolveReferenceNames } from './audit-references';
 import { ListAuditLogsQueryDto } from './dto/audit-logs.dto';
 
 @Injectable()
@@ -144,10 +145,20 @@ export class AuditLogsService {
       this.prisma.auditLog.count({ where }),
     ]);
 
+    const snapshot = (value: unknown) =>
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : null;
+    const references = await resolveReferenceNames(
+      this.prisma,
+      items.flatMap((item) => [snapshot(item.before), snapshot(item.after)]),
+    );
+
     return {
       message: 'Audit logs retrieved successfully',
       data: {
         items,
+        references,
         total,
         page: query.page,
         limit: query.limit,

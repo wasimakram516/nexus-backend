@@ -47,6 +47,7 @@ describe('AuditLogsService', () => {
       message: 'Audit logs retrieved successfully',
       data: {
         items,
+        references: {},
         total: 3,
         page: 1,
         limit: 2,
