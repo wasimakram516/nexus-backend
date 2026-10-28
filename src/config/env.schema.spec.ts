@@ -54,7 +54,7 @@ describe('envSchema backups', () => {
 
     expect(config.BACKUP_ENABLED).toBe(false);
     expect(config.BACKUP_OBJECT_LOCK).toBe(true);
-    expect(config.BACKUP_RETENTION_YEARLY_DAYS).toBe(3650);
+    expect(config.BACKUP_RETENTION_YEARLY_DAYS).toBe(3653);
   });
 
   it('treats the text "false" as off, not as a truthy string', () => {

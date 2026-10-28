@@ -21,7 +21,8 @@ export const DEFAULT_RETENTION_DAYS: BackupRetentionDays = {
   daily: 30,
   weekly: 84,
   monthly: 365,
-  yearly: 3650,
+  // Ten calendar years including their leap days (3650 would fall three days short).
+  yearly: 3653,
 };
 
 const KEY_PREFIX = 'backups';

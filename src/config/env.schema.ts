@@ -84,7 +84,7 @@ export const envSchema = z
     BACKUP_RETENTION_DAILY_DAYS: z.coerce.number().int().min(1).default(30),
     BACKUP_RETENTION_WEEKLY_DAYS: z.coerce.number().int().min(1).default(84),
     BACKUP_RETENTION_MONTHLY_DAYS: z.coerce.number().int().min(1).default(365),
-    BACKUP_RETENTION_YEARLY_DAYS: z.coerce.number().int().min(1).default(3650),
+    BACKUP_RETENTION_YEARLY_DAYS: z.coerce.number().int().min(1).default(3653),
   })
   .superRefine((config, context) => {
     if (config.NOTIFICATIONS_PROVIDER === 'smtp') {
