@@ -84,6 +84,7 @@ describe('UsersService', () => {
   const requestContextMock = { runWith: jest.fn() };
   const userPermissionsServiceMock = {
     sanitizeOverrides: jest.fn((v: unknown) => v),
+    assertGrantWithinCeiling: jest.fn(),
   };
   const entityCustomFieldsServiceMock = {
     saveRecord: jest
@@ -207,6 +208,54 @@ describe('UsersService', () => {
           roleId: 'role-1',
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('updateUserRole — cannot give more access than you hold', () => {
+    beforeEach(() => {
+      prismaMock.user.findUnique.mockResolvedValue(staffTargetSameInstitution);
+      prismaMock.user.update.mockResolvedValue(staffTargetSameInstitution);
+      prismaMock.role.findFirst.mockResolvedValue({
+        id: 'role-1',
+        permissions: { campuses: { delete: true } },
+      });
+    });
+
+    it('checks the role being assigned against the caller', async () => {
+      await service.updateUserRole(staffCaller, 'target-staff-1', {
+        roleId: 'role-1',
+      });
+
+      expect(
+        userPermissionsServiceMock.assertGrantWithinCeiling,
+      ).toHaveBeenCalledWith(staffCaller, {
+        rolePermissions: { campuses: { delete: true } },
+      });
+    });
+
+    it('saves nothing when the role exceeds what the caller holds', async () => {
+      userPermissionsServiceMock.assertGrantWithinCeiling.mockRejectedValueOnce(
+        new ForbiddenException('You cannot give delete access.'),
+      );
+
+      await expect(
+        service.updateUserRole(staffCaller, 'target-staff-1', {
+          roleId: 'role-1',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prismaMock.user.update).not.toHaveBeenCalled();
+    });
+
+    it('checks permission overrides against the caller too', async () => {
+      const overrides = { campuses: { delete: 'allow' as const } };
+
+      await service.updateUserRole(staffCaller, 'target-staff-1', {
+        permissionOverrides: overrides,
+      });
+
+      expect(
+        userPermissionsServiceMock.assertGrantWithinCeiling,
+      ).toHaveBeenCalledWith(staffCaller, { overrides });
     });
   });
 

@@ -21,6 +21,7 @@ import { REFRESH_TOKEN_COOKIE } from '../../common/constants/auth.constants';
 // TS enums, so comparisons across the two need the aliased import.
 import { UserRole } from '../../common/enums/domain.enums';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
+import { UserPermissionsService } from '../../common/services/user-permissions.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
 import { assertInstitutionActive } from './institution-access';
@@ -31,6 +32,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly userPermissions: UserPermissionsService,
   ) {}
 
   async register(dto: RegisterDto, actor?: CurrentUser) {
@@ -68,7 +70,7 @@ export class AuthService {
       );
     }
 
-    const roleId = await this.resolveAssignableRole(dto, institutionId);
+    const roleId = await this.resolveAssignableRole(dto, institutionId, actor);
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
     const user = await this.prisma.user.create({
@@ -119,11 +121,13 @@ export class AuthService {
    *
    * @param {RegisterDto} dto - The registration request.
    * @param {string | null} institutionId - The institution the account joins.
+   * @param {CurrentUser} [actor] - Who is creating the account; they cannot give a role that exceeds their own access.
    * @returns {Promise<string | null>} The role id to store, or null for none.
    */
   private async resolveAssignableRole(
     dto: RegisterDto,
     institutionId: string | null,
+    actor?: CurrentUser,
   ): Promise<string | null> {
     if (!dto.roleId) return null;
     if ([UserRole.SUPERADMIN, UserRole.ADMIN].includes(dto.role)) {
@@ -134,11 +138,16 @@ export class AuthService {
     const role = institutionId
       ? await this.prisma.role.findFirst({
           where: { id: dto.roleId, institutionId, deletedAt: null },
-          select: { id: true },
+          select: { id: true, permissions: true },
         })
       : null;
     if (!role) {
       throw new BadRequestException('Role not found for this institution.');
+    }
+    if (actor) {
+      await this.userPermissions.assertGrantWithinCeiling(actor, {
+        rolePermissions: role.permissions,
+      });
     }
     return role.id;
   }

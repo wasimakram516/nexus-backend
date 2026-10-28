@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma, UserRole } from '../../prisma/client';
 import { CurrentUser } from '../interfaces/current-user.interface';
 import {
@@ -125,6 +125,52 @@ export class UserPermissionsService {
     }
 
     return Boolean(map[featureKey]?.[action]);
+  }
+
+  /**
+   * Stops anyone handing out more access than they hold themselves. An
+   * administrator or superadmin may grant anything; everyone else, who can
+   * only reach this through a delegated grant, may give a role or an "allow"
+   * override only for actions they can already do.
+   *
+   * @param {CurrentUser} actor - Who is granting access.
+   * @param {{ rolePermissions?: Prisma.JsonValue | null; overrides?: unknown }} grant - The role's permissions and/or the overrides being applied.
+   * @throws {ForbiddenException} When the grant includes an action the actor lacks.
+   */
+  async assertGrantWithinCeiling(
+    actor: CurrentUser,
+    grant: { rolePermissions?: Prisma.JsonValue | null; overrides?: unknown },
+  ): Promise<void> {
+    if (actor.role === UserRole.SUPERADMIN || actor.role === UserRole.ADMIN) {
+      return;
+    }
+    const ceiling = await this.getEffectivePermissionsForUser(actor.sub);
+    if (!ceiling) return;
+
+    const wanted: Array<[string, string]> = [];
+    const fromRole = this.readPermissionMap(grant.rolePermissions);
+    for (const [feature, actions] of Object.entries(fromRole ?? {})) {
+      for (const [action, allowed] of Object.entries(actions ?? {})) {
+        if (allowed) wanted.push([feature, action]);
+      }
+    }
+    for (const [feature, actions] of Object.entries(
+      this.sanitizeOverrides(grant.overrides),
+    )) {
+      for (const [action, effect] of Object.entries(actions ?? {})) {
+        if (effect === 'allow') wanted.push([feature, action]);
+      }
+    }
+
+    const missing = wanted.find(
+      ([feature, action]) => !ceiling[feature]?.[action as PermissionAction],
+    );
+    if (missing) {
+      const [feature, action] = missing;
+      throw new ForbiddenException(
+        `You cannot give ${action} access to ${feature.replace(/_/g, ' ')} because you do not have it yourself.`,
+      );
+    }
   }
 
   /** Sanitizes arbitrary JSON into the override shape, dropping unknown

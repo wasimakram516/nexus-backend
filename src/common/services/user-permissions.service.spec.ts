@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { UserRole } from '../../prisma/client';
 import { CurrentUser } from '../interfaces/current-user.interface';
@@ -12,6 +13,13 @@ describe('UserPermissionsService', () => {
       findUnique: jest.fn(),
     },
   };
+
+  const currentUser = (role: UserRole): CurrentUser => ({
+    sub: 'user-1',
+    email: 'user@nexus.test',
+    role,
+    institutionId: 'institution-1',
+  });
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -168,13 +176,6 @@ describe('UserPermissionsService', () => {
   });
 
   describe('can', () => {
-    const currentUser = (role: UserRole): CurrentUser => ({
-      sub: 'user-1',
-      email: 'user@nexus.test',
-      role,
-      institutionId: 'institution-1',
-    });
-
     it('always allows SUPERADMIN without touching the database', async () => {
       const allowed = await service.can(
         currentUser(UserRole.SUPERADMIN),
@@ -311,6 +312,64 @@ describe('UserPermissionsService', () => {
       });
 
       expect(result).toEqual({});
+    });
+  });
+
+  describe('assertGrantWithinCeiling', () => {
+    const staffActor = () => currentUser(UserRole.STAFF);
+    const actorHas = (permissions: Record<string, Record<string, boolean>>) =>
+      prismaMock.user.findUnique.mockResolvedValue({
+        role: UserRole.STAFF,
+        permissionOverrides: null,
+        assignedRole: { permissions, deletedAt: null },
+      });
+
+    it('lets an administrator grant anything without looking anything up', async () => {
+      await expect(
+        service.assertGrantWithinCeiling(currentUser(UserRole.ADMIN), {
+          rolePermissions: { campuses: { delete: true } },
+        }),
+      ).resolves.toBeUndefined();
+      expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('allows a role that only holds what the actor holds', async () => {
+      actorHas({ campuses: { read: true, update: true } });
+
+      await expect(
+        service.assertGrantWithinCeiling(staffActor(), {
+          rolePermissions: { campuses: { read: true } },
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('refuses a role that grants an action the actor lacks', async () => {
+      actorHas({ campuses: { read: true } });
+
+      await expect(
+        service.assertGrantWithinCeiling(staffActor(), {
+          rolePermissions: { campuses: { read: true, delete: true } },
+        }),
+      ).rejects.toThrow(
+        new ForbiddenException(
+          'You cannot give delete access to campuses because you do not have it yourself.',
+        ),
+      );
+    });
+
+    it('refuses an allow override beyond the actor but accepts a deny', async () => {
+      actorHas({ campuses: { read: true } });
+
+      await expect(
+        service.assertGrantWithinCeiling(staffActor(), {
+          overrides: { campuses: { delete: 'allow' } },
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.assertGrantWithinCeiling(staffActor(), {
+          overrides: { campuses: { delete: 'deny', read: 'deny' } },
+        }),
+      ).resolves.toBeUndefined();
     });
   });
 });

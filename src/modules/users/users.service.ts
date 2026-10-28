@@ -301,15 +301,24 @@ export class UsersService {
               ? { institutionId: target.institutionId }
               : {}),
           },
-          select: { id: true },
+          select: { id: true, permissions: true },
         });
         if (!role) {
           throw new BadRequestException('Role not found for this institution.');
         }
+        await this.userPermissionsService.assertGrantWithinCeiling(
+          currentUser,
+          { rolePermissions: role.permissions },
+        );
         updateData.roleId = role.id;
       }
     }
 
+    if (dto.permissionOverrides) {
+      await this.userPermissionsService.assertGrantWithinCeiling(currentUser, {
+        overrides: dto.permissionOverrides,
+      });
+    }
     if (dto.permissionOverrides !== undefined) {
       updateData.permissionOverrides =
         dto.permissionOverrides === null

@@ -13,6 +13,7 @@ import { UserRole, UserStatus } from '../../prisma/client';
 // nominal, so DTO payload literals need this import.
 import { UserRole as DtoUserRole } from '../../common/enums/domain.enums';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
+import { UserPermissionsService } from '../../common/services/user-permissions.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from './auth.service';
 
@@ -43,6 +44,10 @@ describe('AuthService', () => {
   const configServiceMock = {
     get: jest.fn(),
     getOrThrow: jest.fn(),
+  };
+
+  const userPermissionsMock = {
+    assertGrantWithinCeiling: jest.fn(),
   };
 
   const responseMock = {
@@ -93,6 +98,10 @@ describe('AuthService', () => {
         {
           provide: ConfigService,
           useValue: configServiceMock,
+        },
+        {
+          provide: UserPermissionsService,
+          useValue: userPermissionsMock,
         },
       ],
     }).compile();
@@ -478,7 +487,10 @@ describe('AuthService', () => {
     });
 
     it('gives the new account the chosen role from the same institution', async () => {
-      prismaMock.role.findFirst.mockResolvedValue({ id: 'role-1' });
+      prismaMock.role.findFirst.mockResolvedValue({
+        id: 'role-1',
+        permissions: { campuses: { read: true } },
+      });
 
       await service.register(
         {
@@ -497,8 +509,12 @@ describe('AuthService', () => {
           institutionId: 'institution-1',
           deletedAt: null,
         },
-        select: { id: true },
+        select: { id: true, permissions: true },
       });
+      expect(userPermissionsMock.assertGrantWithinCeiling).toHaveBeenCalledWith(
+        actor,
+        { rolePermissions: { campuses: { read: true } } },
+      );
       /* eslint-disable @typescript-eslint/no-unsafe-assignment -- untyped Prisma mock */
       expect(prismaMock.user.create).toHaveBeenCalledWith(
         expect.objectContaining({
