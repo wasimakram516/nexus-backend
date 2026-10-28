@@ -75,6 +75,25 @@ describe('JwtStrategy', () => {
     );
   });
 
+  it.each(['SUSPENDED', 'INACTIVE'])(
+    'rejects a token for a user whose institution is %s',
+    async (status) => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        email: 'user@nexus.test',
+        role: UserRole.STAFF,
+        status: UserStatus.ACTIVE,
+        deletedAt: null,
+        institutionId: 'institution-1',
+        institution: { status },
+      });
+
+      await expect(strategy.validate(payload)).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+    },
+  );
+
   it('resolves a valid user with no sessionId on the payload (no session check)', async () => {
     prismaMock.user.findUnique.mockResolvedValue({
       id: 'user-1',

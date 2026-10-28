@@ -178,6 +178,42 @@ describe('AuthService', () => {
       });
     });
 
+    it('refuses sign-in for a school on hold, after the password is right, and audits it', async () => {
+      prismaMock.user.findFirst.mockResolvedValue({
+        id: 'user-1',
+        email: 'admin@nexus.test',
+        passwordHash: 'hashed-password',
+        role: UserRole.ADMIN,
+        status: UserStatus.ACTIVE,
+        institutionId: 'institution-1',
+        institution: { status: 'SUSPENDED' },
+      });
+
+      await expect(
+        service.login(
+          { identifier: 'admin@nexus.test', password: 'master-key-123456' },
+          responseMock,
+          {},
+        ),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(prismaMock.refreshSession.create).not.toHaveBeenCalled();
+      expect(prismaMock.auditLog.create).toHaveBeenCalledWith({
+        data: {
+          userId: 'user-1',
+          institutionId: 'institution-1',
+          action: 'AUTH_LOGIN_FAILED',
+          entity: 'RefreshSession',
+          metadata: {
+            identifier: 'admin@nexus.test',
+            reason: 'INSTITUTION_ON_HOLD',
+            ipAddress: undefined,
+            userAgent: undefined,
+          },
+        },
+      });
+    });
+
     it('audits a wrong-password attempt against a real, active account', async () => {
       prismaMock.user.findFirst.mockResolvedValue({
         id: 'user-1',

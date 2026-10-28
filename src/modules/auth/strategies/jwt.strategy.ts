@@ -5,6 +5,7 @@ import { UserStatus } from '../../../prisma/client';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { CurrentUser } from '../../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { assertInstitutionActive } from '../institution-access';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -29,6 +30,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         status: true,
         deletedAt: true,
         institutionId: true,
+        institution: { select: { status: true } },
       },
     });
 
@@ -43,6 +45,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (user.status !== UserStatus.ACTIVE) {
       throw new UnauthorizedException('Your account is not active.');
     }
+
+    assertInstitutionActive(user.institution);
 
     if (payload.sessionId) {
       const session = await this.prisma.refreshSession.findFirst({

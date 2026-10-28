@@ -7,7 +7,6 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import {
-  Prisma,
   User,
   UserRole as PrismaUserRole,
   UserStatus,
@@ -23,6 +22,7 @@ import { UserRole } from '../../common/enums/domain.enums';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
+import { assertInstitutionActive } from './institution-access';
 
 @Injectable()
 export class AuthService {
@@ -122,6 +122,7 @@ export class AuthService {
           { identifier: dto.identifier },
         ],
       },
+      include: { institution: { select: { status: true } } },
     });
 
     if (!user || user.deletedAt) {
@@ -159,6 +160,20 @@ export class AuthService {
         metadata,
       );
       throw new UnauthorizedException('Invalid credentials.');
+    }
+
+    // Checked after the password so an outsider cannot learn that a school is
+    // on hold just by trying its email addresses.
+    try {
+      assertInstitutionActive(user.institution);
+    } catch (error) {
+      await this.auditLoginFailure(
+        user,
+        dto.identifier,
+        'INSTITUTION_ON_HOLD',
+        metadata,
+      );
+      throw error;
     }
 
     const data = await this.createSessionForUser(user, response, metadata, {
@@ -248,7 +263,9 @@ export class AuthService {
         revokedAt: null,
         expiresAt: { gt: new Date() },
       },
-      include: { user: true },
+      include: {
+        user: { include: { institution: { select: { status: true } } } },
+      },
     });
 
     const activeSession = await this.findMatchingSession(
@@ -258,6 +275,7 @@ export class AuthService {
     if (!activeSession) {
       throw new UnauthorizedException('Refresh session is invalid or expired.');
     }
+    assertInstitutionActive(activeSession.user.institution);
 
     await this.prisma.refreshSession.update({
       where: { id: activeSession.id },
@@ -429,7 +447,7 @@ export class AuthService {
   private async auditLoginFailure(
     user: Pick<User, 'id' | 'institutionId'> | null,
     identifier: string,
-    reason: 'INVALID_CREDENTIALS' | 'ACCOUNT_INACTIVE',
+    reason: 'INVALID_CREDENTIALS' | 'ACCOUNT_INACTIVE' | 'INSTITUTION_ON_HOLD',
     metadata: { userAgent?: string; ipAddress?: string },
   ) {
     await this.prisma.auditLog.create({
@@ -480,9 +498,9 @@ export class AuthService {
     });
   }
 
-  private async findMatchingSession(
+  private async findMatchingSession<T extends { tokenHash: string }>(
     refreshToken: string,
-    sessions: Prisma.RefreshSessionGetPayload<{ include: { user: true } }>[],
+    sessions: T[],
   ) {
     for (const session of sessions) {
       const matches = await bcrypt.compare(refreshToken, session.tokenHash);
