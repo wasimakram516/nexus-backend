@@ -22,6 +22,7 @@ import { REFRESH_TOKEN_COOKIE } from '../../common/constants/auth.constants';
 import { UserRole } from '../../common/enums/domain.enums';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { UserPermissionsService } from '../../common/services/user-permissions.service';
+import { signInCandidates } from '../../common/utils/phone.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
 import { assertInstitutionActive } from './institution-access';
@@ -164,7 +165,7 @@ export class AuthService {
       where: {
         OR: [
           { email: dto.identifier.toLowerCase() },
-          { identifier: dto.identifier },
+          { identifier: { in: signInCandidates(dto.identifier) } },
         ],
       },
       include: { institution: { select: { status: true } } },

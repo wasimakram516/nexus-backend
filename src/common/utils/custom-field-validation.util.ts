@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { isEmail, isURL } from 'class-validator';
 import { CustomFieldInputType } from '../../prisma/client';
+import { toE164 } from './phone.util';
 
 export interface ValueDefinition {
   fieldKey: string;
@@ -148,9 +149,13 @@ export function validateCustomFieldValue(
           !isEmail(value)
         )
           invalid();
+        // A number with a country code must be a real number. One written
+        // without it is an older, local entry and keeps the looser check.
         if (
           definition.inputType === CustomFieldInputType.PHONE &&
-          !/^\+?[\d ()-]{6,25}$/.test(value)
+          (value.trim().startsWith('+')
+            ? !toE164(value)
+            : !/^[\d ()-]{6,25}$/.test(value))
         )
           invalid();
         if (

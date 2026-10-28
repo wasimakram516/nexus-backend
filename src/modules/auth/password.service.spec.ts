@@ -100,8 +100,27 @@ describe('PasswordService', () => {
           where: {
             deletedAt: null,
             status: UserStatus.ACTIVE,
-            OR: [{ email: 'r-1' }, { identifier: 'R-1' }],
+            OR: [{ email: 'r-1' }, { identifier: { in: ['R-1'] } }],
           },
+        }),
+      );
+    });
+
+    it('finds a guardian by their phone however it is typed or was stored', async () => {
+      await service.requestReset('0300 1234567');
+
+      expect(prismaMock.user.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [
+              { email: '0300 1234567' },
+              {
+                identifier: {
+                  in: ['0300 1234567', '+923001234567', '03001234567'],
+                },
+              },
+            ],
+          }) as never,
         }),
       );
     });

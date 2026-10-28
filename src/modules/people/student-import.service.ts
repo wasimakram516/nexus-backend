@@ -13,6 +13,7 @@ import { ModuleKey, UserRole } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { ImportCommitDto, ImportPreviewDto } from './dto/student-import.dto';
+import { storedPhoneVariants, toE164 } from '../../common/utils/phone.util';
 import { PeopleService } from './people.service';
 import {
   generatePassword,
@@ -20,7 +21,6 @@ import {
   Gender,
   ImportRow,
   normalizeLabel,
-  normalizePhone,
   parseGender,
   parseImportDate,
   parseReligion,
@@ -216,7 +216,7 @@ export class StudentImportService {
       await this.customFields.resolveInstitutionIdByCampus(campusId);
     const institution = await this.prisma.institution.findUnique({
       where: { id: institutionId },
-      select: { currentAcademicYearId: true },
+      select: { currentAcademicYearId: true, defaultCountry: true },
     });
     if (!institution?.currentAcademicYearId)
       throw new ConflictException(NO_YEAR);
@@ -233,9 +233,13 @@ export class StudentImportService {
       },
     });
     const regNos = rows.map((row) => (row.regNo ?? '').trim()).filter(Boolean);
-    const phones = rows
-      .map((row) => normalizePhone(row.guardianPhone))
-      .filter((phone): phone is string => Boolean(phone));
+    const country = institution.defaultCountry;
+    // Numbers saved before international form was kept are found through every way they may be written.
+    const phones = Array.from(
+      new Set(
+        rows.flatMap((row) => storedPhoneVariants(row.guardianPhone, country)),
+      ),
+    );
     const dobs = rows
       .map((row) => parseImportDate(row.dob))
       .filter((dob): dob is string => Boolean(dob))
@@ -277,7 +281,7 @@ export class StudentImportService {
     const taken = new Set(takenRegNos.map((student) => student.regNo));
     const guardianByPhone = new Map(
       contacts.map((contact) => [
-        contact.phone1,
+        toE164(contact.phone1, country) ?? contact.phone1,
         {
           guardianId: contact.guardianId as string,
           name: contact.guardian?.user.name ?? '',
@@ -407,7 +411,7 @@ export class StudentImportService {
       }
 
       let guardian: GuardianPlan = { mode: 'NONE' };
-      const phone = normalizePhone(raw.guardianPhone);
+      const phone = toE164(raw.guardianPhone, country);
       const guardianName = (raw.guardianName ?? '').trim();
       if (raw.guardianPhone?.trim() || guardianName) {
         if (!phone) {

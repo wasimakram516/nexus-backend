@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes } from 'crypto';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
+import { signInCandidates } from '../../common/utils/phone.util';
 import { UserStatus } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -55,7 +56,7 @@ export class PasswordService {
         status: UserStatus.ACTIVE,
         OR: [
           { email: identifier.trim().toLowerCase() },
-          { identifier: identifier.trim() },
+          { identifier: { in: signInCandidates(identifier) } },
         ],
       },
       select: {

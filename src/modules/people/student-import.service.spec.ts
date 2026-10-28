@@ -63,6 +63,7 @@ describe('StudentImportService', () => {
     customFields.resolveInstitutionIdByCampus.mockResolvedValue('inst-1');
     prismaMock.institution.findUnique.mockResolvedValue({
       currentAcademicYearId: 'year-1',
+      defaultCountry: 'PK',
     });
     prismaMock.academicClass.findMany.mockResolvedValue([
       {
@@ -284,14 +285,14 @@ describe('StudentImportService', () => {
       expect(rows.rows[0].guardian).toEqual({
         mode: 'NEW',
         name: 'Mr Khan',
-        phone: '03001234567',
+        phone: '+923001234567',
         relation: 'FATHER',
       });
       expect(rows.rows[1].guardian).toEqual({
         mode: 'EXISTING',
         guardianId: 'g-1',
         name: 'Mr Existing',
-        phone: '03009999999',
+        phone: '+923009999999',
       });
       expect(rows.summary).toMatchObject({
         newGuardians: 1,
@@ -338,7 +339,7 @@ describe('StudentImportService', () => {
       });
 
       expect(row.errors).toEqual([
-        'Guardian phone 03001234567 is already registered to someone at another institution.',
+        'Guardian phone +923001234567 is already registered to someone at another institution.',
       ]);
       expect(row.guardian).toEqual({ mode: 'NONE' });
     });
@@ -473,7 +474,7 @@ describe('StudentImportService', () => {
       expect(people.createContact).toHaveBeenCalledWith(admin, {
         personId: 'guardian-1',
         personType: 'GUARDIAN',
-        phone1: '03001234567',
+        phone1: '+923001234567',
       });
       expect(people.linkGuardian).toHaveBeenCalledWith(admin, {
         studentId: 'student-1',
@@ -481,7 +482,7 @@ describe('StudentImportService', () => {
       });
       expect(result.data.results[0]).toMatchObject({
         status: 'IMPORTED',
-        guardianPhone: '03001234567',
+        guardianPhone: '+923001234567',
         guardianPassword: auth.register.mock.calls[1][0].password,
       });
     });

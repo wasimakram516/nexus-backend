@@ -57,6 +57,58 @@ export function toE164(
 }
 
 /**
+ * Every way a number may already be stored: international, national with and
+ * without the leading zero, and as typed. Numbers saved before international
+ * form was kept are matched through these, so the same person is not added twice.
+ *
+ * @param {string | null | undefined} raw - The number as written.
+ * @param {string | null | undefined} [country] - The country a number without a calling code belongs to.
+ * @returns {string[]} The forms to look for; empty when it is not a valid number.
+ */
+export function storedPhoneVariants(
+  raw: string | null | undefined,
+  country?: string | null,
+): string[] {
+  const text = (raw ?? '').trim();
+  const international = text.startsWith('00') ? `+${text.slice(2)}` : text;
+  const parsed = parsePhoneNumberFromString(
+    international,
+    resolveCountry(country),
+  );
+  if (!parsed?.isValid()) return [];
+  return Array.from(
+    new Set([
+      parsed.number,
+      `0${parsed.nationalNumber}`,
+      parsed.nationalNumber,
+      text,
+      text.replace(/[^\d+]/g, ''),
+    ]),
+  ).filter(Boolean);
+}
+
+/**
+ * What a sign-in name might be stored as. A guardian signs in with a phone
+ * number that is now kept in international form, but may type it any way, and
+ * numbers saved earlier are in the local Pakistani form, so each is tried.
+ *
+ * @param {string} raw - What was typed at sign-in.
+ * @returns {string[]} The typed text first, then the international form and, for a Pakistani number, the old local form.
+ */
+export function signInCandidates(raw: string): string[] {
+  const text = raw.trim();
+  const candidates = [text];
+  const international = toE164(text, FALLBACK_COUNTRY);
+  if (international) {
+    candidates.push(international);
+    if (international.startsWith('+92')) {
+      candidates.push(`0${international.slice(3)}`);
+    }
+  }
+  return Array.from(new Set(candidates));
+}
+
+/**
  * Like {@link toE164} but refuses a number that cannot be right, naming what it was for.
  *
  * @param {string} raw - The number as written.

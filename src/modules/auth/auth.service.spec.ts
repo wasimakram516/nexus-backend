@@ -132,6 +132,35 @@ describe('AuthService', () => {
     ).rejects.toThrow(new UnauthorizedException('Your account is not active.'));
   });
 
+  describe('login — a guardian signing in with their phone number', () => {
+    it('looks for the number in international form and in the older local form, however it was typed', async () => {
+      prismaMock.user.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.login(
+          { identifier: '0300 1234567', password: 'x' },
+          responseMock,
+          {},
+        ),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(prismaMock.user.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            OR: [
+              { email: '0300 1234567' },
+              {
+                identifier: {
+                  in: ['0300 1234567', '+923001234567', '03001234567'],
+                },
+              },
+            ],
+          },
+        }),
+      );
+    });
+  });
+
   describe('login — failure audit trail', () => {
     it('audits an unknown identifier without leaking whether the account exists', async () => {
       prismaMock.user.findFirst.mockResolvedValue(null);

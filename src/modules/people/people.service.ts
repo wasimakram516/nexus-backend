@@ -1,3 +1,4 @@
+import { requireE164 } from '../../common/utils/phone.util';
 import { runAuditedTransaction } from '../../common/utils/transaction.util';
 import {
   ConflictException,
@@ -1922,19 +1923,30 @@ export class PeopleService {
     }
 
     const { customFields } = dto;
-    const createData: Prisma.ContactUncheckedCreateInput = {
-      phone1: dto.phone1,
-      phone2: dto.phone2,
-      whatsapp: dto.whatsapp,
-      address: dto.address,
-      personType: resolvedOwner.personType,
-      ...resolvedOwner.ownerFields,
-    };
     const institutionId =
       await this.entityCustomFieldsService.resolveInstitutionIdByContact(
         resolvedOwner.personType,
         resolvedOwner.personId,
       );
+    // A number written without a country code belongs to the school's country.
+    const country = (
+      await this.prisma.institution.findUnique({
+        where: { id: institutionId },
+        select: { defaultCountry: true },
+      })
+    )?.defaultCountry;
+    const createData: Prisma.ContactUncheckedCreateInput = {
+      phone1: requireE164(dto.phone1, country, 'Primary phone'),
+      phone2: dto.phone2
+        ? requireE164(dto.phone2, country, 'Second phone')
+        : dto.phone2,
+      whatsapp: dto.whatsapp
+        ? requireE164(dto.whatsapp, country, 'WhatsApp number')
+        : dto.whatsapp,
+      address: dto.address,
+      personType: resolvedOwner.personType,
+      ...resolvedOwner.ownerFields,
+    };
     const item = await this.entityCustomFieldsService.saveRecord(
       {
         institutionId,
@@ -1956,7 +1968,7 @@ export class PeopleService {
           if (guardian) {
             await transaction.user.update({
               where: { id: guardian.userId },
-              data: { identifier: dto.phone1 },
+              data: { identifier: createData.phone1 },
             });
           }
         }

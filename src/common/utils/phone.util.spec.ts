@@ -4,6 +4,8 @@ import {
   isCountryCode,
   requireE164,
   resolveCountry,
+  signInCandidates,
+  storedPhoneVariants,
   toE164,
 } from './phone.util';
 
@@ -40,6 +42,35 @@ describe('phone util', () => {
     expect(resolveCountry('ae')).toBe('AE');
     expect(resolveCountry('ZZ')).toBe('PK');
     expect(resolveCountry(undefined)).toBe('PK');
+  });
+
+  it('lists every way a number may already be stored', () => {
+    const variants = storedPhoneVariants('0300-1234567', 'PK');
+
+    expect(variants).toEqual(
+      expect.arrayContaining([
+        '+923001234567',
+        '03001234567',
+        '3001234567',
+        '0300-1234567',
+      ]),
+    );
+    expect(storedPhoneVariants('12', 'PK')).toEqual([]);
+    expect(storedPhoneVariants(undefined)).toEqual([]);
+  });
+
+  it('tries every form a sign-in name may be stored in', () => {
+    expect(signInCandidates(' 0300 1234567 ')).toEqual([
+      '0300 1234567',
+      '+923001234567',
+      '03001234567',
+    ]);
+    expect(signInCandidates('+971 50 123 4567')).toEqual([
+      '+971 50 123 4567',
+      '+971501234567',
+    ]);
+    expect(signInCandidates('2026-0001')).toEqual(['2026-0001']);
+    expect(signInCandidates('parent@home.test')).toEqual(['parent@home.test']);
   });
 
   it('requireE164 returns the number or names what was wrong', () => {

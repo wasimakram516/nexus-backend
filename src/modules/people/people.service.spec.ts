@@ -385,6 +385,9 @@ describe('PeopleService', () => {
     entityCustomFieldsServiceMock.resolveInstitutionIdByContact.mockResolvedValue(
       'institution-1',
     );
+    prismaMock.institution.findUnique.mockResolvedValue({
+      defaultCountry: 'PK',
+    });
     entityCustomFieldsServiceMock.attachToItem.mockImplementation(
       (item: Record<string, unknown>) => ({
         ...item,
@@ -395,14 +398,14 @@ describe('PeopleService', () => {
     const result = await service.createContact(currentUser, {
       personId: 'student-1',
       personType: 'student',
-      phone1: '03001234567',
+      phone1: '0300 1234567',
     });
 
     expect(prismaMock.contact.create).toHaveBeenCalledWith({
       data: {
         personType: 'STUDENT',
         studentId: 'student-1',
-        phone1: '03001234567',
+        phone1: '+923001234567',
       },
     });
     expect(result).toMatchObject({
@@ -413,6 +416,56 @@ describe('PeopleService', () => {
         personType: 'STUDENT',
       },
     });
+  });
+
+  it('reads contact numbers as the school country unless they carry a code of their own', async () => {
+    campusAccessServiceMock.assertStudentAccess.mockResolvedValue('campus-1');
+    prismaMock.contact.create.mockResolvedValue({ id: 'contact-1' });
+    entityCustomFieldsServiceMock.resolveInstitutionIdByContact.mockResolvedValue(
+      'institution-1',
+    );
+    prismaMock.institution.findUnique.mockResolvedValue({
+      defaultCountry: 'AE',
+    });
+    entityCustomFieldsServiceMock.attachToItem.mockImplementation(
+      (item: Record<string, unknown>) => item,
+    );
+
+    await service.createContact(currentUser, {
+      personId: 'student-1',
+      personType: 'student',
+      phone1: '050 123 4567',
+      phone2: '+44 7911 123456',
+      whatsapp: '0092 300 1234567',
+    });
+
+    expect(prismaMock.contact.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        phone1: '+971501234567',
+        phone2: '+447911123456',
+        whatsapp: '+923001234567',
+      }) as never,
+    });
+  });
+
+  it('refuses a contact number that cannot be right, saving nothing', async () => {
+    campusAccessServiceMock.assertStudentAccess.mockResolvedValue('campus-1');
+    entityCustomFieldsServiceMock.resolveInstitutionIdByContact.mockResolvedValue(
+      'institution-1',
+    );
+    prismaMock.institution.findUnique.mockResolvedValue({
+      defaultCountry: 'PK',
+    });
+    prismaMock.contact.create.mockClear();
+
+    await expect(
+      service.createContact(currentUser, {
+        personId: 'student-1',
+        personType: 'student',
+        phone1: '12345',
+      }),
+    ).rejects.toThrow(/Primary phone "12345" is not a valid phone number/);
+    expect(prismaMock.contact.create).not.toHaveBeenCalled();
   });
 
   it('blocks duplicate teacher subject assignments for the same section mapping', async () => {
