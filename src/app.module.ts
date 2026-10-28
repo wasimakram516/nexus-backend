@@ -9,6 +9,7 @@ import { envSchema } from './config/env.schema';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
 import { AppLoggerService } from './common/services/app-logger.service';
 import { PrismaModule } from './prisma/prisma.module';
+import { BackupModule } from './modules/backup/backup.module';
 import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
@@ -65,6 +66,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     AuditLogsModule,
     RecycleBinModule,
     SchedulerModule,
+    BackupModule,
     NoticesModule,
     TimetableModule,
     ExaminationsModule,

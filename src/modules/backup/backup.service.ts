@@ -70,6 +70,11 @@ export function formatBytes(bytes: number): string {
 export class BackupService {
   private readonly logger = new Logger(BackupService.name);
   private lastError: BackupStatus['lastError'] = null;
+  private lastVerification: {
+    passed: boolean;
+    at: string;
+    summary: string;
+  } | null = null;
 
   constructor(
     private readonly config: BackupConfig,
@@ -203,6 +208,95 @@ export class BackupService {
       totalSizeBytes: stored.reduce((sum, item) => sum + item.sizeBytes, 0),
       lastError: this.lastError,
     };
+  }
+
+  /**
+   * Remembers the result of the latest restore check so the daily report can
+   * include it, and raises an alert at once when it failed.
+   *
+   * @param {boolean} passed - Whether the restored copy matched the source.
+   * @param {string} summary - What was checked, or what differed.
+   * @returns {Promise<void>} Resolves once any alert has been sent.
+   */
+  async recordVerification(passed: boolean, summary: string): Promise<void> {
+    const at = new Date();
+    this.lastVerification = { passed, at: at.toISOString(), summary };
+    if (!passed) {
+      await this.notifySuperadmins('BACKUP_ALERT', {
+        jobName: 'restore check',
+        reason: summary,
+        at: formatDateTime(at),
+      });
+    }
+  }
+
+  /**
+   * Whether backups are fresh enough to trust: an intraday backup within the
+   * last 4 hours, a daily one within the last 26, and no unresolved failure.
+   *
+   * @param {BackupStatus} status - The current status.
+   * @param {Date} now - The present moment.
+   * @returns {boolean} True when nothing needs attention.
+   */
+  isHealthy(status: BackupStatus, now: Date): boolean {
+    const age = (tier: BackupTier) => {
+      const latest = status.tiers.find((item) => item.tier === tier)?.latestAt;
+      return latest ? now.getTime() - new Date(latest).getTime() : Infinity;
+    };
+    const hour = 60 * 60 * 1000;
+    const failedRecently =
+      this.lastError !== null &&
+      now.getTime() - new Date(this.lastError.at).getTime() < 24 * hour;
+    return (
+      age('intraday') <= 4 * hour &&
+      age('daily') <= 26 * hour &&
+      !failedRecently &&
+      this.lastVerification?.passed !== false
+    );
+  }
+
+  /**
+   * Emails every superadmin the day's summary: what exists in each tier, how
+   * much space it uses, the latest restore check, and any error.
+   *
+   * @param {Date} [now] - The present moment.
+   * @returns {Promise<boolean>} Whether the report was prepared (false when backups are off).
+   */
+  async sendDailyReport(now: Date = new Date()): Promise<boolean> {
+    if (!this.enabled) return false;
+    let status: BackupStatus;
+    try {
+      status = await this.status();
+    } catch (error) {
+      await this.notifySuperadmins('BACKUP_ALERT', {
+        jobName: 'daily report',
+        reason: this.reason(error),
+        at: formatDateTime(now),
+      });
+      return false;
+    }
+    const lines = status.tiers.map((tier) =>
+      tier.latestAt && tier.latestSizeBytes !== null
+        ? `${tier.tier}: ${tier.count} kept, newest ${formatDateTime(tier.latestAt)} (${formatBytes(tier.latestSizeBytes)})`
+        : `${tier.tier}: none yet`,
+    );
+    lines.push(`Total storage used: ${formatBytes(status.totalSizeBytes)}`);
+    if (this.lastVerification) {
+      lines.push(
+        `Latest restore check (${formatDateTime(this.lastVerification.at)}): ${this.lastVerification.passed ? 'passed' : 'FAILED'}. ${this.lastVerification.summary}`,
+      );
+    }
+    if (status.lastError) {
+      lines.push(
+        `Last error (${formatDateTime(status.lastError.at)}) in ${status.lastError.jobName}: ${status.lastError.reason}`,
+      );
+    }
+    await this.notifySuperadmins('BACKUP_REPORT', {
+      date: formatDateTime(now),
+      lines,
+      healthy: this.isHealthy(status, now),
+    });
+    return true;
   }
 
   /** Emails every active superadmin. Never throws. */

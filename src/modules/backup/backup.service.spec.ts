@@ -269,6 +269,136 @@ describe('BackupService', () => {
   });
 });
 
+describe('BackupService reporting', () => {
+  const prisma = { user: { findMany: jest.fn() } };
+  const notifications = { sendEmail: jest.fn() };
+  const run = jest.fn(async (_command: string, args: string[]) => {
+    await fs.writeFile(args[args.indexOf('--file') + 1], 'dump');
+  });
+  let storage: MemoryStorage;
+  let service: BackupService;
+  const now = new Date('2026-10-28T23:50:00.000Z');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storage = new MemoryStorage();
+    prisma.user.findMany.mockResolvedValue([
+      { email: 'owner@wisemensoft.com' },
+    ]);
+    notifications.sendEmail.mockResolvedValue({ delivered: true });
+    service = new BackupService(
+      {
+        enabled: true,
+        databaseUrl: 'postgresql://u:p@host/db',
+        encryptionKey: randomBytes(32),
+        retention: DEFAULT_RETENTION_DAYS,
+      },
+      storage,
+      prisma as unknown as PrismaService,
+      notifications as unknown as NotificationsService,
+      run,
+    );
+  });
+
+  /** A normal day: an intraday backup 2 hours ago, closed into daily. */
+  const healthyDay = async () => {
+    await service.runIntraday(new Date('2026-10-28T21:00:00.000Z'));
+    await service.closeDay(new Date('2026-10-28T23:30:00.000Z'));
+  };
+
+  it('reports healthy when the newest intraday and daily backups are fresh', async () => {
+    await healthyDay();
+
+    expect(service.isHealthy(await service.status(), now)).toBe(true);
+  });
+
+  it('reports unhealthy when no backup has been taken for over 4 hours', async () => {
+    await healthyDay();
+
+    expect(
+      service.isHealthy(
+        await service.status(),
+        new Date('2026-10-29T02:30:00.000Z'),
+      ),
+    ).toBe(false);
+  });
+
+  it('reports unhealthy when a failure happened in the last day, or a restore check failed', async () => {
+    await healthyDay();
+    await service.recordVerification(false, 'rows missing in users');
+
+    expect(service.isHealthy(await service.status(), now)).toBe(false);
+  });
+
+  it('emails an alert at once when a restore check fails, and not when it passes', async () => {
+    await service.recordVerification(true, 'all tables match');
+    expect(notifications.sendEmail).not.toHaveBeenCalled();
+
+    await service.recordVerification(false, 'users: 10 of 100 rows');
+
+    expect(notifications.sendEmail).toHaveBeenCalledWith(
+      'BACKUP_ALERT',
+      'owner@wisemensoft.com',
+      expect.objectContaining({
+        jobName: 'restore check',
+        reason: 'users: 10 of 100 rows',
+      }),
+    );
+  });
+
+  it('sends the daily report with each tier, the storage used and the restore check', async () => {
+    await healthyDay();
+    await service.recordVerification(true, 'all tables match');
+
+    expect(await service.sendDailyReport(now)).toBe(true);
+
+    const call = notifications.sendEmail.mock.calls.find(
+      (args: unknown[]) => args[0] === 'BACKUP_REPORT',
+    ) as [string, string, { lines: string[]; healthy: boolean }];
+    expect(call[1]).toBe('owner@wisemensoft.com');
+    expect(call[2].healthy).toBe(true);
+    expect(
+      call[2].lines.some((line) => line.startsWith('intraday: 1 kept')),
+    ).toBe(true);
+    expect(call[2].lines).toContain('weekly: none yet');
+    expect(
+      call[2].lines.some((line) => line.startsWith('Total storage used')),
+    ).toBe(true);
+    expect(call[2].lines.some((line) => line.includes('passed'))).toBe(true);
+  });
+
+  it('sends no report while backups are off', async () => {
+    const off = new BackupService(
+      {
+        enabled: false,
+        databaseUrl: '',
+        encryptionKey: Buffer.alloc(0),
+        retention: DEFAULT_RETENTION_DAYS,
+      },
+      null,
+      prisma as unknown as PrismaService,
+      notifications as unknown as NotificationsService,
+    );
+
+    expect(await off.sendDailyReport(now)).toBe(false);
+    expect(notifications.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('alerts instead of reporting when the storage cannot be read', async () => {
+    jest.spyOn(storage, 'list').mockRejectedValue(new Error('access denied'));
+
+    expect(await service.sendDailyReport(now)).toBe(false);
+    expect(notifications.sendEmail).toHaveBeenCalledWith(
+      'BACKUP_ALERT',
+      'owner@wisemensoft.com',
+      expect.objectContaining({
+        jobName: 'daily report',
+        reason: 'access denied',
+      }),
+    );
+  });
+});
+
 describe('formatBytes', () => {
   it.each([
     [500, '500 B'],
