@@ -20,6 +20,7 @@ import {
   IsString,
   IsUUID,
   Matches,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -352,6 +353,21 @@ export class UpdateSubscriptionDto {
 export class UpdateInstitutionAccessDto extends UpdateInstitutionDto {}
 
 export class UpdateSubscriptionAccessDto extends UpdateSubscriptionDto {}
+
+export class ChangePlanDto {
+  @ApiProperty({ description: 'The plan to move the institution to.' })
+  @IsUUID()
+  planId!: string;
+
+  @ApiPropertyOptional({
+    description:
+      "The agreed price from now on; defaults to the new plan's base price.",
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  agreedPrice?: number;
+}
 
 export class ListInstitutionsQueryDto {
   @ApiPropertyOptional({ enum: InstitutionStatus })

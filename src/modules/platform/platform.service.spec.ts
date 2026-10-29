@@ -89,6 +89,9 @@ describe('PlatformService', () => {
       findUnique: jest.fn().mockResolvedValue(starterPlan),
       findMany: jest.fn().mockResolvedValue([starterPlan]),
     },
+    institutionSubscription: {
+      findFirst: jest.fn(),
+    },
     institution: {
       findFirst: jest.fn().mockResolvedValue(null),
       findUnique: jest.fn().mockResolvedValue({ id: 'institution-1' }),
@@ -130,6 +133,7 @@ describe('PlatformService', () => {
       id: 'entitlement-1',
     });
     txMock.institutionSubscription.findFirst.mockResolvedValue(null);
+    prismaMock.institutionSubscription.findFirst.mockResolvedValue(null);
     txMock.institutionSubscription.create.mockResolvedValue({
       id: 'subscription-1',
       status: SubscriptionStatus.TRIAL,
@@ -812,6 +816,36 @@ describe('PlatformService', () => {
 
       expect(txMock.institutionSubscription.create).toHaveBeenCalled();
       expect(txMock.institutionSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses to move the institution to a different plan, which has its own route that checks limits', async () => {
+      prismaMock.institutionSubscription.findFirst.mockResolvedValueOnce({
+        planId: 'plan-growth',
+      });
+
+      await expect(
+        service.updateSubscription('institution-1', {
+          planId: 'plan-starter',
+        }),
+      ).rejects.toThrow('use Change plan');
+
+      expect(txMock.institutionSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it('lets the other subscription details change while the plan stays the same', async () => {
+      prismaMock.institutionSubscription.findFirst.mockResolvedValueOnce({
+        planId: 'plan-starter',
+      });
+      txMock.institutionSubscription.findFirst.mockResolvedValueOnce({
+        id: 'subscription-existing-1',
+      });
+
+      await service.updateSubscription('institution-1', {
+        planId: 'plan-starter',
+        autoRenew: true,
+      });
+
+      expect(txMock.institutionSubscription.update).toHaveBeenCalled();
     });
 
     it('updates the existing subscription when one is already active', async () => {

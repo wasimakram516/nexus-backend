@@ -47,6 +47,7 @@ import {
 import { CreateRoleDto, UpdateRoleDto } from '../roles/dto/roles.dto';
 import { RolesService } from '../roles/roles.service';
 import {
+  ChangePlanDto,
   CreatePlanDto,
   CreateInstitutionDto,
   ListInstitutionsQueryDto,
@@ -57,6 +58,7 @@ import {
   UpsertEntitlementsDto,
   UpsertInstitutionSettingsDto,
 } from './dto/platform.dto';
+import { PlanChangeService } from './plan-change.service';
 import { PlatformService } from './platform.service';
 
 @ApiTags('Platform')
@@ -72,6 +74,7 @@ export class PlatformController {
     private readonly noticesService: NoticesService,
     private readonly attendanceCalendarService: AttendanceCalendarService,
     private readonly examinationsService: ExaminationsService,
+    private readonly planChangeService: PlanChangeService,
   ) {}
 
   @Post('plans')
@@ -208,6 +211,36 @@ export class PlatformController {
     @Body() dto: UpdateSubscriptionAccessDto,
   ) {
     return this.platformService.updateSubscription(institutionId, dto);
+  }
+
+  @Post('institutions/:institutionId/subscription/plan-change/preview')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Preview moving an institution to another plan',
+    description:
+      'Shows which modules would be switched on and off, how the institution measures against the new plan limits, the price, and anything that stops the change. Changes nothing.',
+  })
+  previewPlanChange(
+    @Param('institutionId') institutionId: string,
+    @Body() dto: ChangePlanDto,
+  ) {
+    return this.planChangeService
+      .preview(institutionId, dto.planId)
+      .then((data) => ({ message: 'Plan change previewed', data }));
+  }
+
+  @Post('institutions/:institutionId/subscription/plan-change')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Move an institution to another plan',
+    description:
+      'Changes the plan, switches on the modules the new plan includes and switches off the ones it does not. Refused when the institution has more campuses, students or staff than the new plan allows.',
+  })
+  changePlan(
+    @Param('institutionId') institutionId: string,
+    @Body() dto: ChangePlanDto,
+  ) {
+    return this.planChangeService.apply(institutionId, dto);
   }
 
   @Post('institutions/:institutionId/roles')

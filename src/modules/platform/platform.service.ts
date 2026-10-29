@@ -608,6 +608,20 @@ export class PlatformService {
     const plan = await this.resolvePlan(dto.planId, plans);
     const defaultModules = readModuleKeys(plan.defaultModules);
 
+    // Moving to a different plan checks the school against the new limits and
+    // switches modules both ways, so it has its own route; this one keeps the
+    // plan the school is on and edits the rest.
+    const existing = await this.prisma.institutionSubscription.findFirst({
+      where: { institutionId },
+      orderBy: { createdAt: 'desc' },
+      select: { planId: true },
+    });
+    if (existing?.planId && existing.planId !== plan.id) {
+      throw new ConflictException(
+        'To move this institution to a different plan, use Change plan. It checks the school against the new plan limits and updates its modules.',
+      );
+    }
+
     // Audited automatically by PrismaService (real before/after snapshot
     // for the subscription row; entitlement upserts below each get their
     // own entry too).

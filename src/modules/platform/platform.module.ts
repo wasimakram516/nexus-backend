@@ -7,6 +7,7 @@ import { NoticesModule } from '../notices/notices.module';
 import { RolesModule } from '../roles/roles.module';
 import { InstitutionConfigController } from './institution-config.controller';
 import { InstitutionConfigService } from './institution-config.service';
+import { PlanChangeService } from './plan-change.service';
 import { PlatformController } from './platform.controller';
 import { PlatformPublicController } from './platform-public.controller';
 import { PlatformService } from './platform.service';
@@ -26,6 +27,11 @@ import { SignupService } from './signup.service';
     PlatformController,
     InstitutionConfigController,
   ],
-  providers: [PlatformService, InstitutionConfigService, SignupService],
+  providers: [
+    PlatformService,
+    PlanChangeService,
+    InstitutionConfigService,
+    SignupService,
+  ],
 })
 export class PlatformModule {}
