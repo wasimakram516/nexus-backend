@@ -94,7 +94,7 @@ describe('ExamReportsService', () => {
     student('4', 'Dina', { 'p-maths': marks(70) }),
   ];
 
-  const prismaMock = { exam: { findUnique: jest.fn() } };
+  const prismaMock = { exam: { findUnique: jest.fn(), findMany: jest.fn() } };
   const accessMock = { resolve: jest.fn() };
   const resultsMock = {
     loadExam: jest.fn(),
@@ -119,6 +119,61 @@ describe('ExamReportsService', () => {
       class: { name: 'Grade 5' },
       examTerm: { name: 'Term 1' },
     });
+  });
+
+  it('names each exam so repeats across classes and terms can be told apart', async () => {
+    prismaMock.exam.findMany.mockResolvedValue([
+      {
+        id: 'e1',
+        name: 'Midterm',
+        status: ExamStatus.PUBLISHED,
+        campus: { name: 'Main' },
+        class: { name: 'Grade 5' },
+        examTerm: { name: 'Term 1' },
+      },
+      {
+        id: 'e2',
+        name: 'Final',
+        status: ExamStatus.DRAFT,
+        campus: { name: 'Main' },
+        class: { name: 'Grade 6' },
+        examTerm: { name: 'Term 2' },
+      },
+    ]);
+
+    await expect(service.options(admin, {})).resolves.toEqual([
+      { id: 'e1', label: 'Midterm · Grade 5 · Term 1' },
+      { id: 'e2', label: 'Final · Grade 6 · Term 2 · draft' },
+    ]);
+    expect(prismaMock.exam.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { campusId: { in: ['c1'] }, deletedAt: null },
+      }),
+    );
+  });
+
+  it('adds the campus to an exam name when the administrator has several', async () => {
+    accessMock.resolve.mockResolvedValue({
+      institutionId: 'inst-1',
+      campuses: [
+        { id: 'c1', name: 'Main', timezone: 'Asia/Karachi' },
+        { id: 'c2', name: 'North', timezone: 'Asia/Karachi' },
+      ],
+    });
+    prismaMock.exam.findMany.mockResolvedValue([
+      {
+        id: 'e1',
+        name: 'Midterm',
+        status: ExamStatus.PUBLISHED,
+        campus: { name: 'North' },
+        class: { name: 'Grade 5' },
+        examTerm: { name: 'Term 1' },
+      },
+    ]);
+
+    await expect(service.options(admin, {})).resolves.toEqual([
+      { id: 'e1', label: 'Midterm · Grade 5 · Term 1 · North' },
+    ]);
   });
 
   it('summarises each paper without scoring an absence as zero', async () => {

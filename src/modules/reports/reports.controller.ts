@@ -168,6 +168,19 @@ export class ReportsController {
     );
   }
 
+  @Get('exams/options')
+  @Version('1')
+  @ApiOperation({ summary: 'The exams that can be reported on' })
+  async examOptions(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: ReportQueryDto,
+  ) {
+    return {
+      message: 'Exams retrieved successfully',
+      data: await this.exams.options(currentUser, query),
+    };
+  }
+
   @Get('exams/subject-results')
   @Version('1')
   @ApiOperation({ summary: 'How each paper of an exam went' })

@@ -43,6 +43,7 @@ describe('ReportsController', () => {
     adjustments: jest.fn(),
   };
   const exams = {
+    options: jest.fn(),
     subjectResults: jest.fn(),
     gradeDistribution: jest.fn(),
     failedStudents: jest.fn(),
@@ -175,6 +176,20 @@ describe('ReportsController', () => {
       month: '2026-10',
     });
     expect(payroll.cost).toHaveBeenCalledWith(admin, { from: '2026-08-01' });
+  });
+
+  it('lists the exams that can be reported on inside the usual envelope', async () => {
+    exams.options.mockResolvedValue([{ id: 'e1', label: 'Midterm' }]);
+
+    await expect(
+      controller.examOptions(admin, { institutionId: 'inst-1' }),
+    ).resolves.toEqual({
+      message: 'Exams retrieved successfully',
+      data: [{ id: 'e1', label: 'Midterm' }],
+    });
+    expect(exams.options).toHaveBeenCalledWith(admin, {
+      institutionId: 'inst-1',
+    });
   });
 
   it('does not swallow a refusal from a report', async () => {

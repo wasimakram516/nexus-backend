@@ -8,7 +8,7 @@ import {
   ExamResultsViewService,
   StudentOutcome,
 } from '../examinations/exam-results-view.service';
-import { ExamReportQueryDto } from './dto/reports.dto';
+import { ExamReportQueryDto, ReportQueryDto } from './dto/reports.dto';
 import { percent, ReportRow, ReportTable } from './report-table';
 import { ReportsAccessService } from './reports-access.service';
 
@@ -37,6 +37,51 @@ export class ExamReportsService {
     private readonly access: ReportsAccessService,
     private readonly results: ExamResultsViewService,
   ) {}
+
+  /**
+   * The exams an administrator can report on, newest first, named so they can
+   * be told apart (the same name often repeats across classes and terms).
+   *
+   * @param {CurrentUser} currentUser - The administrator.
+   * @param {ReportQueryDto} query - Which institution a superadmin is viewing.
+   * @returns {Promise<{id: string, label: string}[]>} Up to 200 exams.
+   */
+  async options(
+    currentUser: CurrentUser,
+    query: ReportQueryDto,
+  ): Promise<{ id: string; label: string }[]> {
+    const scope = await this.access.resolve(currentUser, {
+      institutionId: query.institutionId,
+    });
+    const exams = await this.prisma.exam.findMany({
+      where: {
+        campusId: { in: scope.campuses.map((campus) => campus.id) },
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        campus: { select: { name: true } },
+        class: { select: { name: true } },
+        examTerm: { select: { name: true } },
+      },
+    });
+    return exams.map((exam) => ({
+      id: exam.id,
+      label: [
+        exam.name,
+        exam.class.name,
+        exam.examTerm.name,
+        scope.campuses.length > 1 ? exam.campus.name : null,
+        exam.status === ExamStatus.DRAFT ? 'draft' : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    }));
+  }
 
   /**
    * How each paper of an exam went: who sat it, how many passed and the marks.
