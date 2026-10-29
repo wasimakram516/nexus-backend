@@ -5,7 +5,9 @@ import { UserRole } from '../../common/enums/domain.enums';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { AttendanceReportsService } from './attendance-reports.service';
 import { CampusComparisonService } from './campus-comparison.service';
+import { ExamReportsService } from './exam-reports.service';
 import { FinanceReportsService } from './finance-reports.service';
+import { PayrollReportsService } from './payroll-reports.service';
 import { ReportTable } from './report-table';
 import { ReportsController } from './reports.controller';
 import { ReportsExportService } from './reports-export.service';
@@ -40,6 +42,12 @@ describe('ReportsController', () => {
     outstandingDues: jest.fn(),
     adjustments: jest.fn(),
   };
+  const exams = {
+    subjectResults: jest.fn(),
+    gradeDistribution: jest.fn(),
+    failedStudents: jest.fn(),
+  };
+  const payroll = { register: jest.fn(), cost: jest.fn() };
   const exporter = { toFile: jest.fn() };
   const set = jest.fn();
   const response = { set } as unknown as Response;
@@ -47,6 +55,8 @@ describe('ReportsController', () => {
     comparison as unknown as CampusComparisonService,
     attendance as unknown as AttendanceReportsService,
     finance as unknown as FinanceReportsService,
+    exams as unknown as ExamReportsService,
+    payroll as unknown as PayrollReportsService,
     exporter as unknown as ReportsExportService,
   );
 
@@ -59,6 +69,11 @@ describe('ReportsController', () => {
     finance.collection.mockResolvedValue(table);
     finance.outstandingDues.mockResolvedValue(table);
     finance.adjustments.mockResolvedValue(table);
+    exams.subjectResults.mockResolvedValue(table);
+    exams.gradeDistribution.mockResolvedValue(table);
+    exams.failedStudents.mockResolvedValue(table);
+    payroll.register.mockResolvedValue(table);
+    payroll.cost.mockResolvedValue(table);
     exporter.toFile.mockResolvedValue({
       buffer: Buffer.from('x'),
       filename: 'r.csv',
@@ -137,6 +152,29 @@ describe('ReportsController', () => {
     expect(finance.adjustments).toHaveBeenCalledWith(admin, {
       from: '2026-10-01',
     });
+  });
+
+  it('hands the exam and payroll reports their own query and the caller', async () => {
+    await controller.examSubjectResults(admin, { examId: 'e1' }, response);
+    await controller.examGradeDistribution(admin, { examId: 'e1' }, response);
+    await controller.examFailedStudents(admin, { examId: 'e1' }, response);
+    await controller.payrollRegister(
+      admin,
+      { campusId: 'c1', month: '2026-10' },
+      response,
+    );
+    await controller.payrollCost(admin, { from: '2026-08-01' }, response);
+
+    expect(exams.subjectResults).toHaveBeenCalledWith(admin, { examId: 'e1' });
+    expect(exams.gradeDistribution).toHaveBeenCalledWith(admin, {
+      examId: 'e1',
+    });
+    expect(exams.failedStudents).toHaveBeenCalledWith(admin, { examId: 'e1' });
+    expect(payroll.register).toHaveBeenCalledWith(admin, {
+      campusId: 'c1',
+      month: '2026-10',
+    });
+    expect(payroll.cost).toHaveBeenCalledWith(admin, { from: '2026-08-01' });
   });
 
   it('does not swallow a refusal from a report', async () => {

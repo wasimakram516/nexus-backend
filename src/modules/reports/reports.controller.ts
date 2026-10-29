@@ -17,15 +17,19 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { AttendanceReportsService } from './attendance-reports.service';
 import { CampusComparisonService } from './campus-comparison.service';
+import { ExamReportsService } from './exam-reports.service';
 import {
   CampusComparisonQueryDto,
   CampusPeriodQueryDto,
   ChronicAbsenteesQueryDto,
+  ExamReportQueryDto,
   FeeCollectionQueryDto,
   MonthlyRegisterQueryDto,
+  PayrollRegisterQueryDto,
   ReportQueryDto,
 } from './dto/reports.dto';
 import { FinanceReportsService } from './finance-reports.service';
+import { PayrollReportsService } from './payroll-reports.service';
 import { ReportTable } from './report-table';
 import { ReportsExportService, sendReportFile } from './reports-export.service';
 
@@ -44,6 +48,8 @@ export class ReportsController {
     private readonly comparison: CampusComparisonService,
     private readonly attendance: AttendanceReportsService,
     private readonly finance: FinanceReportsService,
+    private readonly exams: ExamReportsService,
+    private readonly payroll: PayrollReportsService,
     private readonly exporter: ReportsExportService,
   ) {}
 
@@ -157,6 +163,84 @@ export class ReportsController {
   ) {
     return this.respond(
       await this.finance.adjustments(currentUser, query),
+      query,
+      response,
+    );
+  }
+
+  @Get('exams/subject-results')
+  @Version('1')
+  @ApiOperation({ summary: 'How each paper of an exam went' })
+  async examSubjectResults(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: ExamReportQueryDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return this.respond(
+      await this.exams.subjectResults(currentUser, query),
+      query,
+      response,
+    );
+  }
+
+  @Get('exams/grade-distribution')
+  @Version('1')
+  @ApiOperation({ summary: 'How many students earned each grade in an exam' })
+  async examGradeDistribution(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: ExamReportQueryDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return this.respond(
+      await this.exams.gradeDistribution(currentUser, query),
+      query,
+      response,
+    );
+  }
+
+  @Get('exams/failed-students')
+  @Version('1')
+  @ApiOperation({ summary: 'Students who did not pass an exam' })
+  async examFailedStudents(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: ExamReportQueryDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return this.respond(
+      await this.exams.failedStudents(currentUser, query),
+      query,
+      response,
+    );
+  }
+
+  @Get('payroll/register')
+  @Version('1')
+  @ApiOperation({
+    summary:
+      "A month's payroll: who was paid what, and who is still to be paid",
+  })
+  async payrollRegister(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: PayrollRegisterQueryDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return this.respond(
+      await this.payroll.register(currentUser, query),
+      query,
+      response,
+    );
+  }
+
+  @Get('payroll/cost')
+  @Version('1')
+  @ApiOperation({ summary: 'What payroll cost each month, by campus' })
+  async payrollCost(
+    @CurrentUserDecorator() currentUser: CurrentUser,
+    @Query() query: CampusPeriodQueryDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return this.respond(
+      await this.payroll.cost(currentUser, query),
       query,
       response,
     );

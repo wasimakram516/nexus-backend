@@ -97,6 +97,30 @@ export class ChronicAbsenteesQueryDto extends CampusPeriodQueryDto {
   thresholdPercent?: number;
 }
 
+export class ExamReportQueryDto extends ReportQueryDto {
+  @ApiPropertyOptional({ description: 'The exam whose results are wanted.' })
+  @IsUUID()
+  examId!: string;
+}
+
+export class PayrollRegisterQueryDto extends ReportQueryDto {
+  @ApiPropertyOptional({
+    description:
+      'Limit to one campus; default every campus the caller can see.',
+  })
+  @IsOptional()
+  @IsUUID()
+  campusId?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-10',
+    description: 'The payroll month, YYYY-MM; defaults to this month.',
+  })
+  @IsOptional()
+  @Matches(MONTH, { message: 'month must be YYYY-MM.' })
+  month?: string;
+}
+
 export class FeeCollectionQueryDto extends CampusPeriodQueryDto {
   @ApiPropertyOptional({
     enum: ['DAY', 'MONTH', 'CAMPUS'],

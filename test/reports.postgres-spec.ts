@@ -5,9 +5,14 @@ import { CurrentUser } from '../src/common/interfaces/current-user.interface';
 import { ModuleAccessService } from '../src/common/services/module-access.service';
 import { RequestContextService } from '../src/common/services/request-context.service';
 import { TimezoneResolverService } from '../src/common/services/timezone-resolver.service';
+import { OwnedStudentsService } from '../src/common/services/owned-students.service';
+import { ExamResultsViewService } from '../src/modules/examinations/exam-results-view.service';
+import { UserPermissionsService } from '../src/common/services/user-permissions.service';
 import { AttendanceReportsService } from '../src/modules/reports/attendance-reports.service';
 import { CampusComparisonService } from '../src/modules/reports/campus-comparison.service';
+import { ExamReportsService } from '../src/modules/reports/exam-reports.service';
 import { FinanceReportsService } from '../src/modules/reports/finance-reports.service';
+import { PayrollReportsService } from '../src/modules/reports/payroll-reports.service';
 import { ReportsAccessService } from '../src/modules/reports/reports-access.service';
 import { AttendanceStatus, UserRole } from '../src/prisma/client';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -26,6 +31,9 @@ describe('PostgreSQL reports', () => {
   let comparison: CampusComparisonService;
   let attendance: AttendanceReportsService;
   let finance: FinanceReportsService;
+  let examReports: ExamReportsService;
+  let payroll: PayrollReportsService;
+  let examId: string;
   let institutionId: string;
   let mainId: string;
   let northId: string;
@@ -121,6 +129,18 @@ describe('PostgreSQL reports', () => {
     comparison = new CampusComparisonService(prisma, access, timezones);
     attendance = new AttendanceReportsService(prisma, access, timezones);
     finance = new FinanceReportsService(prisma, access, timezones);
+    payroll = new PayrollReportsService(prisma, access, timezones);
+    examReports = new ExamReportsService(
+      prisma,
+      access,
+      new ExamResultsViewService(
+        prisma,
+        allowModule,
+        new CampusAccessService(prisma),
+        new UserPermissionsService(prisma),
+        new OwnedStudentsService(prisma),
+      ),
+    );
 
     institutionId = (
       await prisma.institution.create({
@@ -325,6 +345,135 @@ describe('PostgreSQL reports', () => {
     // 10:00 in Karachi on the 12th and on the 20th.
     await pay(ayeshaOct.id, 600, '2026-10-12T05:00:00.000Z', 'CASH');
     await pay(cyrusOct.id, 500, '2026-10-20T05:00:00.000Z', 'BANK_TRANSFER');
+
+    // One exam for Grade 5: Ayesha passes with an A, Bilal fails Maths, Cyrus misses Maths and fails English.
+    const maths = await prisma.subject.create({
+      data: { name: 'Maths', classId: mainClass.id },
+    });
+    const english = await prisma.subject.create({
+      data: { name: 'English', classId: mainClass.id },
+    });
+    const scale = await prisma.gradingScale.create({
+      data: {
+        institutionId,
+        name: 'Reports scale',
+        bands: {
+          create: [
+            { grade: 'A', minPercentage: 80, maxPercentage: 100, sortOrder: 0 },
+            {
+              grade: 'B',
+              minPercentage: 50,
+              maxPercentage: 79.99,
+              sortOrder: 1,
+            },
+            {
+              grade: 'F',
+              minPercentage: 0,
+              maxPercentage: 49.99,
+              sortOrder: 2,
+            },
+          ],
+        },
+      },
+    });
+    const term = await prisma.examTerm.create({
+      data: { institutionId, academicYearId: year.id, name: 'Term 1' },
+    });
+    const exam = await prisma.exam.create({
+      data: {
+        examTermId: term.id,
+        academicYearId: year.id,
+        campusId: mainId,
+        classId: mainClass.id,
+        name: 'Midterm',
+        gradingScaleId: scale.id,
+      },
+    });
+    examId = exam.id;
+    const paper = (subjectId: string, maxMarks: number, passingMarks: number) =>
+      prisma.examSubject.create({
+        data: { examId: exam.id, subjectId, maxMarks, passingMarks },
+      });
+    const mathsPaper = await paper(maths.id, 100, 40);
+    const englishPaper = await paper(english.id, 50, 20);
+    const result = (
+      examSubjectId: string,
+      studentId: string,
+      marksObtained: number | null,
+    ) =>
+      prisma.examResult.create({
+        data: {
+          examSubjectId,
+          studentId,
+          sectionId,
+          marksObtained,
+          isAbsent: marksObtained === null,
+        },
+      });
+    await result(mathsPaper.id, ayesha.studentId, 90);
+    await result(englishPaper.id, ayesha.studentId, 45);
+    await result(mathsPaper.id, bilal.studentId, 30);
+    await result(englishPaper.id, bilal.studentId, 30);
+    await result(mathsPaper.id, cyrus.studentId, null);
+    await result(englishPaper.id, cyrus.studentId, 10);
+
+    // Payroll: Teacher One is paid for September and October, Teacher Two is not paid for October.
+    const payer = await newUser('Payroll Admin', UserRole.ADMIN);
+    const teacherTwo = await newUser('Teacher Two', UserRole.STAFF);
+    const salary = (userId: string, baseSalary: number) =>
+      prisma.staffSalary.create({
+        data: {
+          userId,
+          campusId: mainId,
+          role: UserRole.STAFF,
+          joiningDate: date('2026-01-01'),
+          baseSalary,
+          effectiveDate: date('2026-04-01'),
+        },
+      });
+    const teacherOneSalary = await salary(teacher.id, 50000);
+    await salary(teacherTwo.id, 30000);
+    const paySalary = async (
+      month: number,
+      bonuses: number,
+      deductions: { absence: number; late: number; manual: number },
+    ) => {
+      const total = deductions.absence + deductions.late + deductions.manual;
+      const payment = await prisma.salaryPayment.create({
+        data: {
+          userId: teacher.id,
+          salaryId: teacherOneSalary.id,
+          campusId: mainId,
+          month,
+          year: 2026,
+          baseSalaryAtPayment: 50000,
+          totalDeductions: total,
+          totalBonuses: bonuses,
+          finalSalaryPaid: 50000 + bonuses - total,
+          paymentDate: new Date(
+            `2026-${String(month).padStart(2, '0')}-28T10:00:00.000Z`,
+          ),
+          paidBy: payer.id,
+        },
+      });
+      await prisma.salaryDeductionSummary.create({
+        data: {
+          salaryPaymentId: payment.id,
+          userId: teacher.id,
+          campusId: mainId,
+          month,
+          year: 2026,
+          absenceDeduction: deductions.absence,
+          lateDeduction: deductions.late,
+          manualDeductions: deductions.manual,
+          bonuses,
+          totalDeductions: total,
+          finalSalaryPaid: 50000 + bonuses - total,
+        },
+      });
+    };
+    await paySalary(9, 0, { absence: 0, late: 0, manual: 0 });
+    await paySalary(10, 2000, { absence: 2000, late: 500, manual: 1000 });
   });
 
   afterAll(async () => {
@@ -522,6 +671,108 @@ describe('PostgreSQL reports', () => {
         discounts: '0.00',
         fines: '0.00',
         lateFees: '0.00',
+      },
+    ]);
+  });
+
+  it('summarises each paper, leaving an absent student out of the marks', async () => {
+    const table = await examReports.subjectResults(admin, { examId });
+
+    expect(table.subtitle).toBe('Midterm, Term 1, Grade 5, Main');
+    expect(table.rows).toEqual([
+      expect.objectContaining({
+        subject: 'Maths',
+        appeared: 2,
+        absent: 1,
+        passed: 1,
+        failed: 1,
+        passPercent: 50,
+        averagePercent: 60,
+        highest: 90,
+        lowest: 30,
+      }),
+      expect.objectContaining({
+        subject: 'English',
+        appeared: 3,
+        passed: 2,
+        failed: 1,
+        highest: 45,
+        lowest: 10,
+      }),
+    ]);
+  });
+
+  it('counts the grades earned and lists the students who failed', async () => {
+    const grades = await examReports.gradeDistribution(admin, { examId });
+    expect(grades.rows.map((row) => [row.grade, row.students])).toEqual([
+      ['A', 1],
+      ['B', 0],
+      ['F', 2],
+      ['Not graded', 0],
+    ]);
+
+    const failed = await examReports.failedStudents(admin, { examId });
+    expect(
+      failed.rows.map((row) => [row.name, row.percentage, row.subjects]),
+    ).toEqual([
+      ['Cyrus', 20, 'English'],
+      ['Bilal', 40, 'Maths'],
+    ]);
+  });
+
+  it('shows what was paid as recorded, and who is still to be paid', async () => {
+    const table = await payroll.register(admin, { month: '2026-10' });
+
+    expect(table.rows).toEqual([
+      {
+        staff: 'Teacher One',
+        campus: 'Main',
+        status: 'Paid',
+        base: '50000.00',
+        bonuses: '2000.00',
+        attendanceDeductions: '2500.00',
+        manualDeductions: '1000.00',
+        net: '48500.00',
+        paidOn: '28 Oct 2026',
+      },
+      expect.objectContaining({
+        staff: 'Teacher Two',
+        status: 'Not paid',
+        base: '30000.00',
+        net: null,
+      }),
+    ]);
+    expect(table.totals).toMatchObject({
+      staff: 'Total, 1 paid, 1 not yet paid',
+      base: '50000.00',
+      net: '48500.00',
+    });
+  });
+
+  it('adds up what payroll cost each month', async () => {
+    const table = await payroll.cost(admin, {
+      from: '2026-09-01',
+      to: '2026-10-31',
+    });
+
+    expect(table.rows).toEqual([
+      {
+        month: 'Sep 2026',
+        campus: 'Main',
+        staff: 1,
+        base: '50000.00',
+        bonuses: '0.00',
+        deductions: '0.00',
+        net: '50000.00',
+      },
+      {
+        month: 'Oct 2026',
+        campus: 'Main',
+        staff: 1,
+        base: '50000.00',
+        bonuses: '2000.00',
+        deductions: '3500.00',
+        net: '48500.00',
       },
     ]);
   });
