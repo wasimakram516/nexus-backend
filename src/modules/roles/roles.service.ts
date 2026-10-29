@@ -58,9 +58,18 @@ export class RolesService {
     const items = await this.prisma.role.findMany({
       where: { institutionId },
       orderBy: [{ name: 'asc' }, { createdAt: 'asc' }],
+      include: {
+        _count: { select: { users: { where: { deletedAt: null } } } },
+      },
     });
 
-    return { message: 'Roles retrieved successfully', data: items };
+    return {
+      message: 'Roles retrieved successfully',
+      data: items.map(({ _count, ...role }) => ({
+        ...role,
+        userCount: _count.users,
+      })),
+    };
   }
 
   async getRole(institutionId: string, roleId: string) {

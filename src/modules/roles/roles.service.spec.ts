@@ -111,12 +111,21 @@ describe('RolesService', () => {
   });
 
   describe('listRoles / getRole', () => {
-    it('lists roles for the institution', async () => {
-      prismaMock.role.findMany.mockResolvedValue([role]);
+    it('lists roles for the institution with how many active users hold each', async () => {
+      prismaMock.role.findMany.mockResolvedValue([
+        { ...role, _count: { users: 3 } },
+      ]);
 
-      await expect(service.listRoles('institution-1')).resolves.toMatchObject({
-        data: [role],
-      });
+      const result = await service.listRoles('institution-1');
+
+      expect(result.data).toEqual([{ ...role, userCount: 3 }]);
+      expect(prismaMock.role.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: {
+            _count: { select: { users: { where: { deletedAt: null } } } },
+          },
+        }),
+      );
     });
 
     it('throws NotFoundException when the role does not exist in scope', async () => {
