@@ -5,12 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  DeploymentMode,
-  ModuleKey,
-  Prisma,
-  SubscriptionStatus,
-} from '../../prisma/client';
+import { Prisma, SubscriptionStatus } from '../../prisma/client';
 import {
   DEFAULT_PLAN_KEY,
   PLAN_BLUEPRINTS,
@@ -23,6 +18,11 @@ import { requirePhone, resolveCountry } from '../../common/utils/phone.util';
 import { generateUniqueSlug } from '../../common/utils/slug.util';
 import { validateFinanceSettingInput } from '../../common/utils/finance-settings.util';
 import { validatePassPolicyInput } from '../examinations/exam-computation';
+import {
+  readDeploymentModes,
+  readModuleKeys,
+  readPrice,
+} from '../../common/utils/plan-definition.util';
 import { runAuditedTransaction } from '../../common/utils/transaction.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -80,10 +80,10 @@ export class PlatformService {
     const plan = await this.resolvePlan(undefined, plans);
     return {
       plan,
-      deploymentModes: this.readDeploymentModes(plan.deploymentModes),
-      defaultModules: this.readModuleKeys(plan.defaultModules),
-      agreedPrice: this.readPrice(plan.basePrice),
-      setupFee: this.readPrice(plan.setupFee),
+      deploymentModes: readDeploymentModes(plan.deploymentModes),
+      defaultModules: readModuleKeys(plan.defaultModules),
+      agreedPrice: readPrice(plan.basePrice),
+      setupFee: readPrice(plan.setupFee),
     };
   }
 
@@ -203,8 +203,8 @@ export class PlatformService {
       : null;
     const plans = await this.syncBootstrapPlans();
     const plan = await this.resolvePlan(dto.planId, plans);
-    const deploymentModes = this.readDeploymentModes(plan.deploymentModes);
-    const defaultModules = this.readModuleKeys(plan.defaultModules);
+    const deploymentModes = readDeploymentModes(plan.deploymentModes);
+    const defaultModules = readModuleKeys(plan.defaultModules);
     const deploymentMode = dto.deploymentMode ?? deploymentModes[0];
     const uniqueSlug = await generateUniqueSlug(
       dto.slug,
@@ -231,10 +231,10 @@ export class PlatformService {
     const subscriptionCreate: Prisma.InstitutionSubscriptionUncheckedCreateWithoutInstitutionInput =
       {
         planId: plan.id,
-        agreedPrice: this.readPrice(plan.basePrice),
+        agreedPrice: readPrice(plan.basePrice),
         currency: plan.currency,
         billingCycle: plan.billingCycle,
-        setupFee: this.readPrice(plan.setupFee),
+        setupFee: readPrice(plan.setupFee),
         status: SubscriptionStatus.TRIAL,
         startsAt: trialDates.startsAt,
         endsAt: trialDates.endsAt,
@@ -606,7 +606,7 @@ export class PlatformService {
     await this.ensureInstitutionExists(institutionId);
     const plans = await this.syncBootstrapPlans();
     const plan = await this.resolvePlan(dto.planId, plans);
-    const defaultModules = this.readModuleKeys(plan.defaultModules);
+    const defaultModules = readModuleKeys(plan.defaultModules);
 
     // Audited automatically by PrismaService (real before/after snapshot
     // for the subscription row; entitlement upserts below each get their
@@ -647,10 +647,10 @@ export class PlatformService {
               data: {
                 institutionId,
                 planId: plan.id,
-                agreedPrice: dto.agreedPrice ?? this.readPrice(plan.basePrice),
+                agreedPrice: dto.agreedPrice ?? readPrice(plan.basePrice),
                 currency: dto.currency ?? plan.currency,
                 billingCycle: (dto.billingCycle ?? plan.billingCycle) as never,
-                setupFee: dto.setupFee ?? this.readPrice(plan.setupFee),
+                setupFee: dto.setupFee ?? readPrice(plan.setupFee),
                 discountAmount: dto.discountAmount,
                 pricingNotes: dto.pricingNotes,
                 status: dto.status ?? SubscriptionStatus.TRIAL,
@@ -776,45 +776,6 @@ export class PlatformService {
     }
 
     return defaultPlan;
-  }
-
-  private readDeploymentModes(value: Prisma.JsonValue): DeploymentMode[] {
-    if (!Array.isArray(value)) {
-      return [];
-    }
-
-    return value.filter((item): item is DeploymentMode =>
-      Object.values(DeploymentMode).includes(item as DeploymentMode),
-    );
-  }
-
-  private readModuleKeys(value: Prisma.JsonValue): ModuleKey[] {
-    if (!Array.isArray(value)) {
-      return [];
-    }
-
-    return value.filter((item): item is ModuleKey =>
-      Object.values(ModuleKey).includes(item as ModuleKey),
-    );
-  }
-
-  private readPrice(
-    value: Prisma.Decimal | Prisma.JsonValue | number | null | undefined,
-  ) {
-    if (value === null || value === undefined) {
-      return null;
-    }
-    if (value instanceof Prisma.Decimal) {
-      return value.toNumber();
-    }
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return value;
-    }
-    if (typeof value === 'string') {
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
   }
 
   private toJson(value: unknown): Prisma.InputJsonValue {

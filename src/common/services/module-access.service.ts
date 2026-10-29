@@ -7,6 +7,7 @@ import {
 } from '../../prisma/client';
 import { CurrentUser } from '../interfaces/current-user.interface';
 import { PrismaService } from '../../prisma/prisma.service';
+import { readModuleKeys } from '../utils/plan-definition.util';
 
 type RuntimeConfigRecord = {
   institutionId: string;
@@ -126,7 +127,7 @@ export class ModuleAccessService {
     }
 
     const subscription = institution.subscriptions[0] ?? null;
-    const defaultModules = this.readModuleKeys(
+    const defaultModules = readModuleKeys(
       subscription?.plan?.defaultModules ?? [],
     );
     const modules: RuntimeConfigRecord['modules'] = {};
@@ -211,18 +212,6 @@ export class ModuleAccessService {
         : null,
       trialFullAccess,
     };
-  }
-
-  private readModuleKeys(value: Prisma.JsonValue): ModuleKey[] {
-    if (!Array.isArray(value)) {
-      return [];
-    }
-
-    return value.filter(
-      (item): item is ModuleKey =>
-        typeof item === 'string' &&
-        Object.values(ModuleKey).some((moduleKey) => moduleKey === item),
-    );
   }
 
   private readObject(
