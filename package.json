@@ -16,6 +16,7 @@
     "start:dev": "nest start --watch --path tsconfig.build.json",
     "start:debug": "nest start --debug --watch --path tsconfig.build.json",
     "start:prod": "node dist/main.js",
+    "seed:demo": "node dist/scripts/seed-demo.js",
     "lint": "eslint \"{src,test}/**/*.ts\" --max-warnings 0",
     "type-check": "tsc --noEmit -p tsconfig.build.json",
     "prepare": "husky || true",
