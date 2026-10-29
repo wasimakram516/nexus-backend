@@ -7,6 +7,7 @@ import { CurrentUser } from '../src/common/interfaces/current-user.interface';
 import { EntityCustomFieldsService } from '../src/common/services/entity-custom-fields.service';
 import { ModuleAccessService } from '../src/common/services/module-access.service';
 import { RequestContextService } from '../src/common/services/request-context.service';
+import { UserPermissionsService } from '../src/common/services/user-permissions.service';
 import { AuthService } from '../src/modules/auth/auth.service';
 import { PeopleService } from '../src/modules/people/people.service';
 import { StudentIdCardsService } from '../src/modules/people/student-id-cards.service';
@@ -62,10 +63,15 @@ describe('PostgreSQL student import', () => {
       context,
       new PlanLimitsService(prisma),
     );
-    const auth = new AuthService(prisma, new JwtService({}), {
-      get: () => undefined,
-      getOrThrow: () => 'x',
-    } as unknown as ConfigService);
+    const auth = new AuthService(
+      prisma,
+      new JwtService({}),
+      {
+        get: () => undefined,
+        getOrThrow: () => 'x',
+      } as unknown as ConfigService,
+      new UserPermissionsService(prisma),
+    );
     service = new StudentImportService(
       prisma,
       allowModule,
