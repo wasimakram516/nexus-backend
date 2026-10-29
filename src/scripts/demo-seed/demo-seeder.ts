@@ -69,6 +69,8 @@ const ACCESS_ROLES: Record<
   },
 };
 
+const DEMO_PLAN_KEY = 'growth';
+
 const slugOf = (text: string) =>
   text
     .toLowerCase()
@@ -152,8 +154,13 @@ export class DemoSeeder {
     today: Date,
     namespace: DemoNamespace,
   ): Promise<string> {
+    // Two campuses need a plan that allows them, so the demo sits on Growth rather than the one-campus Starter.
+    const growth = (await this.platform.listPlans()).data.find(
+      (plan) => plan.key === DEMO_PLAN_KEY,
+    );
     const created = await this.platform.createInstitution({
       name: DEMO_SCHOOL_NAME,
+      planId: growth?.id,
       slug: namespace.slug,
       status: InstitutionStatus.ACTIVE,
       timezone: 'Asia/Karachi',

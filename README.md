@@ -104,7 +104,7 @@ npm run seed:demo -- --yes                      # prints a generated password
 npm run seed:demo -- --yes --password "my-demo-pass"
 ```
 
-It creates a school with the slug `demo-school` and every module switched on: two campuses
+It creates a school with the slug `demo-school` on the Growth plan with every module switched on: two campuses
 (Main and North), classes and sections, 24 students with guardians (some siblings share a
 guardian), six staff (two with access roles, Accountant and Front Desk), 20 school days of
 attendance, three months of fee vouchers and payments, a published mid-term exam for each class,

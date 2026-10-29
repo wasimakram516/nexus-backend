@@ -117,7 +117,7 @@ describe('PostgreSQL demo seed', () => {
     const institution = await prisma.institution.findUniqueOrThrow({
       where: { id: institutionId },
       include: {
-        subscriptions: true,
+        subscriptions: { include: { plan: true } },
         entitlements: true,
         currentAcademicYear: true,
       },
@@ -125,6 +125,7 @@ describe('PostgreSQL demo seed', () => {
 
     expect(institution.status).toBe('ACTIVE');
     expect(institution.subscriptions[0].status).toBe('ACTIVE');
+    expect(institution.subscriptions[0].plan?.key).toBe('growth');
     expect(institution.entitlements.every((item) => item.isEnabled)).toBe(true);
     expect(institution.entitlements).toHaveLength(10);
     expect(institution.currentAcademicYear?.name).toBe('2026-27');
