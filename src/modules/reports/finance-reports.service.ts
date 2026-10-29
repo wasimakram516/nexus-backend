@@ -3,7 +3,6 @@ import { CurrentUser } from '../../common/interfaces/current-user.interface';
 import { TimezoneResolverService } from '../../common/services/timezone-resolver.service';
 import { formatDate } from '../../common/utils/date-format.util';
 import { attachFeeVoucherBalances } from '../../common/utils/fee-settlement.util';
-import { readFinanceSettings } from '../../common/utils/finance-settings.util';
 import { PaymentMethod, Prisma, VoucherStatus } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { loadStudentPlacements } from '../finance/student-scope.util';
@@ -12,27 +11,12 @@ import {
   FeeCollectionQueryDto,
   ReportQueryDto,
 } from './dto/reports.dto';
-import { dayStart, resolvePeriod } from './report-dates.util';
+import { reportCurrency } from './report-currency.util';
+import { dayStart, monthText, resolvePeriod } from './report-dates.util';
 import { money, ReportRow, ReportTable } from './report-table';
 import { ReportsAccessService, ReportScope } from './reports-access.service';
 
 const ZERO = new Prisma.Decimal(0);
-const MONTHS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-const monthText = (year: number, month: number) =>
-  `${MONTHS[month - 1]} ${year}`;
 
 interface Bucket {
   label: string;
@@ -73,7 +57,7 @@ export class FinanceReportsService {
     });
     const period = this.periodOf(scope, query);
     const groupBy = query.groupBy ?? 'DAY';
-    const currency = await this.currencyOf(scope.institutionId);
+    const currency = await reportCurrency(this.prisma, scope.institutionId);
 
     const buckets = new Map<string, Bucket>();
     for (const campus of scope.campuses) {
@@ -183,7 +167,7 @@ export class FinanceReportsService {
       campusId: query.campusId,
     });
     const today = this.timezones.localDateString(scope.campuses[0].timezone);
-    const currency = await this.currencyOf(scope.institutionId);
+    const currency = await reportCurrency(this.prisma, scope.institutionId);
     const vouchers = await this.prisma.feeVoucher.findMany({
       where: {
         deletedAt: null,
@@ -296,7 +280,7 @@ export class FinanceReportsService {
       campusId: query.campusId,
     });
     const period = this.periodOf(scope, query);
-    const currency = await this.currencyOf(scope.institutionId);
+    const currency = await reportCurrency(this.prisma, scope.institutionId);
     const [fromYear, fromMonth] = period.from.split('-').map(Number);
     const [toYear, toMonth] = period.to.split('-').map(Number);
     const inRange = (year: number, month: number) =>
@@ -460,13 +444,5 @@ export class FinanceReportsService {
     const where =
       scope.campuses.length === 1 ? scope.campuses[0].name : 'All campuses';
     return `${formatDate(period.from)} to ${formatDate(period.to)}, ${where}`;
-  }
-
-  private async currencyOf(institutionId: string): Promise<string> {
-    const setting = await this.prisma.institutionSetting.findFirst({
-      where: { institutionId, key: 'finance' },
-      select: { value: true },
-    });
-    return readFinanceSettings(setting?.value).currencyLabel;
   }
 }

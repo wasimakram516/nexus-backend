@@ -84,3 +84,22 @@ export function daysOfMonth(month: string): string[] {
     (_, index) => `${month}-${String(index + 1).padStart(2, '0')}`,
   );
 }
+
+const MONTH_NAMES = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+/** A month and year as `Oct 2026`. */
+export const monthText = (year: number, month: number): string =>
+  `${MONTH_NAMES[month - 1]} ${year}`;
