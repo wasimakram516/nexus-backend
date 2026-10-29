@@ -159,9 +159,7 @@ export class PeopleService {
       );
     }
 
-    await this.planLimits.assertRoomForOne(institutionId, 'maxStudents', () =>
-      this.prisma.student.count({ where: { institutionId, deletedAt: null } }),
-    );
+    await this.planLimits.assertRoomForOne(institutionId, 'maxStudents');
 
     const { customFields, classId, sectionId, regNo, ...studentRest } = dto;
     // Prisma DateTime columns reject date-only strings like "2016-06-12".
@@ -720,11 +718,7 @@ export class PeopleService {
       await this.entityCustomFieldsService.resolveInstitutionIdByCampus(
         dto.campusId,
       );
-    await this.planLimits.assertRoomForOne(institutionId, 'maxStaff', () =>
-      this.prisma.staffProfile.count({
-        where: { deletedAt: null, campus: { institutionId } },
-      }),
-    );
+    await this.planLimits.assertRoomForOne(institutionId, 'maxStaff');
     let item;
     try {
       item = await this.entityCustomFieldsService.saveRecord(

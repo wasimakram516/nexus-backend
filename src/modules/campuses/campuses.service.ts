@@ -403,9 +403,7 @@ export class CampusesService {
   }
 
   private async assertCampusLimit(institutionId: string) {
-    await this.planLimits.assertRoomForOne(institutionId, 'maxCampuses', () =>
-      this.prisma.campus.count({ where: { institutionId, deletedAt: null } }),
-    );
+    await this.planLimits.assertRoomForOne(institutionId, 'maxCampuses');
   }
 
   private async ensureInstitutionExists(institutionId: string) {

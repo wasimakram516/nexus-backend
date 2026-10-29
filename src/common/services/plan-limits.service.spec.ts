@@ -6,6 +6,9 @@ describe('PlanLimitsService', () => {
   const prismaMock = {
     institutionSubscription: { findFirst: jest.fn() },
     institutionSetting: { findUnique: jest.fn() },
+    campus: { count: jest.fn() },
+    student: { count: jest.fn() },
+    staffProfile: { count: jest.fn() },
   };
   const service = new PlanLimitsService(prismaMock as unknown as PrismaService);
 
@@ -117,7 +120,83 @@ describe('PlanLimitsService', () => {
     });
   });
 
+  describe('limitUnderPlan', () => {
+    const growth = { key: 'growth', limits: { maxCampuses: 3 } };
+
+    it('reads the limit from the plan being considered, not the one the school is on', async () => {
+      given({ plan: { key: 'starter', limits: { maxCampuses: 1 } } });
+
+      expect(
+        await service.limitUnderPlan('inst-1', growth, 'maxCampuses'),
+      ).toBe(3);
+      expect(await service.limitFor('inst-1', 'maxCampuses')).toBe(1);
+    });
+
+    it('still lets the school’s own setting and subscription notes win over any plan', async () => {
+      given(
+        { metadata: { maxCampuses: 5 }, plan: { key: 'starter', limits: {} } },
+        { maxCampuses: 8 },
+      );
+      expect(
+        await service.limitUnderPlan('inst-1', growth, 'maxCampuses'),
+      ).toBe(8);
+
+      given({
+        metadata: { maxCampuses: 5 },
+        plan: { key: 'starter', limits: {} },
+      });
+      expect(
+        await service.limitUnderPlan('inst-1', growth, 'maxCampuses'),
+      ).toBe(5);
+    });
+
+    it('falls back to that plan’s built-in default, and to unlimited where it has none', async () => {
+      const plain = { key: 'enterprise', limits: null };
+
+      expect(
+        await service.limitUnderPlan('inst-1', plain, 'maxCampuses'),
+      ).toBeNull();
+      expect(
+        await service.limitUnderPlan(
+          'inst-1',
+          { key: 'starter', limits: null },
+          'maxCampuses',
+        ),
+      ).toBe(1);
+    });
+  });
+
+  describe('currentCount', () => {
+    it('counts campuses, students and staff the way each limit is enforced', async () => {
+      prismaMock.campus.count.mockResolvedValue(2);
+      prismaMock.student.count.mockResolvedValue(42);
+      prismaMock.staffProfile.count.mockResolvedValue(7);
+
+      expect(await service.currentCount('inst-1', 'maxCampuses')).toBe(2);
+      expect(await service.currentCount('inst-1', 'maxStudents')).toBe(42);
+      expect(await service.currentCount('inst-1', 'maxStaff')).toBe(7);
+      expect(prismaMock.campus.count).toHaveBeenCalledWith({
+        where: { institutionId: 'inst-1', deletedAt: null },
+      });
+      expect(prismaMock.student.count).toHaveBeenCalledWith({
+        where: { institutionId: 'inst-1', deletedAt: null },
+      });
+      expect(prismaMock.staffProfile.count).toHaveBeenCalledWith({
+        where: { deletedAt: null, campus: { institutionId: 'inst-1' } },
+      });
+    });
+  });
+
   describe('assertRoomForOne', () => {
+    it('counts for itself when the caller gives no count', async () => {
+      given({ plan: { key: 'growth', limits: { maxStudents: 3 } } });
+      prismaMock.student.count.mockResolvedValue(3);
+
+      await expect(
+        service.assertRoomForOne('inst-1', 'maxStudents'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
     it('allows one more while under the limit', async () => {
       given({ plan: { key: 'growth', limits: { maxStudents: 3 } } });
 

@@ -62,7 +62,68 @@ export class PlanLimitsService {
     institutionId: string,
     key: PlanLimitKey,
   ): Promise<number | null> {
-    const subscription = await this.prisma.institutionSubscription.findFirst({
+    const subscription = await this.liveSubscription(institutionId);
+    return this.pick(
+      await this.overrideValue(institutionId),
+      subscription?.metadata,
+      subscription?.plan ?? null,
+      key,
+    );
+  }
+
+  /**
+   * What the limit would be if the institution were on another plan. The
+   * institution's own override and its subscription notes still win, exactly as
+   * they do today, so only the plan's part of the answer changes.
+   *
+   * @param {string} institutionId - The institution.
+   * @param {{key: string, limits: Prisma.JsonValue}} plan - The plan being considered.
+   * @param {PlanLimitKey} key - Which limit.
+   * @returns {Promise<number | null>} The limit under that plan, or null for unlimited.
+   */
+  async limitUnderPlan(
+    institutionId: string,
+    plan: { key: string; limits: Prisma.JsonValue },
+    key: PlanLimitKey,
+  ): Promise<number | null> {
+    const subscription = await this.liveSubscription(institutionId);
+    return this.pick(
+      await this.overrideValue(institutionId),
+      subscription?.metadata,
+      plan,
+      key,
+    );
+  }
+
+  /**
+   * How many the institution has now, counted the same way the limit is enforced.
+   *
+   * @param {string} institutionId - The institution.
+   * @param {PlanLimitKey} key - Which limit.
+   * @returns {Promise<number>} The number in use.
+   */
+  async currentCount(
+    institutionId: string,
+    key: PlanLimitKey,
+  ): Promise<number> {
+    switch (key) {
+      case 'maxCampuses':
+        return this.prisma.campus.count({
+          where: { institutionId, deletedAt: null },
+        });
+      case 'maxStudents':
+        return this.prisma.student.count({
+          where: { institutionId, deletedAt: null },
+        });
+      case 'maxStaff':
+        return this.prisma.staffProfile.count({
+          where: { deletedAt: null, campus: { institutionId } },
+        });
+    }
+  }
+
+  private liveSubscription(institutionId: string) {
+    return this.prisma.institutionSubscription.findFirst({
       where: {
         institutionId,
         status: {
@@ -76,6 +137,9 @@ export class PlanLimitsService {
       orderBy: { createdAt: 'desc' },
       include: { plan: { select: { key: true, limits: true } } },
     });
+  }
+
+  private async overrideValue(institutionId: string) {
     const setting = await this.prisma.institutionSetting.findUnique({
       where: {
         institutionId_key_activeScopeKey: {
@@ -86,16 +150,24 @@ export class PlanLimitsService {
       },
       select: { value: true },
     });
+    return setting?.value;
+  }
 
-    // The first place that names a number wins; a place that says null (or
-    // nothing) defers to the next, and no number anywhere means unlimited.
+  /**
+   * The first place that names a number wins; a place that says null (or
+   * nothing) defers to the next, and no number anywhere means unlimited.
+   */
+  private pick(
+    override: Prisma.JsonValue | null | undefined,
+    metadata: Prisma.JsonValue | null | undefined,
+    plan: { key: string; limits: Prisma.JsonValue } | null,
+    key: PlanLimitKey,
+  ): number | null {
     return (
-      readLimit(setting?.value, key) ??
-      readLimit(subscription?.metadata, key) ??
-      readLimit(subscription?.plan?.limits, key) ??
-      getPlanBlueprint(subscription?.plan?.key ?? DEFAULT_PLAN_KEY)?.limits[
-        key
-      ] ??
+      readLimit(override, key) ??
+      readLimit(metadata, key) ??
+      readLimit(plan?.limits, key) ??
+      getPlanBlueprint(plan?.key ?? DEFAULT_PLAN_KEY)?.limits[key] ??
       null
     );
   }
@@ -105,13 +177,14 @@ export class PlanLimitsService {
    *
    * @param {string} institutionId - The institution.
    * @param {PlanLimitKey} key - Which limit.
-   * @param {() => Promise<number>} countNow - How many there are now; only asked when a limit applies.
+   * @param {() => Promise<number>} [countNow] - How many there are now, asked only when a limit applies; defaults to the standard count.
    * @throws {ForbiddenException} If the institution is already at its limit.
    */
   async assertRoomForOne(
     institutionId: string,
     key: PlanLimitKey,
-    countNow: () => Promise<number>,
+    countNow: () => Promise<number> = () =>
+      this.currentCount(institutionId, key),
   ): Promise<void> {
     const limit = await this.limitFor(institutionId, key);
     if (limit === null) return;

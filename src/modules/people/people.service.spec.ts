@@ -633,14 +633,7 @@ describe('PeopleService', () => {
       expect(planLimitsMock.assertRoomForOne).toHaveBeenCalledWith(
         'institution-1',
         'maxStaff',
-        expect.any(Function),
       );
-      const count = planLimitsMock.assertRoomForOne.mock.calls[0][2];
-      prismaMock.staffProfile.count.mockResolvedValue(7);
-      expect(await count()).toBe(7);
-      expect(prismaMock.staffProfile.count).toHaveBeenCalledWith({
-        where: { deletedAt: null, campus: { institutionId: 'institution-1' } },
-      });
     });
 
     it('creates a new staff profile when no soft-deleted row exists for the user', async () => {
@@ -1285,14 +1278,7 @@ describe('PeopleService', () => {
       expect(planLimitsMock.assertRoomForOne).toHaveBeenCalledWith(
         'institution-1',
         'maxStudents',
-        expect.any(Function),
       );
-      const count = planLimitsMock.assertRoomForOne.mock.calls[0][2];
-      prismaMock.student.count.mockResolvedValue(42);
-      expect(await count()).toBe(42);
-      expect(prismaMock.student.count).toHaveBeenCalledWith({
-        where: { institutionId: 'institution-1', deletedAt: null },
-      });
     });
 
     it('throws ConflictException from createStudent when the institution has no current academic year', async () => {
